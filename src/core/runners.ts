@@ -132,10 +132,17 @@ export class ProcessRunner implements Runner {
     this.stopping = true
     killGroup(proc.pid, "SIGTERM")
     const exited = await Promise.race([proc.exited.then(() => true), sleep(timeoutMs).then(() => false)])
-    if (!exited || groupAlive(proc.pid)) {
-      this.cb.log("system", exited ? "killing leftover child processes" : `did not stop after ${timeoutMs}ms, sending SIGKILL`)
+    if (!exited) {
+      this.cb.log("system", `did not stop after ${timeoutMs}ms, sending SIGKILL`)
       killGroup(proc.pid, "SIGKILL")
       await proc.exited
+    }
+    if (groupAlive(proc.pid)) {
+      // the main process exited but left group members behind (e.g. background jobs);
+      // proc.exited is already settled, so wait for the group itself to disappear.
+      this.cb.log("system", "killing leftover child processes")
+      killGroup(proc.pid, "SIGKILL")
+      for (let i = 0; i < 50 && groupAlive(proc.pid); i++) await sleep(10)
     }
   }
 }
