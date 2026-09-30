@@ -1,0 +1,57 @@
+# Fixture stack for test/ui.test.tsx.
+name: demo
+env:
+  LOG_LEVEL: info
+
+services:
+  # postgres comes from docker-compose.yml
+
+  redis:
+    image: redis:7-alpine
+    ports: ["56379:6379"]
+    cmd: redis-server --save "" --appendonly no
+    description: cache & queues
+
+  auth:
+    cmd: bun services/http.ts auth
+    port: 4300
+    env: { PORT: "4300" }
+    depends_on: [postgres]
+    health: http://localhost:4300/health
+
+  api:
+    cmd: bun --watch services/http.ts api
+    port: 4100
+    env: { PORT: "4100", DATABASE_URL: "postgres://postgres:orbit@localhost:55432/demo" }
+    depends_on: [postgres, redis, auth]
+    health: { http: "http://localhost:4100/health", interval: 2s }
+    restart: on-failure
+
+  worker:
+    cmd: bun services/worker.ts
+    depends_on: [redis, postgres]
+    restart: on-failure
+    description: crashes now and then to show restarts
+
+  web:
+    cmd: bun services/http.ts web
+    port: 4200
+    env: { PORT: "4200" }
+    depends_on: [api]
+    health: http://localhost:4200/
+
+  admin:
+    cmd: bun services/http.ts admin
+    port: 4400
+    env: { PORT: "4400" }
+    depends_on: [api, auth]
+
+  docs:
+    cmd: bun services/http.ts docs
+    port: 4500
+    env: { PORT: "4500" }
+    autostart: false
+
+groups:
+  backend: [postgres, redis, auth, api, worker]
+  frontend: [web, admin]

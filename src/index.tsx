@@ -1,0 +1,97 @@
+#!/usr/bin/env bun
+import { parseArgs } from "node:util"
+import { ConfigError, type OrbitConfig } from "./config/schema.ts"
+import { loadConfig } from "./config/load.ts"
+import { Supervisor } from "./core/supervisor.ts"
+import { runDown, runGraph, runInit, runList, runUp } from "./cli.ts"
+
+const HELP = `orbit — launch, control and monitor local services
+
+usage
+  orbit [dir]                open the TUI for the orbit.yaml found in dir (or above)
+  orbit up [service…]        start services headless, streaming logs (ctrl+c stops)
+  orbit down                 stop orbit-managed containers / compose services
+  orbit graph                print the dependency graph
+  orbit ls                   list services
+  orbit init [dir]           generate an orbit.yaml by scanning the project
+
+options
+  -c, --config <file>        use a specific config file
+  -u, --up                   (TUI) start all autostart services on launch
+  -h, --help                 show this help
+`
+
+const { values, positionals } = parseArgs({
+  args: Bun.argv.slice(2),
+  allowPositionals: true,
+  options: {
+    config: { type: "string", short: "c" },
+    up: { type: "boolean", short: "u" },
+    help: { type: "boolean", short: "h" },
+    force: { type: "boolean" },
+  },
+})
+
+if (values.help) {
+  console.log(HELP)
+  process.exit(0)
+}
+
+const [command, ...rest] = positionals
+const SUBCOMMANDS = ["up", "down", "graph", "ls", "init"]
+const sub = command && SUBCOMMANDS.includes(command) ? command : undefined
+const dir = sub ? (sub === "init" ? rest[0] : undefined) : command
+
+function load(): OrbitConfig {
+  try {
+    return loadConfig({ dir, file: values.config })
+  } catch (err) {
+    if (err instanceof ConfigError) {
+      console.error(`\x1b[31morbit:\x1b[0m ${err.message}`)
+      process.exit(1)
+    }
+    throw err
+  }
+}
+
+switch (sub) {
+  case "init":
+    process.exit(await runInit(dir ?? process.cwd(), !!values.force))
+  case "graph":
+    process.exit(runGraph(load()))
+  case "ls":
+    process.exit(runList(load()))
+  case "down":
+    process.exit(await runDown(load()))
+  case "up":
+    process.exit(await runUp(load(), rest))
+}
+
+// ------------------------------------------------------------------ TUI
+
+const config = load()
+const { createCliRenderer } = await import("@opentui/core")
+const { createRoot } = await import("@opentui/react")
+const { App } = await import("./ui/App.tsx")
+
+const sup = new Supervisor(config)
+process.on("exit", () => sup.killAllSync())
+
+const renderer = await createCliRenderer({ exitOnCtrlC: false, useMouse: true, targetFps: 30 })
+
+let quitting = false
+async function quit(code = 0) {
+  if (quitting) return
+  quitting = true
+  await Promise.race([sup.dispose(), Bun.sleep(20_000)])
+  renderer.destroy()
+  process.exit(code)
+}
+for (const sig of ["SIGTERM", "SIGHUP"] as const) process.on(sig, () => void quit(0))
+process.on("SIGINT", () => void quit(130))
+
+createRoot(renderer).render(<App sup={sup} onQuit={() => quit(0)} />)
+
+void sup.init().then(() => {
+  if (values.up) void sup.startAll()
+})
