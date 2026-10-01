@@ -1,8 +1,10 @@
-import { existsSync } from "node:fs"
+import { closeSync, existsSync, mkdirSync, openSync, readFileSync, rmSync } from "node:fs"
+import { dirname } from "node:path"
 import type { Subprocess } from "bun"
 import type { ServiceConfig } from "../config/schema.ts"
 import { exec, sleep } from "./exec.ts"
-import { pipeLines, type LogStream } from "./logs.ts"
+import { FileTail, pipeLines, type LogStream } from "./logs.ts"
+import { procStartTime, type ProcFiles, type SavedService } from "./state.ts"
 
 export interface RunnerCallbacks {
   log(stream: LogStream, text: string): void
@@ -13,19 +15,22 @@ export interface RunnerCallbacks {
 export interface Runner {
   /** Launches the service. Resolves once it is launched (not necessarily ready). */
   start(): Promise<void>
-  /** Re-attaches to an instance that is already running (containers only). */
-  attach?(): Promise<boolean>
+  /** Re-attaches to an instance that is already running (a container, or a process saved by a previous session). */
+  attach?(saved?: SavedService): Promise<boolean>
   stop(timeoutMs: number): Promise<void>
+  /** Stops following the service (logs, exit watchers) without touching it: it keeps running. */
+  release(): void
   /** Synchronous last-resort cleanup on process exit. */
   killSync(): void
   readonly pid?: number
+  readonly startTime?: number
   readonly containerId?: string
 }
 
-export function createRunner(svc: ServiceConfig, project: string, cb: RunnerCallbacks): Runner {
+export function createRunner(svc: ServiceConfig, project: string, cb: RunnerCallbacks, files: ProcFiles): Runner {
   switch (svc.type) {
     case "process":
-      return new ProcessRunner(svc, cb)
+      return new ProcessRunner(svc, cb, files)
     case "docker":
       return new DockerRunner(svc, project, cb)
     case "compose":
@@ -63,7 +68,7 @@ export function splitArgs(cmd: string): string[] {
   return out
 }
 
-function killGroup(pid: number, signal: NodeJS.Signals): boolean {
+export function killGroup(pid: number, signal: NodeJS.Signals): boolean {
   try {
     process.kill(-pid, signal)
     return true
@@ -77,7 +82,7 @@ function killGroup(pid: number, signal: NodeJS.Signals): boolean {
   }
 }
 
-function groupAlive(pid: number): boolean {
+export function groupAlive(pid: number): boolean {
   try {
     process.kill(-pid, 0)
     return true
@@ -86,64 +91,169 @@ function groupAlive(pid: number): boolean {
   }
 }
 
+/** Runs the command and leaves its exit code in a file, so a later orbit session can tell how it ended. */
+const WRAPPER = 'sh -c "$1"; c=$?; echo $c > "$2"; exit $c'
+const BACKLOG = { bytes: 64 * 1024, lines: 200 }
+
+/**
+ * Output goes to files instead of pipes, and the process lives in its own group, so it can outlive orbit:
+ * a new session re-attaches with `attach()` (pid + start time), re-reads the logs and watches it from there.
+ */
 export class ProcessRunner implements Runner {
-  private proc?: Subprocess<"ignore", "pipe", "pipe">
-  private stopping = false
+  private proc?: Subprocess<"ignore", number, number>
+  private _pid?: number
+  private _startTime?: number
+  private tails: FileTail[] = []
+  private watcher?: ReturnType<typeof setInterval>
+  private released = false
 
   constructor(
     private svc: ServiceConfig,
     private cb: RunnerCallbacks,
+    private files: ProcFiles,
   ) {}
 
   get pid() {
-    return this.proc?.pid
+    return this._pid
+  }
+
+  get startTime() {
+    return this._startTime
   }
 
   async start() {
     if (!existsSync(this.svc.cwd)) throw new Error(`working directory does not exist: ${this.svc.cwd}`)
-    this.stopping = false
-    const proc = Bun.spawn(["/bin/sh", "-c", this.svc.cmd!], {
-      cwd: this.svc.cwd,
-      env: { ...process.env, FORCE_COLOR: "1", ...this.svc.env },
-      stdin: "ignore",
-      stdout: "pipe",
-      stderr: "pipe",
-      // own process group, so we can signal the whole tree (npm -> node -> esbuild...)
-      detached: true,
-    })
+    this.released = false
+    mkdirSync(dirname(this.files.out), { recursive: true })
+    rmSync(this.files.exit, { force: true })
+    const out = openSync(this.files.out, "w")
+    const err = openSync(this.files.err, "w")
+    let proc: Subprocess<"ignore", number, number>
+    try {
+      proc = Bun.spawn(["/bin/sh", "-c", WRAPPER, "orbit", this.svc.cmd!, this.files.exit], {
+        cwd: this.svc.cwd,
+        env: { ...process.env, FORCE_COLOR: "1", ...this.svc.env },
+        stdin: "ignore",
+        stdout: out,
+        stderr: err,
+        // own process group, so we can signal the whole tree (npm -> node -> esbuild...)
+        detached: true,
+      })
+    } finally {
+      closeSync(out)
+      closeSync(err)
+    }
     this.proc = proc
-    const out = pipeLines(proc.stdout, (l) => this.cb.log("stdout", l))
-    const err = pipeLines(proc.stderr, (l) => this.cb.log("stderr", l))
+    this._pid = proc.pid
+    this._startTime = procStartTime(proc.pid)
+    await this.follow()
     proc.exited.then(async (code) => {
       // leftovers of the group (e.g. a dev server's workers) must not keep ports busy
       if (groupAlive(proc.pid)) killGroup(proc.pid, "SIGTERM")
-      await Promise.race([Promise.all([out, err]), sleep(500)])
-      if (this.proc === proc) this.cb.exit(code, proc.signalCode)
+      if (this.proc !== proc || this.released) return
+      await this.stopTails()
+      if (this.proc === proc && !this.released) this.cb.exit(code, proc.signalCode)
     })
   }
 
+  async attach(saved?: SavedService) {
+    if (!saved?.pid || !this.isSame(saved.pid, saved.startTime)) return false
+    this._pid = saved.pid
+    this._startTime = saved.startTime
+    this.released = false
+    await this.follow(BACKLOG)
+    this.watcher = setInterval(() => void this.checkAdopted(), 1000)
+    return true
+  }
+
+  private async follow(backlog?: typeof BACKLOG) {
+    this.tails = [
+      new FileTail(this.files.out, (l) => this.cb.log("stdout", l)),
+      new FileTail(this.files.err, (l) => this.cb.log("stderr", l)),
+    ]
+    await Promise.all(this.tails.map((t) => t.start(backlog)))
+  }
+
+  private draining?: Promise<unknown>
+
+  private async stopTails() {
+    const tails = this.tails
+    this.tails = []
+    if (tails.length) this.draining = Promise.all(tails.map((t) => t.stop()))
+    await this.draining
+  }
+
+  /** Is `pid` still the process we launched (not a recycled pid)? */
+  private isSame(pid: number, startTime?: number): boolean {
+    const now = procStartTime(pid)
+    if (now !== undefined) return startTime === undefined || now === startTime
+    // no /proc (not Linux): fall back to "the group exists"
+    return process.platform !== "linux" && groupAlive(pid)
+  }
+
+  private leaderAlive(): boolean {
+    return this._pid !== undefined && this.isSame(this._pid, this._startTime)
+  }
+
+  private async checkAdopted() {
+    if (this.released || this.leaderAlive()) return
+    clearInterval(this.watcher)
+    const pid = this._pid!
+    if (groupAlive(pid)) killGroup(pid, "SIGTERM")
+    await this.stopTails()
+    if (this.released) return
+    let code: number | null = null
+    try {
+      const n = Number.parseInt(readFileSync(this.files.exit, "utf8"), 10)
+      if (Number.isInteger(n)) code = n
+    } catch {}
+    this.cb.exit(code)
+  }
+
+  release() {
+    this.released = true
+    clearInterval(this.watcher)
+    for (const t of this.tails) void t.stop(false)
+    this.tails = []
+    this.proc?.unref()
+  }
+
   killSync() {
-    if (this.proc && this.proc.exitCode === null) killGroup(this.proc.pid, "SIGKILL")
+    if (!this.released && this._pid !== undefined && this.leaderAlive()) killGroup(this._pid, "SIGKILL")
+  }
+
+  private waitLeader(ms: number): Promise<boolean> {
+    if (this.proc) return Promise.race([this.proc.exited.then(() => true), sleep(ms).then(() => false)])
+    return (async () => {
+      const end = Date.now() + ms
+      while (this.leaderAlive()) {
+        if (Date.now() >= end) return false
+        await sleep(25)
+      }
+      return true
+    })()
   }
 
   async stop(timeoutMs: number) {
-    const proc = this.proc
-    if (!proc || proc.exitCode !== null || proc.signalCode !== null) return
-    this.stopping = true
-    killGroup(proc.pid, "SIGTERM")
-    const exited = await Promise.race([proc.exited.then(() => true), sleep(timeoutMs).then(() => false)])
-    if (!exited) {
+    const pid = this._pid
+    if (pid === undefined || this.released) return
+    const running = this.proc ? this.proc.exitCode === null && this.proc.signalCode === null : this.leaderAlive()
+    if (!running) return
+    clearInterval(this.watcher)
+    killGroup(pid, "SIGTERM")
+    if (!(await this.waitLeader(timeoutMs))) {
       this.cb.log("system", `did not stop after ${timeoutMs}ms, sending SIGKILL`)
-      killGroup(proc.pid, "SIGKILL")
-      await proc.exited
+      killGroup(pid, "SIGKILL")
+      await this.waitLeader(5000)
     }
-    if (groupAlive(proc.pid)) {
+    if (groupAlive(pid)) {
       // the main process exited but left group members behind (e.g. background jobs);
-      // proc.exited is already settled, so wait for the group itself to disappear.
+      // the leader is already gone, so wait for the group itself to disappear.
       this.cb.log("system", "killing leftover child processes")
-      killGroup(proc.pid, "SIGKILL")
-      for (let i = 0; i < 50 && groupAlive(proc.pid); i++) await sleep(10)
+      killGroup(pid, "SIGKILL")
+      for (let i = 0; i < 50 && groupAlive(pid); i++) await sleep(10)
     }
+    await this.stopTails()
   }
 }
 
@@ -159,7 +269,7 @@ abstract class ContainerRunner implements Runner {
   ) {}
 
   abstract start(): Promise<void>
-  abstract attach(): Promise<boolean>
+  abstract attach(saved?: SavedService): Promise<boolean>
   abstract stop(timeoutMs: number): Promise<void>
 
   /** Streams a launcher command's output (e.g. image pulls) into the logs. */
@@ -205,6 +315,10 @@ abstract class ContainerRunner implements Runner {
   }
 
   killSync() {
+    this.detach()
+  }
+
+  release() {
     this.detach()
   }
 

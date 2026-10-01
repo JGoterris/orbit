@@ -6,7 +6,8 @@ import { findComposeFile } from "./config/load.ts"
 import { parseComposeFile } from "./config/compose.ts"
 import { exec } from "./core/exec.ts"
 import { levels, depMapOf } from "./core/graph.ts"
-import { containerName } from "./core/runners.ts"
+import { containerName, ProcessRunner } from "./core/runners.ts"
+import { procFiles, readLock, readState, stateDir, writeState } from "./core/state.ts"
 import { Supervisor, type Status } from "./core/supervisor.ts"
 import { gridToString, layoutGraph, paintGraph } from "./ui/graphLayout.ts"
 
@@ -126,6 +127,25 @@ export async function runUp(config: OrbitConfig, names: string[]): Promise<numbe
 
 export async function runDown(config: OrbitConfig): Promise<number> {
   let code = 0
+  const dir = stateDir(config)
+  const holder = readLock(dir)
+  if (holder) {
+    console.error(c.red(`orbit is open for this project (pid ${holder}): quit it first, or stop services from there`))
+    return 1
+  }
+  // processes a previous orbit session left running
+  const saved = readState(dir)
+  for (const [name, entry] of Object.entries(saved.services)) {
+    const svc = config.services[name]
+    if (!svc || svc.type !== "process") continue
+    const runner = new ProcessRunner(svc, { log: () => {}, exit: () => {} }, procFiles(dir, name))
+    if (await runner.attach(entry)) {
+      await runner.stop(svc.stopTimeout)
+      console.log(`${name.padEnd(16)} ${c.green("stopped")} ${c.dim(`pid ${entry.pid}`)}`)
+    }
+    delete saved.services[name]
+  }
+  writeState(dir, saved)
   for (const svc of Object.values(config.services)) {
     if (svc.type === "docker") {
       const name = containerName(config.name, svc.name)
@@ -139,7 +159,6 @@ export async function runDown(config: OrbitConfig): Promise<number> {
       if (res.code !== 0) code = 1
     }
   }
-  console.log(c.dim("processes are owned by the orbit session that started them and stop with it"))
   return code
 }
 

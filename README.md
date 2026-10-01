@@ -32,6 +32,9 @@ Built with TypeScript, [Bun](https://bun.sh) and [OpenTUI](https://github.com/an
 - **Docker / compose**: automatically imports `docker-compose.yml` (with `depends_on`, ports,
   healthchecks and `${VAR:-def}` interpolation), and re-attaches to containers that were
   already running. Those containers **are not stopped when exiting orbit** (only with explicit `x`/`X`).
+- **Detach / resume**: on `q` choose *stop all* or *leave running*. Left-running processes keep
+  their own process group and write their output to `~/.local/state/orbit/<project>/logs/`; the next
+  `orbit` re-attaches (status, logs, metrics, stop/restart). `orbit down` stops them from outside.
 - **`oneshot` tasks** (builds, migrations, provisioning): count as ready once they finish with
   exit code 0, are shown as `✓ done`, and aren't re-run when another dependent starts.
 - Detects **occupied ports** before starting (and tells you which process is using them).
@@ -62,7 +65,7 @@ anywhere).
 orbit [dir]          # TUI using the orbit.yaml from dir (or a parent directory)
 orbit --up           # TUI starting all autostart services
 orbit up [svc|group] # without TUI: starts and shows logs (ctrl+c to stop)
-orbit down           # stops docker/compose containers managed by orbit
+orbit down           # stops whatever orbit left running (processes, containers)
 orbit graph          # prints the dependency graph
 orbit ls             # lists services
 orbit init [dir]     # generates an orbit.yaml by scanning the project
@@ -91,7 +94,7 @@ Without `orbit.yaml`, orbit opens the services from a `docker-compose.yml` direc
 | `L` | open the selected service's git repo in [lazygit](https://github.com/jesseduffield/lazygit) (if installed) |
 | `:` / `ctrl+p` | command palette |
 | `?` | help |
-| `q` | quit (asks for confirmation and stops anything running) |
+| `q` | quit: `s` stops everything, `d` leaves services running (reopen `orbit` to resume them) |
 
 ## orbit.yaml
 

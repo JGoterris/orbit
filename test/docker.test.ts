@@ -2,6 +2,9 @@ import { describe, expect, test } from "bun:test"
 import type { OrbitConfig, ServiceConfig } from "../src/config/schema.ts"
 import { exec } from "../src/core/exec.ts"
 import { Supervisor } from "../src/core/supervisor.ts"
+import { mkdtempSync as __mk } from "node:fs"
+import { tmpdir as __tmp } from "node:os"
+process.env.XDG_STATE_HOME = __mk(`${__tmp()}/orbit-state-`) // tests must not touch the real ~/.local/state
 
 const hasDocker = (await exec(["docker", "image", "inspect", "redis:7-alpine"], { timeout: 5000 })).code === 0
 

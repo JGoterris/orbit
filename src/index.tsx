@@ -2,6 +2,7 @@
 import { parseArgs } from "node:util"
 import { ConfigError, type OrbitConfig } from "./config/schema.ts"
 import { loadConfig } from "./config/load.ts"
+import { acquireLock, releaseLock } from "./core/state.ts"
 import { Supervisor } from "./core/supervisor.ts"
 import { runDown, runGraph, runInit, runList, runUp } from "./cli.ts"
 
@@ -10,7 +11,7 @@ const HELP = `orbit — launch, control and monitor local services
 usage
   orbit [dir]                open the TUI for the orbit.yaml found in dir (or above)
   orbit up [service…]        start services headless, streaming logs (ctrl+c stops)
-  orbit down                 stop orbit-managed containers / compose services
+  orbit down                 stop everything orbit left running (processes, containers)
   orbit graph                print the dependency graph
   orbit ls                   list services
   orbit init [dir]           generate an orbit.yaml by scanning the project
@@ -75,22 +76,31 @@ const { createRoot } = await import("@opentui/react")
 const { App } = await import("./ui/App.tsx")
 
 const sup = new Supervisor(config)
-process.on("exit", () => sup.killAllSync())
+const holder = acquireLock(sup.stateDir)
+if (holder) {
+  console.error(`\x1b[31morbit:\x1b[0m already open for this project (pid ${holder}). Quit it first.`)
+  process.exit(1)
+}
+process.on("exit", () => {
+  sup.killAllSync()
+  releaseLock(sup.stateDir)
+})
 
 const renderer = await createCliRenderer({ exitOnCtrlC: false, useMouse: true, targetFps: 30 })
 
 let quitting = false
-async function quit(code = 0) {
+async function quit(code = 0, how: "stop" | "detach" = "stop") {
   if (quitting) return
   quitting = true
-  await Promise.race([sup.dispose(), Bun.sleep(20_000)])
+  if (how === "detach") sup.detach()
+  else await Promise.race([sup.dispose(), Bun.sleep(20_000)])
   renderer.destroy()
   process.exit(code)
 }
 for (const sig of ["SIGTERM", "SIGHUP"] as const) process.on(sig, () => void quit(0))
 process.on("SIGINT", () => void quit(130))
 
-createRoot(renderer).render(<App sup={sup} onQuit={() => quit(0)} />)
+createRoot(renderer).render(<App sup={sup} onQuit={(how) => quit(0, how)} />)
 
 void sup.init().then(() => {
   if (values.up) void sup.startAll()

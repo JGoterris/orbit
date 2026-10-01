@@ -99,6 +99,70 @@ export class LogStore {
   }
 }
 
+/**
+ * Follows a log file that another process appends to (poll based, survives truncation).
+ * Lets a service keep writing while orbit is closed and be re-read when it comes back.
+ */
+export class FileTail {
+  private offset = 0
+  private pending = ""
+  private decoder = new TextDecoder()
+  private timer?: ReturnType<typeof setInterval>
+  private polling?: Promise<void>
+
+  constructor(
+    private path: string,
+    private onLine: (line: string) => void,
+    private interval = 50,
+  ) {}
+
+  /** `backlog`: start near the end of the file (last `backlogBytes`, at most `backlogLines` lines) instead of at 0. */
+  async start(backlog?: { bytes: number; lines: number }) {
+    const size = Bun.file(this.path).size
+    if (backlog && size > 0) {
+      this.offset = Math.max(0, size - backlog.bytes)
+      const bytes = await Bun.file(this.path).slice(this.offset, size).bytes()
+      this.offset = size
+      let text = this.decoder.decode(bytes)
+      // a cut in the middle of a line is not worth showing
+      if (size > backlog.bytes) text = text.slice(text.indexOf("\n") + 1)
+      const lines = text.split("\n")
+      if (lines.at(-1) === "") lines.pop()
+      for (const l of lines.slice(-backlog.lines)) this.onLine(l)
+    }
+    this.timer = setInterval(() => void this.poll(), this.interval)
+  }
+
+  poll(): Promise<void> {
+    return (this.polling ??= this.read().finally(() => (this.polling = undefined)))
+  }
+
+  private async read() {
+    const file = Bun.file(this.path)
+    const size = file.size
+    if (size < this.offset) this.offset = 0 // truncated
+    if (size === this.offset) return
+    const bytes = await file.slice(this.offset, size).bytes()
+    this.offset = size
+    this.pending += this.decoder.decode(bytes, { stream: true })
+    let nl: number
+    while ((nl = this.pending.indexOf("\n")) !== -1) {
+      this.onLine(this.pending.slice(0, nl))
+      this.pending = this.pending.slice(nl + 1)
+    }
+  }
+
+  /** Stops following. `drain` reads what is left (including a last line without newline). */
+  async stop(drain = true) {
+    clearInterval(this.timer)
+    if (!drain) return
+    await this.polling
+    await this.read()
+    if (this.pending) this.onLine(this.pending)
+    this.pending = ""
+  }
+}
+
 /** Splits a byte stream into lines and calls `onLine` for each. */
 export async function pipeLines(
   stream: ReadableStream<Uint8Array> | null | undefined,

@@ -1,6 +1,10 @@
 import { describe, expect, test } from "bun:test"
 import type { OrbitConfig, ServiceConfig } from "../src/config/schema.ts"
+import { readState, writeState } from "../src/core/state.ts"
 import { Supervisor } from "../src/core/supervisor.ts"
+import { mkdtempSync as __mk } from "node:fs"
+import { tmpdir as __tmp } from "node:os"
+process.env.XDG_STATE_HOME = __mk(`${__tmp()}/orbit-state-`) // tests must not touch the real ~/.local/state
 
 function svc(name: string, cmd: string, extra: Partial<ServiceConfig> = {}): ServiceConfig {
   return {
@@ -120,5 +124,62 @@ describe("supervisor", () => {
     expect(await sup.start("needs-broken")).toBe(false)
     expect(sup.state("broken").status).toBe("crashed")
     await sup.dispose()
+  })
+
+  test("detach leaves processes running and a new session re-attaches to them", async () => {
+    const stateDir = __mk(`${__tmp()}/orbit-detach-`)
+    const cfg = () => config(svc("keep", "echo hi; echo oops >&2; sleep 30"))
+    const first = new Supervisor(cfg(), { stateDir })
+    await first.start("keep")
+    const pid = first.state("keep").pid!
+    await Bun.sleep(300)
+    first.detach()
+    first.killAllSync()
+    expect(() => process.kill(-pid, 0)).not.toThrow()
+
+    const second = new Supervisor(cfg(), { stateDir })
+    await second.init()
+    expect(second.state("keep").status).toBe("running")
+    expect(second.state("keep").pid).toBe(pid)
+    await Bun.sleep(100)
+    expect(second.logs.lines("keep").some((l) => l.stream === "stdout" && l.text === "hi")).toBe(true)
+    expect(second.logs.lines("keep").some((l) => l.stream === "stderr" && l.text === "oops")).toBe(true)
+    await second.stop("keep")
+    expect(second.state("keep").status).toBe("stopped")
+    expect(() => process.kill(-pid, 0)).toThrow()
+    await second.dispose()
+    expect(readState(stateDir).services).toEqual({})
+  })
+
+  test("an adopted process that exits reports its exit code", async () => {
+    const stateDir = __mk(`${__tmp()}/orbit-adopt-exit-`)
+    const cfg = () => config(svc("job", "sleep 1.5; exit 3"))
+    const first = new Supervisor(cfg(), { stateDir })
+    await first.start("job")
+    first.detach()
+    const second = new Supervisor(cfg(), { stateDir })
+    await second.init()
+    expect(second.state("job").status).toBe("running")
+    await Bun.sleep(3000)
+    expect(second.state("job").status).toBe("crashed")
+    expect(second.state("job").exitCode).toBe(3)
+    await second.dispose()
+  })
+
+  test("a recycled pid (different start time) is not adopted", async () => {
+    const stateDir = __mk(`${__tmp()}/orbit-stale-`)
+    const cfg = () => config(svc("keep", "sleep 30"))
+    const first = new Supervisor(cfg(), { stateDir })
+    await first.start("keep")
+    const pid = first.state("keep").pid!
+    first.detach()
+    const state = readState(stateDir)
+    state.services.keep!.startTime = (state.services.keep!.startTime ?? 0) + 1
+    writeState(stateDir, state)
+    const second = new Supervisor(cfg(), { stateDir })
+    await second.init()
+    expect(second.state("keep").status).toBe("stopped")
+    process.kill(-pid, "SIGKILL")
+    await second.dispose()
   })
 })

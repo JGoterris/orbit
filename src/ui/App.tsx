@@ -35,7 +35,7 @@ const VIEWS: Array<{ id: View; label: string }> = [
 
 interface Props {
   sup: Supervisor
-  onQuit: () => Promise<void> | void
+  onQuit: (how: "stop" | "detach") => Promise<void> | void
 }
 
 export function App({ sup, onQuit }: Props) {
@@ -158,14 +158,17 @@ export function App({ sup, onQuit }: Props) {
   )
 
   const requestQuit = useCallback(() => {
-    if (sup.ownedRunningCount() === 0) return void onQuit()
+    if (sup.ownedRunningCount() === 0) return void onQuit("stop")
     setMode("quit")
   }, [sup, onQuit])
 
-  const doQuit = useCallback(async () => {
-    setMode("stopping")
-    await onQuit()
-  }, [onQuit])
+  const doQuit = useCallback(
+    async (how: "stop" | "detach") => {
+      if (how === "stop") setMode("stopping")
+      await onQuit(how)
+    },
+    [onQuit],
+  )
 
   const commands = useMemo<Command[]>(() => {
     const list: Command[] = [
@@ -224,9 +227,15 @@ export function App({ sup, onQuit }: Props) {
       { id: "toggle-time", label: "Toggle log timestamps", hint: "t", run: () => setShowTime((v) => !v) },
       { id: "help", label: "Show keyboard shortcuts", hint: "?", run: () => setMode("help") },
       { id: "quit", label: "Quit orbit", hint: "q", run: requestQuit },
+      {
+        id: "quit-detach",
+        label: "Quit orbit and leave services running",
+        hint: "q d",
+        run: () => void (sup.ownedRunningCount() ? doQuit("detach") : onQuit("stop")),
+      },
     ]
     return list
-  }, [sup, names, run, openService, openLazygit, requestQuit])
+  }, [sup, names, run, openService, openLazygit, requestQuit, doQuit, onQuit])
 
   const matches = useMemo(() => filterCommands(commands, query), [commands, query])
 
@@ -238,7 +247,8 @@ export function App({ sup, onQuit }: Props) {
     if (mode === "stopping" || mode === "external") return
     if (mode === "help") return setMode("normal")
     if (mode === "quit") {
-      if (ch === "y" || ch === "Y" || key.name === "return") void doQuit()
+      if (ch === "y" || ch === "Y" || ch === "s" || ch === "S" || key.name === "return") void doQuit("stop")
+      else if (ch === "d" || ch === "D") void doQuit("detach")
       else if (ch === "n" || key.name === "escape" || ch === "q") setMode("normal")
       return
     }
@@ -515,7 +525,7 @@ export function App({ sup, onQuit }: Props) {
           message={
             mode === "stopping"
               ? `Stopping ${sup.ownedRunningCount()} service(s)…`
-              : `${sup.ownedRunningCount()} service(s) running. Stop them and quit?` +
+              : `${sup.ownedRunningCount()} service(s) running.` +
                 (sup.names.some((n) => sup.isAdopted(n)) ? " (attached containers stay up)" : "")
           }
         />

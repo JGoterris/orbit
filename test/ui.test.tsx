@@ -3,6 +3,9 @@ import { testRender } from "@opentui/react/test-utils"
 import { loadConfig } from "../src/config/load.ts"
 import { Supervisor } from "../src/core/supervisor.ts"
 import { App } from "../src/ui/App.tsx"
+import { mkdtempSync as __mk } from "node:fs"
+import { tmpdir as __tmp } from "node:os"
+process.env.XDG_STATE_HOME = __mk(`${__tmp()}/orbit-state-`) // tests must not touch the real ~/.local/state
 
 // The app has live timers (spinners, clocks), so rendering is driven with renderOnce() + short
 // waits instead of act(); testRender() turns the act environment on, so switch it off again.

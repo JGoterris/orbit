@@ -8,6 +8,7 @@ import { checkHealth, describeHealth } from "./health.ts"
 import { LogStore } from "./logs.ts"
 import { ProcessSampler, sampleContainers } from "./metrics.ts"
 import { createRunner, type Runner } from "./runners.ts"
+import { procFiles, readState, stateDir, writeState, type SavedService } from "./state.ts"
 
 export type Status =
   | "stopped" // never started / stopped by the user
@@ -69,8 +70,14 @@ export class Supervisor extends EventEmitter {
   private sampling = false
   private disposed = false
 
-  constructor(readonly config: OrbitConfig) {
+  readonly stateDir: string
+
+  constructor(
+    readonly config: OrbitConfig,
+    opts: { stateDir?: string } = {},
+  ) {
     super()
+    this.stateDir = opts.stateDir ?? stateDir(config)
     this.setMaxListeners(100)
     this.deps = depMapOf(config)
     this.dependents = dependentsMap(this.deps)
@@ -125,29 +132,44 @@ export class Supervisor extends EventEmitter {
 
   // ---------------------------------------------------------------- lifecycle
 
-  /** Detects containers that are already running and re-attaches to them; starts the metrics loop. */
+  /**
+   * Re-attaches to what is already running: containers, and processes a previous orbit session left behind
+   * (recorded in state.json). Starts the metrics loop.
+   */
   async init(): Promise<void> {
     this.metricsTimer = setInterval(() => void this.sampleMetrics(), 2000)
+    const saved = readState(this.stateDir).services
     await Promise.all(
-      this.names
-        .filter((n) => this.service(n).type !== "process")
-        .map(async (name) => {
-          const rt = this.rt.get(name)!
-          const runner = this.makeRunner(name)
-          const attached = await runner.attach?.().catch(() => false)
-          if (!attached || rt.runner || this.disposed) return
-          rt.runner = runner
-          rt.adopted = true
-          const gen = ++rt.gen
-          this.log(name, "attached to already running container (left running when orbit quits)")
-          this.update(name, {
-            status: this.service(name).health ? "starting" : "running",
-            containerId: runner.containerId,
-            startedAt: Date.now(),
-          })
-          this.scheduleHealth(name, gen, 0)
-        }),
+      this.names.map(async (name) => {
+        const svc = this.service(name)
+        const rt = this.rt.get(name)!
+        const entry = saved[name]
+        if (svc.type === "process" && !entry) return
+        const runner = this.makeRunner(name)
+        const attached = await runner.attach?.(entry).catch(() => false)
+        if (!attached || rt.runner || this.disposed) return
+        rt.runner = runner
+        // a container orbit did not start itself stays up when orbit quits; anything recorded in state.json is ours
+        rt.adopted = svc.type !== "process" && !entry
+        const gen = ++rt.gen
+        this.log(
+          name,
+          svc.type === "process"
+            ? `re-attached to running process (pid ${runner.pid})`
+            : rt.adopted
+              ? "attached to already running container (left running when orbit quits)"
+              : "re-attached to running container",
+        )
+        this.update(name, {
+          status: svc.health || (svc.oneshot && svc.type === "process") ? "starting" : "running",
+          pid: runner.pid,
+          containerId: runner.containerId,
+          startedAt: entry?.startedAt ?? Date.now(),
+        })
+        if (!svc.oneshot) this.scheduleHealth(name, gen, 0)
+      }),
     )
+    this.persist()
   }
 
   /** Starts a service (and its dependencies first). Resolves true once it is ready. */
@@ -219,6 +241,7 @@ export class Supervisor extends EventEmitter {
       startedAt: Date.now(),
       stoppedAt: undefined,
     })
+    this.persist()
     if (!svc.oneshot) this.scheduleHealth(name, gen, 300)
 
     const ready = await Promise.race([
@@ -274,6 +297,7 @@ export class Supervisor extends EventEmitter {
       clearTimeout(rt.healthTimer)
       if (rt.runner === runner) rt.runner = undefined
       this.update(name, { status: "stopped", pid: undefined, stoppedAt: Date.now() })
+      this.persist()
       this.log(name, "stopped")
       this.flushWaiters(name, false)
     })().finally(() => (rt.stopPromise = undefined))
@@ -312,6 +336,25 @@ export class Supervisor extends EventEmitter {
       clearTimeout(rt.healthTimer)
       clearTimeout(rt.restartTimer)
     }
+    this.persist()
+  }
+
+  /**
+   * Quits without stopping anything: records what is running (state.json) and stops following it.
+   * Processes keep running in their own group; the next `init()` picks them up again.
+   */
+  detach() {
+    this.disposed = true
+    clearInterval(this.metricsTimer)
+    this.persist()
+    for (const rt of this.rt.values()) {
+      clearTimeout(rt.healthTimer)
+      clearTimeout(rt.restartTimer)
+      rt.gen++
+      rt.runner?.release()
+      rt.runner = undefined
+      for (const w of rt.waiters.splice(0)) w(false)
+    }
   }
 
   /** Last resort on process exit: SIGKILL every process group and watcher we own. Synchronous. */
@@ -326,12 +369,25 @@ export class Supervisor extends EventEmitter {
 
   // ---------------------------------------------------------------- internals
 
+  /** Writes what this session owns and has running, for a later session to re-attach to. */
+  private persist() {
+    const services: Record<string, SavedService> = {}
+    for (const name of this.names) {
+      const rt = this.rt.get(name)!
+      if (!rt.runner || rt.adopted) continue
+      const pid = rt.runner.pid
+      if (this.service(name).type === "process" && pid === undefined) continue
+      services[name] = { pid, startTime: rt.runner.startTime, startedAt: this.state(name).startedAt ?? Date.now() }
+    }
+    writeState(this.stateDir, { services })
+  }
+
   private makeRunner(name: string, env?: Record<string, string>): Runner {
     const svc = this.service(name)
     const runner: Runner = createRunner(env ? { ...svc, env } : svc, this.config.name, {
       log: (stream, text) => this.logs.append(name, stream, text),
       exit: (code, signal) => this.onExit(name, runner, code, signal),
-    })
+    }, procFiles(this.stateDir, name))
     return runner
   }
 
@@ -341,6 +397,7 @@ export class Supervisor extends EventEmitter {
     rt.runner = undefined
     rt.gen++
     clearTimeout(rt.healthTimer)
+    this.persist()
     const st = this.state(name)
     const svc = this.service(name)
     const ok = code === 0

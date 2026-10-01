@@ -123,7 +123,7 @@ const HELP: Array<[string, string]> = [
   ["o", "open service URL in the browser"],
   ["L", "open the service's git repo in lazygit"],
   [": / ctrl+p", "command palette"],
-  ["q", "quit (stops running services)"],
+  ["q", "quit: stop all services or leave them running"],
 ]
 
 export function HelpOverlay({ width }: { width: number }) {
@@ -144,20 +144,30 @@ export function HelpOverlay({ width }: { width: number }) {
 export function ConfirmOverlay({ message, width, busy }: { message: string; width: number; busy?: boolean }) {
   const w = Math.min(60, width - 4)
   return (
-    <Modal title={busy ? "Stopping" : "Quit"} width={w} height={6}>
+    <Modal title={busy ? "Stopping" : "Quit"} width={w} height={busy ? 6 : 7}>
       <text fg={theme.text}>{message}</text>
       <text>
         {busy ? (
           <span fg={theme.dim}>please wait…</span>
         ) : (
           <>
-            <span fg={theme.green}>y</span>
-            <span fg={theme.dim}> stop all & quit    </span>
-            <span fg={theme.red}>n / esc</span>
-            <span fg={theme.dim}> cancel</span>
+            <span fg={theme.green}>s</span>
+            <span fg={theme.dim}> stop all & quit</span>
           </>
         )}
       </text>
+      {busy ? null : (
+        <>
+          <text>
+            <span fg={theme.accent}>d</span>
+            <span fg={theme.dim}> leave running & quit (reopen orbit to resume)</span>
+          </text>
+          <text>
+            <span fg={theme.red}>n / esc</span>
+            <span fg={theme.dim}> cancel</span>
+          </text>
+        </>
+      )}
     </Modal>
   )
 }
