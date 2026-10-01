@@ -1,3 +1,4 @@
+import type { EnvEntry } from "../config/envFiles.ts"
 import { fit, theme } from "./theme.ts"
 
 export interface Command {
@@ -120,6 +121,7 @@ const HELP: Array<[string, string]> = [
   ["f · pgup pgdn · wheel", "follow · scroll logs"],
   ["(logs focused)", "j k · ctrl+u/d · g G  scroll"],
   ["t · c", "toggle timestamps · clear logs"],
+  ["e", "environment variables of the selected service"],
   ["o", "open service URL in the browser"],
   ["L", "open the service's git repo in lazygit"],
   [": / ctrl+p", "command palette"],
@@ -168,6 +170,62 @@ export function ConfirmOverlay({ message, width, busy }: { message: string; widt
           </text>
         </>
       )}
+    </Modal>
+  )
+}
+
+const SECRET_RE = /KEY|TOKEN|SECRET|PASSWORD|PASS|PWD|CREDENTIAL|PRIVATE/i
+export const isSecretKey = (key: string) => SECRET_RE.test(key)
+
+/** Rows of the env overlay that fit at a given terminal height (modal chrome and footer excluded). */
+export const envPageSize = (height: number) => Math.max(3, Math.min(height - 4, 30) - 5)
+
+export function EnvOverlay({
+  service,
+  entries,
+  missing,
+  scroll,
+  reveal,
+  width,
+  height,
+}: {
+  service: string
+  entries: EnvEntry[]
+  missing: string[]
+  scroll: number
+  reveal: boolean
+  width: number
+  height: number
+}) {
+  const w = Math.min(100, width - 4)
+  const h = Math.min(height - 4, 30)
+  const page = envPageSize(height)
+  const start = Math.min(scroll, Math.max(0, entries.length - page))
+  const shown = entries.slice(start, start + page)
+  const keyW = Math.min(32, Math.max(8, ...entries.map((e) => e.key.length)))
+  const srcW = Math.min(24, Math.max(6, ...entries.map((e) => e.source.length)))
+  const valW = Math.max(8, w - 4 - keyW - srcW - 2)
+  return (
+    <Modal title={`Env · ${service} (${entries.length})`} width={w} height={h}>
+      {shown.length ? (
+        shown.map((e) => {
+          const hidden = !reveal && isSecretKey(e.key)
+          return (
+            <text key={e.key}>
+              <span fg={theme.accent}>{fit(e.key, keyW + 1)}</span>
+              <span fg={hidden ? theme.dim : theme.text}>{fit(hidden ? "••••••" : e.value, valW + 1)}</span>
+              <span fg={theme.dim}>{fit(e.source, srcW)}</span>
+            </text>
+          )
+        })
+      ) : (
+        <text fg={theme.dim}>no variables defined for this service</text>
+      )}
+      <box flexGrow={1} />
+      {missing.length ? <text fg={theme.yellow}>{fit(`missing env_file: ${missing.join(", ")}`, w - 4)}</text> : null}
+      <text fg={theme.dim}>
+        {`j/k scroll · v ${reveal ? "hide" : "reveal"} secrets · esc close${entries.length > page ? `  (${start + 1}-${start + shown.length}/${entries.length})` : ""}`}
+      </text>
     </Modal>
   )
 }

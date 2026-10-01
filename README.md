@@ -91,6 +91,7 @@ Without `orbit.yaml`, orbit opens the services from a `docker-compose.yml` direc
 | `f` · `PgUp PgDn` · wheel | follow / scroll logs |
 | `t` · `c` | timestamps · clear logs |
 | `o` | open `http://localhost:<port>` (or `url`) in the browser |
+| `e` | environment variables of the selected service (secrets masked, `v` reveals) |
 | `L` | open the selected service's git repo in [lazygit](https://github.com/jesseduffield/lazygit) (if installed) |
 | `:` / `ctrl+p` | command palette |
 | `?` | help |

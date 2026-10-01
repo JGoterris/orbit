@@ -1,19 +1,20 @@
 import type { KeyEvent } from "@opentui/core"
 import { useKeyboard, useRenderer, useTerminalDimensions } from "@opentui/react"
 import { useCallback, useEffect, useMemo, useRef, useState } from "react"
+import { resolveEnv } from "../config/envFiles.ts"
 import { openUrl } from "../core/exec.ts"
 import { findGitRoot } from "../core/git.ts"
 import type { Supervisor } from "../core/supervisor.ts"
 import { GraphView, neighbourInDirection, useGraphLayout } from "./GraphView.tsx"
 import { useSupervisorVersion, useTick } from "./hooks.ts"
 import { LogView } from "./LogView.tsx"
-import { CommandPalette, ConfirmOverlay, filterCommands, HelpOverlay, type Command } from "./Overlays.tsx"
+import { CommandPalette, ConfirmOverlay, EnvOverlay, envPageSize, filterCommands, HelpOverlay, type Command } from "./Overlays.tsx"
 import { ServiceDetail } from "./ServiceDetail.tsx"
 import { ServiceList } from "./ServiceList.tsx"
 import { statusStyle, theme } from "./theme.ts"
 
 type View = "dashboard" | "graph" | "logs"
-type Mode = "normal" | "palette" | "filter" | "help" | "quit" | "stopping" | "external"
+type Mode = "normal" | "palette" | "filter" | "help" | "env" | "quit" | "stopping" | "external"
 
 type Pane = "services" | "detail" | "logs" | "graph"
 
@@ -57,6 +58,8 @@ export function App({ sup, onQuit }: Props) {
   const [showTime, setShowTime] = useState(false)
   const [query, setQuery] = useState("")
   const [paletteIndex, setPaletteIndex] = useState(0)
+  const [envScroll, setEnvScroll] = useState(0)
+  const [envReveal, setEnvReveal] = useState(false)
   const [toast, setToast] = useState<{ text: string; color: string } | undefined>()
   const toastTimer = useRef<ReturnType<typeof setTimeout>>(undefined)
 
@@ -225,6 +228,7 @@ export function App({ sup, onQuit }: Props) {
       }),
       { id: "clear-logs", label: "Clear all logs", run: () => sup.clearLogs() },
       { id: "toggle-time", label: "Toggle log timestamps", hint: "t", run: () => setShowTime((v) => !v) },
+      { id: "env", label: "Show environment variables", hint: "e", run: openEnv },
       { id: "help", label: "Show keyboard shortcuts", hint: "?", run: () => setMode("help") },
       { id: "quit", label: "Quit orbit", hint: "q", run: requestQuit },
       {
@@ -235,7 +239,7 @@ export function App({ sup, onQuit }: Props) {
       },
     ]
     return list
-  }, [sup, names, run, openService, openLazygit, requestQuit, doQuit, onQuit])
+  }, [sup, names, selected, run, openService, openLazygit, requestQuit, doQuit, onQuit])
 
   const matches = useMemo(() => filterCommands(commands, query), [commands, query])
 
@@ -246,6 +250,20 @@ export function App({ sup, onQuit }: Props) {
     const ch = key.sequence
     if (mode === "stopping" || mode === "external") return
     if (mode === "help") return setMode("normal")
+    if (mode === "env") {
+      const n = selected ? resolveEnv(sup.service(selected), sup.config.root).entries.length : 0
+      const page = envPageSize(height)
+      const clamp = (v: number) => Math.max(0, Math.min(v, Math.max(0, n - page)))
+      if (key.name === "escape" || ch === "e" || ch === "q") return setMode("normal")
+      if (ch === "v") return setEnvReveal((v) => !v)
+      if (key.name === "down" || ch === "j") return setEnvScroll((v) => clamp(v + 1))
+      if (key.name === "up" || ch === "k") return setEnvScroll((v) => clamp(v - 1))
+      if (key.name === "pagedown" || (key.ctrl && key.name === "d")) return setEnvScroll((v) => clamp(v + page))
+      if (key.name === "pageup" || (key.ctrl && key.name === "u")) return setEnvScroll((v) => clamp(v - page))
+      if (ch === "g" || key.name === "home") return setEnvScroll(0)
+      if (ch === "G" || key.name === "end") return setEnvScroll(clamp(n))
+      return
+    }
     if (mode === "quit") {
       if (ch === "y" || ch === "Y" || ch === "s" || ch === "S" || key.name === "return") void doQuit("stop")
       else if (ch === "d" || ch === "D") void doQuit("detach")
@@ -318,6 +336,7 @@ export function App({ sup, onQuit }: Props) {
     if (ch === "S") return run("start all", sup.startAll())
     if (ch === "X") return run("stop all", sup.stopAll())
     if (ch === "R") return commands.find((c) => c.id === "restart-all")!.run()
+    if (ch === "e") return openEnv()
     if (ch === "o") return openService(selected)
     if (ch === "L") return void openLazygit(selected)
     if (key.name === "return" || ch === "l") {
@@ -337,6 +356,13 @@ export function App({ sup, onQuit }: Props) {
     if (key.name === "pageup") return setScrollBack((v) => v + page)
     if (key.name === "pagedown") return setScrollBack((v) => Math.max(0, v - page))
   })
+
+  function openEnv() {
+    if (!selected) return
+    setEnvScroll(0)
+    setEnvReveal(false)
+    setMode("env")
+  }
 
   function openPalette() {
     setQuery("")
@@ -423,6 +449,7 @@ export function App({ sup, onQuit }: Props) {
                     focused={focus === "detail"}
                     expanded={zoomed}
                     height={detailRows}
+                    rows={zoomed ? height - 6 : detailRows - 2}
                     onFocus={() => setFocus("detail")}
                   />
                 ) : null}
@@ -518,6 +545,9 @@ export function App({ sup, onQuit }: Props) {
 
       {mode === "palette" ? <CommandPalette commands={matches} selected={paletteIndex} onQuery={setQuery} width={width} /> : null}
       {mode === "help" ? <HelpOverlay width={width} /> : null}
+      {mode === "env" && selected ? (
+        <EnvOverlay service={selected} {...resolveEnv(sup.service(selected), sup.config.root)} scroll={envScroll} reveal={envReveal} width={width} height={height} />
+      ) : null}
       {mode === "quit" || mode === "stopping" ? (
         <ConfirmOverlay
           width={width}

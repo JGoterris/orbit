@@ -149,6 +149,25 @@ describe("tui", () => {
     expect(rowOf("Logs · ")).toBe(top - 1)
   })
 
+  test("detail shows config, charts and recent events when it has room; e opens the env overlay", async () => {
+    const t = await setup()
+    const text = () => t.captureCharFrame()
+    await press(t, "TAB")
+    expect(text()).not.toContain("start_timeout")
+    await press(t, "z")
+    expect(text()).toContain("start_timeout")
+    expect(text()).toContain("recent")
+    await press(t, "z")
+    for (let i = 0; i < 8; i++) await press(t, "+")
+    expect(text()).toContain("start_timeout")
+
+    await press(t, "e")
+    expect(text()).toContain("Env · ")
+    expect(text()).toContain("LOG_LEVEL")
+    await press(t, "ESCAPE")
+    expect(text()).not.toContain("Env · ")
+  })
+
   test("mouse: click the header tabs to switch views", async () => {
     const t = await setup()
     const click = async (label: string) => {

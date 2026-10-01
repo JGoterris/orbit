@@ -2,7 +2,7 @@ import { relative } from "node:path"
 import type { Supervisor } from "../core/supervisor.ts"
 import { describeHealth } from "../core/health.ts"
 import { formatBytes, formatDuration } from "../core/metrics.ts"
-import { fit, sparkline, styleFor, theme, typeBadge } from "./theme.ts"
+import { areaChart, fit, sparkline, styleFor, theme, typeBadge } from "./theme.ts"
 
 interface Props {
   sup: Supervisor
@@ -12,7 +12,47 @@ interface Props {
   /** zoomed: fill the available height instead of the fixed 9 rows */
   expanded?: boolean
   height?: number
+  /** inner rows available; anything beyond the 7 base lines is filled with config, charts and recent events */
+  rows?: number
   onFocus?: () => void
+}
+
+/** the lines every service shows: status, what, fields, needs, spacer, cpu/mem, error */
+const BASE_ROWS = 7
+
+interface Item {
+  label: string
+  value: string
+}
+
+/** Greedy-packs `label value` items into lines of at most `width` columns. */
+function packItems(items: Item[], width: number): Item[][] {
+  const lines: Item[][] = [[]]
+  let used = 0
+  for (const it of items) {
+    const value = fit(it.value, Math.max(4, Math.min(it.value.length, width - it.label.length - 4))).trimEnd()
+    const w = it.label.length + value.length + 4
+    if (used + w > width && lines[lines.length - 1]!.length) {
+      lines.push([])
+      used = 0
+    }
+    lines[lines.length - 1]!.push({ label: it.label, value })
+    used += w
+  }
+  return lines
+}
+
+const stats = (vs: readonly number[], fmt: (n: number) => string) =>
+  vs.length ? `now ${fmt(vs[vs.length - 1]!)} · avg ${fmt(vs.reduce((a, b) => a + b, 0) / vs.length)} · max ${fmt(Math.max(...vs))}` : "no samples"
+
+function Header({ label, width }: { label: string; width: number }) {
+  return (
+    <text flexShrink={0}>
+      <span fg={theme.border}>{"── "}</span>
+      <span fg={theme.muted}>{label}</span>
+      <span fg={theme.border}>{` ${"─".repeat(Math.max(0, width - label.length - 4))}`}</span>
+    </text>
+  )
 }
 
 function Field({ label, value, color = theme.text }: { label: string; value: string; color?: string }) {
@@ -25,7 +65,7 @@ function Field({ label, value, color = theme.text }: { label: string; value: str
   )
 }
 
-export function ServiceDetail({ sup, name, width, focused, expanded, height, onFocus }: Props) {
+export function ServiceDetail({ sup, name, width, focused, expanded, height, rows, onFocus }: Props) {
   const svc = sup.service(name)
   const st = sup.state(name)
   const style = styleFor(st.status, svc.oneshot)
@@ -47,6 +87,30 @@ export function ServiceDetail({ sup, name, width, focused, expanded, height, onF
   const sparkW = Math.max(10, Math.floor((inner - 36) / 2))
   const cpuNow = st.cpu.length ? st.cpu[st.cpu.length - 1]! : 0
   const memNow = st.mem.length ? st.mem[st.mem.length - 1]! : 0
+
+  // ---- extra blocks, in priority order, as far as the height allows
+  const extra = Math.max(0, (rows ?? 0) - BASE_ROWS)
+  const items: Item[] = []
+  if (svc.health) items.push({ label: "check", value: `every ${formatDuration(svc.health.interval)} · timeout ${formatDuration(svc.health.timeout)}` })
+  items.push({ label: "start_timeout", value: formatDuration(svc.startTimeout) }, { label: "stop_timeout", value: formatDuration(svc.stopTimeout) })
+  items.push({ label: "autostart", value: svc.autostart ? "yes" : "no" })
+  if (svc.oneshot) items.push({ label: "oneshot", value: "yes" })
+  if (svc.url) items.push({ label: "url", value: svc.url })
+  if (svc.ports.length) items.push({ label: "ports", value: svc.ports.join(", ") })
+  if (svc.volumes.length) items.push({ label: "volumes", value: svc.volumes.join(", ") })
+  if (svc.dockerArgs.length) items.push({ label: "args", value: svc.dockerArgs.join(" ") })
+  if (svc.composeProject) items.push({ label: "project", value: svc.composeProject })
+  if (st.exitCode !== undefined && st.exitCode !== null) items.push({ label: "exit", value: String(st.exitCode) })
+  // each block gets a one-row header so they stay distinguishable (charts are empty while stopped)
+  const configLines = extra >= 2 ? packItems(items, inner).slice(0, extra - 1) : []
+  const rem = extra - (configLines.length ? configLines.length + 1 : 0)
+  const chartExtra = rem >= 3 ? Math.min(rem - 1, Math.max(2, Math.min(7, Math.ceil(rem / 2)))) : 0
+  const eventRows = rem - (chartExtra ? chartExtra + 1 : 0) >= 2 ? rem - (chartExtra ? chartExtra + 1 : 0) : 0
+  const events = eventRows ? sup.logs.lines(name).filter((l) => l.stream !== "stdout").slice(-(eventRows - 1)) : []
+
+  const chartW = Math.max(10, Math.floor((inner - 12) / 2))
+  const cpuChart = chartExtra ? areaChart(st.cpu, chartW, chartExtra, Math.max(100, ...st.cpu)) : []
+  const memChart = chartExtra ? areaChart(st.mem, chartW, chartExtra) : []
 
   return (
     <box
@@ -92,6 +156,14 @@ export function ServiceDetail({ sup, name, width, focused, expanded, height, onF
         ) : null}
         {st.restarts ? <Field label="restarts" value={String(st.restarts)} color={theme.orange} /> : null}
       </text>
+      {configLines.length ? <Header label="config" width={inner} /> : null}
+      {configLines.map((line, i) => (
+        <text key={`cfg${i}`} flexShrink={0}>
+          {line.map((it) => (
+            <Field key={it.label} label={it.label} value={it.value} color={theme.muted} />
+          ))}
+        </text>
+      ))}
       <text flexShrink={0}>
         <span fg={theme.dim}>needs </span>
         {deps.length ? (
@@ -117,6 +189,23 @@ export function ServiceDetail({ sup, name, width, focused, expanded, height, onF
         )}
       </text>
       <text flexShrink={0}> </text>
+      {chartExtra ? (
+        <>
+          <Header label="usage" width={inner} />
+          {cpuChart.map((row, i) => (
+            <text key={`ch${i}`} flexShrink={0}>
+              <span fg={theme.dim}>{i === 0 ? "cpu " : "    "}</span>
+              <span fg={theme.green}>{row}</span>
+              <span fg={theme.dim}>{i === 0 ? "    mem " : "        "}</span>
+              <span fg={theme.accent}>{memChart[i]}</span>
+            </text>
+          ))}
+          <text flexShrink={0}>
+            <span fg={theme.muted}>{`    ${fit(stats(st.cpu, (n) => `${n.toFixed(1)}%`), chartW + 4)}`}</span>
+            <span fg={theme.muted}>{`    ${fit(stats(st.mem, formatBytes), chartW)}`}</span>
+          </text>
+        </>
+      ) : (
       <text flexShrink={0}>
         <span fg={theme.dim}>cpu </span>
         <span fg={theme.green}>{sparkline(st.cpu, sparkW, Math.max(100, ...st.cpu))}</span>
@@ -125,6 +214,24 @@ export function ServiceDetail({ sup, name, width, focused, expanded, height, onF
         <span fg={theme.accent}>{sparkline(st.mem, sparkW)}</span>
         <span fg={theme.text}>{` ${formatBytes(memNow).padStart(6)}`}</span>
       </text>
+      )}
+      {eventRows ? (
+        <>
+          <Header label="recent" width={inner} />
+          {events.length ? (
+            events.map((l) => (
+              <text key={l.seq} flexShrink={0}>
+                <span fg={theme.dim}>{`${new Date(l.ts).toTimeString().slice(0, 8)} `}</span>
+                <span fg={l.stream === "stderr" ? theme.red : theme.muted}>{fit(l.text, Math.max(10, inner - 9))}</span>
+              </text>
+            ))
+          ) : (
+            <text flexShrink={0}>
+              <span fg={theme.dim}>no recent events</span>
+            </text>
+          )}
+        </>
+      ) : null}
       <text flexShrink={0}>
         {st.error ? (
           <span fg={theme.red}>{fit(`✖ ${st.error}`, inner)}</span>

@@ -1,5 +1,5 @@
 import { existsSync, readFileSync } from "node:fs"
-import { isAbsolute, resolve } from "node:path"
+import { isAbsolute, relative, resolve } from "node:path"
 import { parseDotEnv } from "./interpolate.ts"
 import { asRecord, asString, ConfigError } from "./schema.ts"
 
@@ -41,4 +41,29 @@ export function readEnvFiles(refs: readonly EnvFileRef[]): Record<string, string
     Object.assign(out, parseDotEnv(readFileSync(ref.path, "utf8")))
   }
   return out
+}
+
+export interface EnvEntry {
+  key: string
+  value: string
+  /** the .env file it came from (relative to root), or "inline" */
+  source: string
+}
+
+/** Same merge as a service start (inline over files), but never throws: missing required files are reported. */
+export function resolveEnv(
+  svc: { env: Record<string, string>; envFiles: readonly EnvFileRef[] },
+  root: string,
+): { entries: EnvEntry[]; missing: string[] } {
+  const merged = new Map<string, EnvEntry>()
+  for (const ref of svc.envFiles) {
+    if (!existsSync(ref.path)) continue
+    const source = relative(root, ref.path) || ref.path
+    for (const [key, value] of Object.entries(parseDotEnv(readFileSync(ref.path, "utf8")))) merged.set(key, { key, value, source })
+  }
+  for (const [key, value] of Object.entries(svc.env)) merged.set(key, { key, value, source: "inline" })
+  return {
+    entries: [...merged.values()].sort((a, b) => a.key.localeCompare(b.key)),
+    missing: missingEnvFiles(svc.envFiles).map((f) => relative(root, f) || f),
+  }
 }

@@ -72,6 +72,24 @@ export function sparkline(values: readonly number[], width: number, max?: number
   return line.padStart(width, " ")
 }
 
+/** Multi-row bar chart, newest value on the right. Returns `rows` strings of exactly `width` chars, top row first. */
+export function areaChart(values: readonly number[], width: number, rows: number, max?: number): string[] {
+  const vs = values.slice(-width)
+  const top = max ?? Math.max(1e-9, ...vs)
+  const levels = vs.map((v) => Math.round(Math.min(1, Math.max(0, v / top)) * rows * 8))
+  const out: string[] = []
+  for (let r = rows - 1; r >= 0; r--) {
+    const line = levels
+      .map((l) => {
+        const cell = l - r * 8
+        return cell >= 8 ? "█" : cell > 0 ? BARS[cell - 1]! : r === 0 ? "▁" : " "
+      })
+      .join("")
+    out.push(line.padStart(width, r === 0 ? "▁" : " "))
+  }
+  return out
+}
+
 export function fit(s: string, width: number): string {
   if (width <= 0) return ""
   return s.length > width ? s.slice(0, Math.max(0, width - 1)) + "…" : s.padEnd(width, " ")

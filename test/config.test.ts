@@ -5,7 +5,7 @@ import { join } from "node:path"
 import { loadConfig, parseDotEnv, interpolate } from "../src/config/load.ts"
 import { parseDuration, hostPortOf } from "../src/config/schema.ts"
 import { splitArgs } from "../src/core/runners.ts"
-import { readEnvFiles } from "../src/config/envFiles.ts"
+import { readEnvFiles, resolveEnv } from "../src/config/envFiles.ts"
 
 function project(files: Record<string, string>) {
   const dir = mkdtempSync(join(tmpdir(), "orbit-test-"))
@@ -139,5 +139,28 @@ services:
   test("a missing required env file is a config error", () => {
     const dir = project({ "orbit.yaml": "services:\n  api: { cmd: x, env_file: nope.env }" })
     expect(() => loadConfig({ dir })).toThrow(/env_file not found/)
+  })
+})
+
+describe("resolveEnv", () => {
+  test("inline wins over files, missing required files are reported", () => {
+    const dir = mkdtempSync(`${tmpdir()}/orbit-env-`)
+    writeFileSync(`${dir}/a.env`, "A=1\nB=file\n")
+    const { entries, missing } = resolveEnv(
+      {
+        env: { B: "inline" },
+        envFiles: [
+          { path: `${dir}/a.env`, required: true },
+          { path: `${dir}/nope.env`, required: true },
+          { path: `${dir}/opt.env`, required: false },
+        ],
+      },
+      dir,
+    )
+    expect(entries).toEqual([
+      { key: "A", value: "1", source: "a.env" },
+      { key: "B", value: "inline", source: "inline" },
+    ])
+    expect(missing).toEqual(["nope.env"])
   })
 })
