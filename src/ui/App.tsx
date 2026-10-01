@@ -1,7 +1,8 @@
 import type { KeyEvent } from "@opentui/core"
-import { useKeyboard, useTerminalDimensions } from "@opentui/react"
+import { useKeyboard, useRenderer, useTerminalDimensions } from "@opentui/react"
 import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { openUrl } from "../core/exec.ts"
+import { findGitRoot } from "../core/git.ts"
 import type { Supervisor } from "../core/supervisor.ts"
 import { GraphView, neighbourInDirection, useGraphLayout } from "./GraphView.tsx"
 import { useSupervisorVersion, useTick } from "./hooks.ts"
@@ -12,7 +13,7 @@ import { ServiceList } from "./ServiceList.tsx"
 import { statusStyle, theme } from "./theme.ts"
 
 type View = "dashboard" | "graph" | "logs"
-type Mode = "normal" | "palette" | "filter" | "help" | "quit" | "stopping"
+type Mode = "normal" | "palette" | "filter" | "help" | "quit" | "stopping" | "external"
 
 const VIEWS: Array<{ id: View; label: string }> = [
   { id: "dashboard", label: "Dashboard" },
@@ -29,6 +30,7 @@ export function App({ sup, onQuit }: Props) {
   useSupervisorVersion(sup)
   const tick = useTick(250)
   const { width, height } = useTerminalDimensions()
+  const renderer = useRenderer()
   const layout = useGraphLayout(sup)
   const names = sup.order
 
@@ -86,6 +88,26 @@ export function App({ sup, onQuit }: Props) {
     [sup, notify],
   )
 
+  const openLazygit = useCallback(
+    async (name: string) => {
+      if (!Bun.which("lazygit")) return notify("lazygit is not installed", theme.yellow)
+      const root = findGitRoot(sup.service(name).cwd)
+      if (!root) return notify(`${name} is not in a git repository`, theme.yellow)
+      setMode("external")
+      renderer.suspend()
+      try {
+        const proc = Bun.spawn(["lazygit", "-p", root], { stdio: ["inherit", "inherit", "inherit"] })
+        await proc.exited
+      } catch (err) {
+        notify(`lazygit: ${(err as Error).message}`, theme.red)
+      } finally {
+        renderer.resume()
+        setMode("normal")
+      }
+    },
+    [sup, renderer, notify],
+  )
+
   const requestQuit = useCallback(() => {
     if (sup.ownedRunningCount() === 0) return void onQuit()
     setMode("quit")
@@ -133,6 +155,7 @@ export function App({ sup, onQuit }: Props) {
           },
         ]
         if (svc.port || svc.url) items.push({ id: `open-${n}`, label: `Open ${n} in browser`, hint: svc.url ?? `:${svc.port}`, run: () => openService(n) })
+        if (findGitRoot(svc.cwd)) items.push({ id: `git-${n}`, label: `Open ${n} in lazygit`, hint: "L", run: () => void openLazygit(n) })
         return items
       }),
       { id: "clear-logs", label: "Clear all logs", run: () => sup.clearLogs() },
@@ -141,7 +164,7 @@ export function App({ sup, onQuit }: Props) {
       { id: "quit", label: "Quit orbit", hint: "q", run: requestQuit },
     ]
     return list
-  }, [sup, names, run, openService, requestQuit])
+  }, [sup, names, run, openService, openLazygit, requestQuit])
 
   const matches = useMemo(() => filterCommands(commands, query), [commands, query])
 
@@ -150,7 +173,7 @@ export function App({ sup, onQuit }: Props) {
 
   useKeyboard((key: KeyEvent) => {
     const ch = key.sequence
-    if (mode === "stopping") return
+    if (mode === "stopping" || mode === "external") return
     if (mode === "help") return setMode("normal")
     if (mode === "quit") {
       if (ch === "y" || ch === "Y" || key.name === "return") void doQuit()
@@ -208,6 +231,7 @@ export function App({ sup, onQuit }: Props) {
     if (ch === "X") return run("stop all", sup.stopAll())
     if (ch === "R") return commands.find((c) => c.id === "restart-all")!.run()
     if (ch === "o") return openService(selected)
+    if (ch === "L") return void openLazygit(selected)
     if (key.name === "return" || ch === "l") {
       setLogScope("selected")
       setScrollBack(0)

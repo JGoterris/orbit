@@ -117,6 +117,7 @@ const HELP: Array<[string, string]> = [
   ["f · pgup pgdn · wheel", "follow · scroll logs"],
   ["t · c", "toggle timestamps · clear logs"],
   ["o", "open service URL in the browser"],
+  ["L", "open the service's git repo in lazygit"],
   [": / ctrl+p", "command palette"],
   ["q", "quit (stops running services)"],
 ]

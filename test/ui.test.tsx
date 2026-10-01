@@ -130,4 +130,11 @@ describe("tui", () => {
       await sup.dispose()
     })
   }, 15000)
+
+  // the fixture lives inside this repo, so only the "not installed" path is reachable
+  test.skipIf(!!Bun.which("lazygit"))("L without lazygit shows a toast", async () => {
+    const t = await setup()
+    await press(t, "L")
+    expect(t.captureCharFrame()).toContain("lazygit is not installed")
+  })
 })
