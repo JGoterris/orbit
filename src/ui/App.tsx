@@ -22,6 +22,9 @@ const PANES: Record<View, Pane[]> = {
   graph: ["services", "graph"],
   logs: ["services", "logs"],
 }
+const MIN_SIDEBAR = 16
+const MIN_DETAIL = 3
+const DEFAULT_DETAIL = 9
 const DEFAULT_PANE: Record<View, Pane> = { dashboard: "services", graph: "graph", logs: "logs" }
 
 const VIEWS: Array<{ id: View; label: string }> = [
@@ -56,6 +59,41 @@ export function App({ sup, onQuit }: Props) {
   const [paletteIndex, setPaletteIndex] = useState(0)
   const [toast, setToast] = useState<{ text: string; color: string } | undefined>()
   const toastTimer = useRef<ReturnType<typeof setTimeout>>(undefined)
+
+  const [sidebarDelta, setSidebarDelta] = useState<Record<View, number>>({ dashboard: 0, graph: 0, logs: 0 })
+  const [detailH, setDetailH] = useState<number | undefined>()
+
+  const defaultSidebarW =
+    view === "graph" ? Math.min(30, Math.max(22, Math.floor(width * 0.18))) : Math.min(52, Math.max(40, Math.floor(width * 0.3)))
+  const clampSidebar = (w: number) => Math.max(MIN_SIDEBAR, Math.min(w, Math.max(MIN_SIDEBAR, width - 30)))
+  const clampDetail = (h: number) => Math.max(MIN_DETAIL, Math.min(h, Math.max(MIN_DETAIL, height - 10)))
+  const sidebarW = clampSidebar(defaultSidebarW + sidebarDelta[view])
+  const detailRows = clampDetail(detailH ?? DEFAULT_DETAIL)
+
+  // which divider the focused panel controls, and whether growing the panel grows or shrinks that divider
+  const resizeTarget = (): { divider: "sidebar" | "detail"; sign: 1 | -1 } | undefined => {
+    if (focus === "services") return { divider: "sidebar", sign: 1 }
+    if (focus === "graph" || (focus === "logs" && view === "logs")) return { divider: "sidebar", sign: -1 }
+    if (focus === "detail") return { divider: "detail", sign: 1 }
+    if (focus === "logs" && view === "dashboard") return { divider: "detail", sign: -1 }
+  }
+
+  const resize = (dir: 1 | -1) => {
+    const t = resizeTarget()
+    if (!t || zoomed) return
+    if (t.divider === "sidebar") setSidebarDelta((d) => ({ ...d, [view]: clampSidebar(sidebarW + 2 * dir * t.sign) - defaultSidebarW }))
+    else setDetailH(clampDetail(detailRows + dir * t.sign))
+  }
+
+  const resetSize = () => {
+    const t = resizeTarget()
+    if (!t || zoomed) return
+    if (t.divider === "sidebar") setSidebarDelta((d) => ({ ...d, [view]: 0 }))
+    else setDetailH(undefined)
+  }
+
+  const resizeRef = useRef({ resize, resetSize })
+  resizeRef.current = { resize, resetSize }
 
   const notify = useCallback((text: string, color: string = theme.text) => {
     setToast({ text, color })
@@ -140,6 +178,17 @@ export function App({ sup, onQuit }: Props) {
         run: () => run("restart", Promise.all(names.filter((n) => sup.isUp(n)).map((n) => sup.restart(n)))),
       },
       ...VIEWS.map((v, i) => ({ id: `view-${v.id}`, label: `View: ${v.label}`, hint: String(i + 1), run: () => setView(v.id) })),
+      { id: "grow-panel", label: "Grow focused panel", hint: "+", run: () => resizeRef.current.resize(1) },
+      { id: "shrink-panel", label: "Shrink focused panel", hint: "-", run: () => resizeRef.current.resize(-1) },
+      {
+        id: "reset-sizes",
+        label: "Reset panel sizes",
+        hint: "=",
+        run: () => {
+          setSidebarDelta({ dashboard: 0, graph: 0, logs: 0 })
+          setDetailH(undefined)
+        },
+      },
       { id: "toggle-zoom", label: "Toggle zoom of the focused panel", hint: "z", run: () => setZoomed((v) => !v) },
       ...Object.entries(sup.config.groups).flatMap(([g, members]) => [
         { id: `group-start-${g}`, label: `Start group ${g}`, hint: members.join(","), run: () => run(g, sup.startMany(members)) },
@@ -227,9 +276,12 @@ export function App({ sup, onQuit }: Props) {
       return setFocus(panes[(i + (key.shift ? panes.length - 1 : 1)) % panes.length]!)
     }
     if (ch === "z") return setZoomed((v) => !v)
+    if (ch === "+") return resize(1)
+    if (ch === "-") return resize(-1)
+    if (ch === "=") return resetSize()
     if (key.name === "escape" && zoomed) return setZoomed(false)
 
-    const page = Math.max(5, height - (zoomed ? 4 : 12))
+    const page = Math.max(5, height - (zoomed ? 4 : view === "dashboard" ? detailRows + 3 : 5))
     if (focus === "logs") {
       if (key.name === "down" || ch === "j") return setScrollBack((v) => Math.max(0, v - 1))
       if (key.name === "up" || ch === "k") return setScrollBack((v) => v + 1)
@@ -289,7 +341,6 @@ export function App({ sup, onQuit }: Props) {
     setZoomed(false)
   }, [view])
 
-  const sidebarW = view === "graph" ? Math.min(30, Math.max(22, Math.floor(width * 0.18))) : Math.min(52, Math.max(40, Math.floor(width * 0.3)))
   const counts = names.reduce(
     (acc, n) => {
       const s = sup.state(n).status
@@ -342,7 +393,7 @@ export function App({ sup, onQuit }: Props) {
             tick={tick}
             width={zoomed ? width : sidebarW}
             focused={focus === "services"}
-            compact={view === "graph" && !zoomed}
+            compact={(view === "graph" || sidebarW < 36) && !zoomed}
             onFocus={() => setFocus("services")}
           />
         ) : null}
@@ -357,6 +408,7 @@ export function App({ sup, onQuit }: Props) {
                     width={zoomed ? width : width - sidebarW}
                     focused={focus === "detail"}
                     expanded={zoomed}
+                    height={detailRows}
                     onFocus={() => setFocus("detail")}
                   />
                 ) : null}

@@ -110,6 +110,42 @@ describe("tui", () => {
     expect(frame()).toContain("│▌○ postgres")
   })
 
+  test("+ / - / = resize the focused panel", async () => {
+    const t = await setup()
+    const lines = () => t.captureCharFrame().split("\n")
+    const sidebarW = () => lines()[1]!.indexOf("╮") + 1
+    const rowOf = (s: string) => lines().findIndex((l) => l.includes(s))
+
+    const w0 = sidebarW()
+    await press(t, "+")
+    expect(sidebarW()).toBe(w0 + 2)
+    await press(t, "=")
+    expect(sidebarW()).toBe(w0)
+    for (let i = 0; i < 30; i++) await press(t, "-")
+    expect(sidebarW()).toBe(16)
+
+    // detail: shrinking it hides the "needs" line
+    await press(t, "=")
+    await press(t, "TAB")
+    expect(rowOf("needs")).toBeGreaterThan(0)
+    for (let i = 0; i < 6; i++) await press(t, "-")
+    expect(rowOf("needs")).toBe(-1)
+    await press(t, "=")
+    expect(rowOf("needs")).toBeGreaterThan(0)
+
+    // logs (dashboard): growing the panel moves its top edge up
+    await press(t, "TAB")
+    const top = rowOf("Logs · ")
+    await press(t, "+")
+    expect(rowOf("Logs · ")).toBe(top - 1)
+
+    // zoom ignores resizing
+    await press(t, "z")
+    await press(t, "+")
+    await press(t, "z")
+    expect(rowOf("Logs · ")).toBe(top - 1)
+  })
+
   test("mouse: click a service row and a graph node to select them", async () => {
     const t = await setup()
     const rowOf = (name: string) => t.captureCharFrame().split("\n").findIndex((l) => l.startsWith(`│ ○ ${name} `))

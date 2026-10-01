@@ -11,6 +11,7 @@ interface Props {
   focused?: boolean
   /** zoomed: fill the available height instead of the fixed 9 rows */
   expanded?: boolean
+  height?: number
   onFocus?: () => void
 }
 
@@ -24,7 +25,7 @@ function Field({ label, value, color = theme.text }: { label: string; value: str
   )
 }
 
-export function ServiceDetail({ sup, name, width, focused, expanded, onFocus }: Props) {
+export function ServiceDetail({ sup, name, width, focused, expanded, height, onFocus }: Props) {
   const svc = sup.service(name)
   const st = sup.state(name)
   const style = styleFor(st.status, svc.oneshot)
@@ -56,13 +57,14 @@ export function ServiceDetail({ sup, name, width, focused, expanded, onFocus }: 
       backgroundColor={theme.panel}
       paddingLeft={1}
       paddingRight={1}
-      height={expanded ? undefined : 9}
+      height={expanded ? undefined : (height ?? 9)}
       flexGrow={expanded ? 1 : 0}
+      overflow="hidden"
       title={` ${name} `}
       titleColor={theme.text}
       onMouseDown={onFocus}
     >
-      <text>
+      <text flexShrink={0}>
         <span fg={style.color}>{style.icon} </span>
         <strong fg={style.color}>{style.label}</strong>
         <span fg={theme.muted}>{uptime ? `  ${uptime}` : ""}</span>
@@ -70,12 +72,12 @@ export function ServiceDetail({ sup, name, width, focused, expanded, onFocus }: 
         <span fg={badge.color}>{svc.type}</span>
         <span fg={theme.dim}>{svc.description ? `  ${svc.description}` : ""}</span>
       </text>
-      <text>
+      <text flexShrink={0}>
         <span fg={theme.accent2}>{fit(what, Math.max(10, inner - cwd.length - 6))}</span>
         <span fg={theme.dim}>{"  in "}</span>
         <span fg={theme.muted}>{cwd}</span>
       </text>
-      <text>
+      <text flexShrink={0}>
         {svc.port ? <Field label="port" value={`:${svc.port}`} color={theme.cyan} /> : null}
         <Field label="health" value={describeHealth(svc.health) + (st.health ? ` (${st.health})` : "")} />
         {st.pid ? <Field label="pid" value={String(st.pid)} /> : null}
@@ -90,7 +92,7 @@ export function ServiceDetail({ sup, name, width, focused, expanded, onFocus }: 
         ) : null}
         {st.restarts ? <Field label="restarts" value={String(st.restarts)} color={theme.orange} /> : null}
       </text>
-      <text>
+      <text flexShrink={0}>
         <span fg={theme.dim}>needs </span>
         {deps.length ? (
           deps.map((d, i) => (
@@ -114,8 +116,8 @@ export function ServiceDetail({ sup, name, width, focused, expanded, onFocus }: 
           <span fg={theme.dim}>—</span>
         )}
       </text>
-      <text> </text>
-      <text>
+      <text flexShrink={0}> </text>
+      <text flexShrink={0}>
         <span fg={theme.dim}>cpu </span>
         <span fg={theme.green}>{sparkline(st.cpu, sparkW, Math.max(100, ...st.cpu))}</span>
         <span fg={theme.text}>{` ${cpuNow.toFixed(1).padStart(5)}%`}</span>
@@ -123,7 +125,7 @@ export function ServiceDetail({ sup, name, width, focused, expanded, onFocus }: 
         <span fg={theme.accent}>{sparkline(st.mem, sparkW)}</span>
         <span fg={theme.text}>{` ${formatBytes(memNow).padStart(6)}`}</span>
       </text>
-      <text>
+      <text flexShrink={0}>
         {st.error ? (
           <span fg={theme.red}>{fit(`✖ ${st.error}`, inner)}</span>
         ) : st.waitingOn?.length ? (

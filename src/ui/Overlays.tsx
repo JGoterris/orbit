@@ -113,6 +113,7 @@ const HELP: Array<[string, string]> = [
   ["1 2 3", "dashboard · graph · logs"],
   ["tab / shift+tab", "move focus between panels"],
   ["z · esc", "zoom the focused panel · back"],
+  ["+ - =", "resize the focused panel · reset"],
   ["enter / l", "logs of the selected service"],
   ["a", "logs: toggle selected ⇄ all services"],
   ["/", "filter logs (regex)  ·  esc clears"],
