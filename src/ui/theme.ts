@@ -6,6 +6,8 @@ export const theme = {
   panel: "#161824",
   panelAlt: "#1c1f2e",
   selection: "#283052",
+  cursor: "#3d4a7a",
+  match: "#5a4a1e",
   border: "#2f3450",
   borderFocus: "#7aa2f7",
   text: "#c0caf5",

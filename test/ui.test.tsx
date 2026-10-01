@@ -3,6 +3,7 @@ import { testRender } from "@opentui/react/test-utils"
 import { loadConfig } from "../src/config/load.ts"
 import { Supervisor } from "../src/core/supervisor.ts"
 import { App } from "../src/ui/App.tsx"
+import { clipboard } from "../src/ui/clipboard.ts"
 import { mkdtempSync as __mk } from "node:fs"
 import { tmpdir as __tmp } from "node:os"
 process.env.XDG_STATE_HOME = __mk(`${__tmp()}/orbit-state-`) // tests must not touch the real ~/.local/state
@@ -242,6 +243,138 @@ describe("tui", () => {
       await sup.dispose()
     })
   }, 15000)
+
+  test("logs: long lines wrap (w toggles), and the view stays put while scrolled up", async () => {
+    const t = await setup()
+    const svc = t.sup.names[0]!
+    await press(t, "3")
+    t.sup.logs.append(svc, "stdout", `${"x".repeat(250)} TAIL-MARK`)
+    await Bun.sleep(80)
+    await t.renderOnce()
+    expect(t.captureCharFrame()).toContain("TAIL-MARK")
+    await press(t, "w")
+    expect(t.captureCharFrame()).not.toContain("TAIL-MARK")
+    await press(t, "w")
+
+    for (let i = 1; i <= 80; i++) t.sup.logs.append(svc, "stdout", `line-${String(i).padStart(3, "0")}`)
+    await Bun.sleep(80)
+    await t.renderOnce()
+    await press(t, "\x1b[5~") // page up
+    const seen = () => new Set(t.captureCharFrame().match(/line-\d{3}/g))
+    const before = seen()
+    expect(before.size).toBeGreaterThan(5)
+    expect(before.has("line-080")).toBe(false)
+    for (let i = 81; i <= 100; i++) t.sup.logs.append(svc, "stdout", `line-${String(i).padStart(3, "0")}`)
+    await Bun.sleep(150)
+    await t.renderOnce()
+    await t.renderOnce()
+    expect(seen()).toEqual(before)
+    expect(t.captureCharFrame()).toContain("new")
+  })
+
+  test("logs: copy mode selects a range with the keyboard and copies full lines", async () => {
+    const t = await setup()
+    const svc = t.sup.names[0]!
+    for (let i = 1; i <= 5; i++) t.sup.logs.append(svc, "stdout", `row-${i} ${"y".repeat(200)} end-${i}`)
+    await press(t, "l") // logs of the selected service, focused
+    const copied: string[] = []
+    const real = clipboard.copy
+    clipboard.copy = async (_r, text) => (copied.push(text), { ok: true, via: "test" })
+    try {
+      await press(t, "v") // cursor on the newest line
+      expect(t.captureCharFrame()).toContain("copy mode")
+      await press(t, "k")
+      await press(t, "k") // row-3
+      await press(t, "v") // anchor
+      await press(t, "j") // row-4
+      expect(t.captureCharFrame()).toContain("2 selected")
+      await press(t, "y")
+      expect(copied).toHaveLength(1)
+      const lines = copied[0]!.split("\n")
+      expect(lines).toHaveLength(2)
+      expect(lines[0]).toStartWith("row-3 ")
+      expect(lines[0]).toEndWith("end-3") // not cut, not wrapped
+      expect(lines[1]).toEndWith("end-4")
+      expect(t.captureCharFrame()).not.toContain("selected")
+
+      await press(t, "Y")
+      expect(copied[1]!.split("\n")).toHaveLength(5)
+    } finally {
+      clipboard.copy = real
+    }
+  })
+
+  test("logs: E exports the visible lines to the state dir", async () => {
+    const t = await setup()
+    const svc = t.sup.names[0]!
+    t.sup.logs.append(svc, "stdout", "alpha one")
+    t.sup.logs.append(svc, "stdout", "beta two")
+    await press(t, "l")
+    const copied: string[] = []
+    const real = clipboard.copy
+    clipboard.copy = async (_r, text) => (copied.push(text), { ok: true, via: "test" })
+    try {
+      await press(t, "E")
+      await Bun.sleep(30)
+    } finally {
+      clipboard.copy = real
+    }
+    const { readdirSync, readFileSync } = await import("node:fs")
+    const dir = `${t.sup.stateDir}/exports`
+    const files = readdirSync(dir).filter((f) => f.startsWith(`${svc}-`))
+    expect(files.length).toBeGreaterThan(0)
+    const body = readFileSync(`${dir}/${files.at(-1)}`, "utf8")
+    expect(body).toContain("alpha one")
+    expect(body).toContain("beta two")
+    expect(copied).toEqual([`${dir}/${files.at(-1)}`])
+    expect(t.captureCharFrame()).toContain("path copied")
+  })
+
+  test("logs: search highlights without hiding lines, n/N jump between matches", async () => {
+    const t = await setup()
+    const svc = t.sup.names[0]!
+    for (let i = 1; i <= 60; i++) t.sup.logs.append(svc, "stdout", i % 20 === 0 ? `needle-${i}` : `hay-${i}`)
+    await press(t, "l")
+    await press(t, "/")
+    await press(t, "\t") // filter bar → search bar
+    for (const ch of "needle") await press(t, ch)
+    await press(t, "\r")
+    let frame = t.captureCharFrame()
+    expect(frame).toContain("hay-") // nothing is hidden
+    expect(frame).toContain("match 3/3") // enter lands on the newest
+    await press(t, "N")
+    expect(t.captureCharFrame()).toContain("match 2/3")
+    await press(t, "N")
+    await press(t, "N")
+    expect(t.captureCharFrame()).toContain("match 3/3") // wraps
+    await press(t, "n")
+    expect(t.captureCharFrame()).toContain("match 1/3")
+    await press(t, "\x1b") // esc clears the search
+    await press(t, "n")
+    expect(t.captureCharFrame()).toContain("no search")
+  })
+
+  test("logs bar: tab keeps the typed text, esc clears filter and search in any mode", async () => {
+    const t = await setup()
+    const svc = t.sup.names[0]!
+    t.sup.logs.append(svc, "stdout", "alpha")
+    t.sup.logs.append(svc, "stdout", "beta")
+    await press(t, "l")
+    await press(t, "/")
+    for (const ch of "alp") await press(t, ch)
+    expect(t.captureCharFrame()).not.toContain("beta")
+    await press(t, "\t")
+    let frame = t.captureCharFrame()
+    expect(frame).toContain("search alp")
+    expect(frame).toContain("beta") // the filter is gone, the text now only highlights
+    await press(t, "\r")
+    await press(t, "\x1b") // normal mode: esc clears what is kept
+    await press(t, "/")
+    frame = t.captureCharFrame()
+    expect(frame).toContain("highlight matches") // placeholder: the input is empty
+    await press(t, "\x1b")
+    expect(t.captureCharFrame()).toContain("start/stop") // normal footer is back
+  })
 
   // the fixture lives inside this repo, so only the "not installed" path is reachable
   test.skipIf(!!Bun.which("lazygit"))("L without lazygit shows a toast", async () => {

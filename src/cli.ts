@@ -5,6 +5,7 @@ import type { OrbitConfig } from "./config/schema.ts"
 import { findComposeFile } from "./config/load.ts"
 import { parseComposeFile } from "./config/compose.ts"
 import { exec } from "./core/exec.ts"
+import { cleanLine, FileTail, matcher, pipeLines, readTail, type LogLine } from "./core/logs.ts"
 import { levels, depMapOf } from "./core/graph.ts"
 import { containerName, ProcessRunner } from "./core/runners.ts"
 import { procFiles, readLock, readState, stateDir, writeState } from "./core/state.ts"
@@ -71,6 +72,17 @@ export function runList(config: OrbitConfig): number {
 
 // ------------------------------------------------------------------ up / down
 
+/** `svc │ text` output with a stable color per service, shared by `up` and `logs`. */
+function prefixer(names: readonly string[]) {
+  const width = Math.max(...names.map((n) => n.length))
+  const color = (n: string) => PREFIX_COLORS[names.indexOf(n) % PREFIX_COLORS.length]!
+  const print = (service: string, stream: LogLine["stream"], raw: string) => {
+    const text = stream === "system" ? c.dim(`» ${raw}`) : stream === "stderr" ? c.yellow(raw) : raw
+    process.stdout.write(`${color(service)(`${service.padEnd(width)} │`)} ${text}\n`)
+  }
+  return { width, color, print }
+}
+
 const STATUS_COLOR: Partial<Record<Status, (s: string) => string>> = {
   healthy: c.green,
   running: c.cyan,
@@ -89,13 +101,8 @@ export async function runUp(config: OrbitConfig, names: string[]): Promise<numbe
   }
   const sup = new Supervisor(config)
   process.on("exit", () => sup.killAllSync())
-  const width = Math.max(...sup.names.map((n) => n.length))
-  const color = (n: string) => PREFIX_COLORS[sup.names.indexOf(n) % PREFIX_COLORS.length]!
-  sup.logs.onLine((l) => {
-    const prefix = color(l.service)(`${l.service.padEnd(width)} │`)
-    const text = l.stream === "system" ? c.dim(`» ${l.text}`) : l.stream === "stderr" ? c.yellow(l.text) : l.text
-    process.stdout.write(`${prefix} ${text}\n`)
-  })
+  const { width, color, print } = prefixer(sup.names)
+  sup.logs.onLine((l) => print(l.service, l.stream, l.text))
   const last = new Map<string, Status>()
   sup.on("change", (n?: string) => {
     if (!n) return
@@ -281,5 +288,90 @@ export async function runInit(dir: string, force: boolean): Promise<number> {
   for (const d of detected) console.log(`  ${c.bold(d.name)} ${c.dim(d.cmd)}${d.port ? c.dim(` :${d.port}`) : ""}`)
   for (const s of composeServices) console.log(`  ${c.bold(s.name)} ${c.dim("compose")}${s.port ? c.dim(` :${s.port}`) : ""}`)
   console.log(c.dim("review depends_on and ports, then run `orbit`"))
+  return 0
+}
+
+// ------------------------------------------------------------------ logs
+
+export interface LogsOptions {
+  follow: boolean
+  lines: number
+  grep?: string
+  since?: string
+}
+
+export async function runLogs(config: OrbitConfig, names: string[], opts: LogsOptions): Promise<number> {
+  for (const n of names) {
+    if (!config.services[n] && !config.groups[n]) {
+      console.error(c.red(`unknown service or group "${n}"`))
+      return 1
+    }
+  }
+  const targets = names.length ? [...new Set(names.flatMap((n) => config.groups[n] ?? [n]))] : Object.keys(config.services)
+  const { print } = prefixer(Object.keys(config.services))
+  const keep = matcher(opts.grep ?? "")
+  const emit = (service: string, stream: LogLine["stream"], raw: string) => {
+    const text = cleanLine(raw)
+    if (keep({ seq: 0, ts: 0, service, stream, text })) print(service, stream, text)
+  }
+  const dir = stateDir(config)
+  const children: Array<{ kill(): void; exited: Promise<unknown> }> = []
+  const tails: FileTail[] = []
+  const pending: Promise<void>[] = []
+  let warnedSince = false
+
+  for (const name of targets) {
+    const svc = config.services[name]!
+    if (svc.type === "process") {
+      if (opts.since && !warnedSince) {
+        warnedSince = true
+        console.error(c.yellow("--since is ignored for process services (their log files have no timestamps)"))
+      }
+      const files = procFiles(dir, name)
+      const out = await readTail(files.out, opts.lines)
+      const err = await readTail(files.err, opts.lines)
+      if (!out.length && !err.length) emit(name, "system", "no logs")
+      for (const l of out) emit(name, "stdout", l)
+      for (const l of err) emit(name, "stderr", l)
+      if (opts.follow) {
+        // start at the current end of file: the history was just printed
+        for (const [path, stream] of [[files.out, "stdout"], [files.err, "stderr"]] as const) {
+          const tail = new FileTail(path, (l) => emit(name, stream, l))
+          await tail.start({ bytes: 0, lines: 0 })
+          tails.push(tail)
+        }
+      }
+      continue
+    }
+    const argv =
+      svc.type === "docker"
+        ? ["docker", "logs"]
+        : ["docker", "compose", "-f", svc.composeFile!, ...(svc.composeProject ? ["-p", svc.composeProject] : []), "logs", "--no-color", "--no-log-prefix"]
+    argv.push("--tail", String(opts.lines))
+    if (opts.since) argv.push("--since", opts.since)
+    if (opts.follow) argv.push("-f")
+    argv.push(svc.type === "docker" ? containerName(config.name, name) : svc.composeService!)
+    const proc = Bun.spawn(argv, { stdin: "ignore", stdout: "pipe", stderr: "pipe" })
+    children.push(proc)
+    // `docker logs` writes the container's stderr to its own stderr: tell it apart from docker's errors by exit code
+    const errLines: string[] = []
+    pending.push(
+      Promise.all([pipeLines(proc.stdout, (l) => emit(name, "stdout", l)), pipeLines(proc.stderr, (l) => errLines.push(l))]).then(async () => {
+        const code = await proc.exited
+        for (const l of errLines) emit(name, code === 0 ? "stderr" : "system", l)
+      }),
+    )
+  }
+  await Promise.all(pending)
+
+  if (!opts.follow) return 0
+  const stop = async () => {
+    for (const t of tails) await t.stop(false)
+    for (const ch of children) ch.kill()
+    process.exit(0)
+  }
+  process.on("SIGINT", stop)
+  process.on("SIGTERM", stop)
+  await new Promise(() => {}) // run until interrupted
   return 0
 }

@@ -120,7 +120,11 @@ const HELP: Array<[string, string]> = [
   ["/", "filter logs (regex)  ·  esc clears"],
   ["f · pgup pgdn · wheel", "follow · scroll logs"],
   ["(logs focused)", "j k · ctrl+u/d · g G  scroll"],
-  ["t · c", "toggle timestamps · clear logs"],
+  ["t · w · c", "toggle timestamps · line wrap · clear logs"],
+  ["/ then tab", "filter bar ⇄ search bar (highlight, keep all lines)"],
+  ["n · N", "next (newer) · previous (older) search match"],
+  ["v (logs focused)", "copy mode: j k ctrl+u/d move, v select, y copy"],
+  ["Y · E", "copy all visible logs · export them to a file"],
   ["e", "environment variables of the selected service"],
   ["o", "open service URL in the browser"],
   ["L", "open the service's git repo in lazygit"],
@@ -128,17 +132,22 @@ const HELP: Array<[string, string]> = [
   ["q", "quit: stop all services or leave them running"],
 ]
 
-export function HelpOverlay({ width }: { width: number }) {
-  const w = Math.min(70, width - 4)
+const HELP_KEY_W = 24
+
+export function HelpOverlay({ width, height }: { width: number; height: number }) {
+  const w = Math.min(104, width - 4)
+  const h = Math.min(HELP.length + 3, Math.max(4, height - 2))
+  // inner width = modal - border (2) - padding (2); a longer description is cut with … instead of wrapping
+  const descW = Math.max(1, w - 4 - HELP_KEY_W)
   return (
-    <Modal title="Keys" width={w} height={HELP.length + 4}>
-      {HELP.map(([k, v]) => (
+    <Modal title="Keys" width={w} height={h}>
+      {HELP.slice(0, h - 3).map(([k, v]) => (
         <text key={k}>
-          <span fg={theme.accent}>{fit(k, 24)}</span>
-          <span fg={theme.text}>{v}</span>
+          <span fg={theme.accent}>{fit(k, HELP_KEY_W)}</span>
+          <span fg={theme.text}>{fit(v, descW)}</span>
         </text>
       ))}
-      <text fg={theme.dim}>press any key to close</text>
+      <text fg={theme.dim}>{h - 3 < HELP.length ? "terminal too short: enlarge it to see all keys" : "press any key to close"}</text>
     </Modal>
   )
 }

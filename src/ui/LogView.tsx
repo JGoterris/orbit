@@ -1,6 +1,6 @@
 import type { BoxRenderable, MouseEvent } from "@opentui/core"
-import { useEffect } from "react"
-import { detectLevel, type LogLine } from "../core/logs.ts"
+import { useEffect, useRef, useState } from "react"
+import { clock, detectLevel, filterLines, matcher, type LogLine } from "../core/logs.ts"
 import { useSize } from "./hooks.ts"
 import { fit, serviceColor, theme } from "./theme.ts"
 
@@ -16,45 +16,105 @@ interface Props {
   title: string
   focused: boolean
   showTime: boolean
+  /** wrap long lines onto continuation rows instead of cutting them with … */
+  wrap: boolean
+  /** copy mode: seq of the line under the cursor, and of the selection anchor (if any) */
+  cursor?: number
+  anchor?: number
+  /** keep the view still even when following (copy mode) */
+  freeze?: boolean
+  /** search term (regex): matching lines are highlighted without hiding the others */
+  search?: string
+  /** seq of the match n/N is on */
+  current?: number
+  /** mouse: click in copy mode (anchor == cursor) or drag (anchor → cursor) */
+  onSelect?: (anchor: number, cursor: number) => void
   onFocus?: () => void
 }
 
-function time(ts: number) {
-  const d = new Date(ts)
-  return `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}:${String(d.getSeconds()).padStart(2, "0")}`
-}
-
-export function filterLines(lines: readonly LogLine[], filter: string): readonly LogLine[] {
-  if (!filter) return lines
-  let re: RegExp
-  try {
-    re = new RegExp(filter, "i")
-  } catch {
-    const f = filter.toLowerCase()
-    return lines.filter((l) => l.text.toLowerCase().includes(f) || l.service.includes(f))
-  }
-  return lines.filter((l) => re.test(l.text) || re.test(l.service))
-}
-
-export function LogView({ lines, service, names, filter, scrollBack, onScroll, title, focused, showTime, onFocus }: Props) {
+export function LogView({ lines, service, names, filter, scrollBack, onScroll, title, focused, showTime, wrap, cursor, anchor, freeze, search, current, onSelect, onFocus }: Props) {
   const { ref, size, onSizeChange } = useSize<BoxRenderable>()
   const filtered = filterLines(lines, filter)
   const height = Math.max(1, size.height - 2)
   const width = Math.max(10, size.width - 4)
-  const maxBack = Math.max(0, filtered.length - height)
+  const prefixW = service ? 0 : Math.min(14, Math.max(4, ...names.map((n) => n.length))) + 1
+  const timeW = showTime ? 9 : 0
+  const textW = Math.max(1, width - timeW - prefixW)
+  const bodyOf = (l: LogLine) => (l.stream === "system" ? `» ${l.text}` : l.text)
+  const rowsOf = (l: LogLine) => (wrap ? Math.max(1, Math.ceil(bodyOf(l).length / textW)) : 1)
+
+  // with wrap a line takes several rows: the top of the scroll range is where `height` rows fit from line 0
+  let topRows = 0
+  let topLines = 0
+  while (topLines < filtered.length && topRows < height) topRows += rowsOf(filtered[topLines++]!)
+  const maxBack = Math.max(0, filtered.length - topLines)
   const back = Math.min(scrollBack, maxBack)
   // keep the parent's offset within range so "jump to top" doesn't leave a huge dead scroll
   useEffect(() => {
     if (scrollBack > maxBack && size.height > 0) onScroll(maxBack - scrollBack)
   }, [scrollBack, maxBack, size.height, onScroll])
+
+  // while scrolled up, new lines must not move what is being read (or copied): compensate the offset
+  const seen = useRef({ key: service, seq: lines.at(-1)?.seq ?? 0 })
+  const [unread, setUnread] = useState(0)
+  const newest = lines.at(-1)?.seq ?? 0
+  useEffect(() => {
+    const prev = seen.current
+    seen.current = { key: service, seq: newest }
+    if (prev.key !== service || newest === prev.seq) return
+    let added = 0
+    for (let i = filtered.length - 1; i >= 0 && filtered[i]!.seq > prev.seq; i--) added++
+    if ((scrollBack > 0 || freeze) && added > 0) {
+      onScroll(added)
+      setUnread((u) => u + added)
+    }
+  }, [newest, service]) // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => {
+    if (scrollBack === 0) setUnread(0)
+  }, [scrollBack])
+
   const end = filtered.length - back
-  const visible = filtered.slice(Math.max(0, end - height), end)
-  const prefixW = service ? 0 : Math.min(14, Math.max(4, ...names.map((n) => n.length))) + 1
+  let first = end
+  let rows = 0
+  while (first > 0 && rows < height) rows += rowsOf(filtered[--first]!)
+  const visible = filtered.slice(first, end)
+
+  // copy mode: the cursor must stay on screen when it moves
+  const cursorIdx = cursor === undefined ? -1 : filtered.findIndex((l) => l.seq === cursor)
+  const anchorIdx = anchor === undefined ? cursorIdx : filtered.findIndex((l) => l.seq === anchor)
+  const [selLo, selHi] = cursorIdx < 0 ? [-1, -1] : [Math.min(cursorIdx, anchorIdx), Math.max(cursorIdx, anchorIdx)]
+  const revealIdx = current !== undefined ? filtered.findIndex((l) => l.seq === current) : cursorIdx
+  const revealKey = current ?? cursor
+  useEffect(() => {
+    if (revealIdx < 0 || size.height === 0) return
+    if (revealIdx < first) onScroll(first - revealIdx)
+    else if (revealIdx >= end) onScroll(-(revealIdx - end + 1))
+  }, [revealKey]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  const isMatch = search ? matcher(search) : undefined
 
   const status = [
+    cursor !== undefined ? (anchor !== undefined ? `${selHi - selLo + 1} selected` : "copy mode") : "",
     filter ? `/${filter}  ${filtered.length} matches` : `${filtered.length} lines`,
-    back ? `↑ ${back}  (f to follow)` : "following",
-  ].join(" · ")
+    back ? `↑ ${back}${unread ? ` · +${unread} new` : ""}  (f to follow)` : "following",
+  ]
+    .filter(Boolean)
+    .join(" · ")
+
+  // a line taller than the panel is clipped from its start, like a terminal would
+  const shown = visible
+    .flatMap((l, k) => {
+      const body = bodyOf(l)
+      const idx = first + k
+      if (!wrap || body.length <= textW) return [{ l, idx, i: 0, text: fit(body, textW) }]
+      const chunks: { l: LogLine; idx: number; i: number; text: string }[] = []
+      for (let at = 0, i = 0; at < body.length; at += textW, i++) chunks.push({ l, idx, i, text: body.slice(at, at + textW).padEnd(textW) })
+      return chunks
+    })
+    .slice(-height)
+
+  const pressed = useRef<number | undefined>(undefined)
+  const lineAt = (y: number) => shown[y - (ref.current?.y ?? 0) - 1]?.l
 
   return (
     <box
@@ -72,36 +132,60 @@ export function LogView({ lines, service, names, filter, scrollBack, onScroll, t
       titleColor={theme.text}
       bottomTitle={` ${status} `}
       bottomTitleAlignment="right"
-      onMouseDown={onFocus}
+      onMouseDown={(e: MouseEvent) => {
+        onFocus?.()
+        const l = lineAt(e.y)
+        pressed.current = l?.seq
+        if (l && cursor !== undefined) onSelect?.(l.seq, l.seq)
+      }}
+      onMouseDrag={(e: MouseEvent) => {
+        const l = lineAt(e.y)
+        if (l && pressed.current !== undefined) onSelect?.(pressed.current, l.seq)
+      }}
       onMouseScroll={(e: MouseEvent) => onScroll(e.scroll?.direction === "up" ? 3 : e.scroll?.direction === "down" ? -3 : 0)}
     >
       {visible.length === 0 ? (
         <text fg={theme.dim}>{filter ? "no lines match the filter" : "no output yet"}</text>
       ) : (
-        visible.map((l) => {
-          const level = l.stream === "system" ? undefined : detectLevel(l.text)
-          const color =
-            l.stream === "system"
-              ? theme.accent2
-              : level === "error"
-                ? theme.red
-                : level === "warn"
-                  ? theme.yellow
-                  : level === "debug"
-                    ? theme.muted
-                    : l.stream === "stderr"
-                      ? theme.orange
-                      : theme.text
-          const timeW = showTime ? 9 : 0
-          const textW = Math.max(1, width - timeW - prefixW)
-          return (
-            <text key={l.seq}>
-              {showTime ? <span fg={theme.dim}>{time(l.ts)} </span> : null}
-              {service ? null : <span fg={serviceColor(l.service, names)}>{fit(l.service, prefixW - 1)} </span>}
-              <span fg={color}>{fit(l.stream === "system" ? `» ${l.text}` : l.text, textW)}</span>
-            </text>
-          )
-        })
+        shown
+          .map(({ l, idx, i, text }) => {
+            const level = l.stream === "system" ? undefined : detectLevel(l.text)
+            const color =
+              l.stream === "system"
+                ? theme.accent2
+                : level === "error"
+                  ? theme.red
+                  : level === "warn"
+                    ? theme.yellow
+                    : level === "debug"
+                      ? theme.muted
+                      : l.stream === "stderr"
+                        ? theme.orange
+                        : theme.text
+            const bg =
+              idx >= selLo && idx <= selHi
+                ? idx === cursorIdx
+                  ? theme.cursor
+                  : theme.selection
+                : l.seq === current
+                  ? theme.cursor
+                  : isMatch?.(l)
+                    ? theme.match
+                    : undefined
+            return (
+              <text key={`${l.seq}:${i}`} selectable={false}>
+                {i > 0 ? (
+                  <span bg={bg}>{" ".repeat(timeW + prefixW)}</span>
+                ) : (
+                  <>
+                    {showTime ? <span fg={theme.dim} bg={bg}>{clock(l.ts)} </span> : null}
+                    {service ? null : <span fg={serviceColor(l.service, names)} bg={bg}>{fit(l.service, prefixW - 1)} </span>}
+                  </>
+                )}
+                <span fg={color} bg={bg}>{text}</span>
+              </text>
+            )
+          })
       )}
     </box>
   )

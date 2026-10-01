@@ -4,13 +4,14 @@ import { ConfigError, type OrbitConfig } from "./config/schema.ts"
 import { loadConfig } from "./config/load.ts"
 import { acquireLock, releaseLock } from "./core/state.ts"
 import { Supervisor } from "./core/supervisor.ts"
-import { runDown, runGraph, runInit, runList, runUp } from "./cli.ts"
+import { runDown, runGraph, runInit, runList, runLogs, runUp } from "./cli.ts"
 
 const HELP = `orbit — launch, control and monitor local services
 
 usage
   orbit [dir]                open the TUI for the orbit.yaml found in dir (or above)
   orbit up [service…]        start services headless, streaming logs (ctrl+c stops)
+  orbit logs [service…]      print recent logs (-f to follow, -n lines, --grep, --since)
   orbit down                 stop everything orbit left running (processes, containers)
   orbit graph                print the dependency graph
   orbit ls                   list services
@@ -18,6 +19,10 @@ usage
 
 options
   -c, --config <file>        use a specific config file
+  -f, --follow               (logs) keep streaming new lines
+  -n, --lines <n>            (logs) lines per service, default 200
+      --grep <regex>         (logs) only lines matching the regex
+      --since <dur>          (logs) docker/compose only, e.g. 10m, 2h
   -u, --up                   (TUI) start all autostart services on launch
   -h, --help                 show this help
 `
@@ -30,6 +35,10 @@ const { values, positionals } = parseArgs({
     up: { type: "boolean", short: "u" },
     help: { type: "boolean", short: "h" },
     force: { type: "boolean" },
+    follow: { type: "boolean", short: "f" },
+    lines: { type: "string", short: "n" },
+    grep: { type: "string" },
+    since: { type: "string" },
   },
 })
 
@@ -39,7 +48,7 @@ if (values.help) {
 }
 
 const [command, ...rest] = positionals
-const SUBCOMMANDS = ["up", "down", "graph", "ls", "init"]
+const SUBCOMMANDS = ["up", "down", "logs", "graph", "ls", "init"]
 const sub = command && SUBCOMMANDS.includes(command) ? command : undefined
 const dir = sub ? (sub === "init" ? rest[0] : undefined) : command
 
@@ -64,6 +73,14 @@ switch (sub) {
     process.exit(runList(load()))
   case "down":
     process.exit(await runDown(load()))
+  case "logs": {
+    const n = values.lines === undefined ? 200 : Number.parseInt(values.lines, 10)
+    if (!Number.isInteger(n) || n < 0) {
+      console.error("\x1b[31morbit:\x1b[0m --lines expects a non-negative number")
+      process.exit(1)
+    }
+    process.exit(await runLogs(load(), rest, { follow: !!values.follow, lines: n, grep: values.grep, since: values.since }))
+  }
   case "up":
     process.exit(await runUp(load(), rest))
 }

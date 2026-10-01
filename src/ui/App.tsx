@@ -1,12 +1,16 @@
 import type { KeyEvent } from "@opentui/core"
 import { useKeyboard, useRenderer, useTerminalDimensions } from "@opentui/react"
+import { mkdirSync, writeFileSync } from "node:fs"
+import { join } from "node:path"
 import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { resolveEnv } from "../config/envFiles.ts"
 import { openUrl } from "../core/exec.ts"
 import { findGitRoot } from "../core/git.ts"
+import { filterLines, formatLines, matcher } from "../core/logs.ts"
 import type { Supervisor } from "../core/supervisor.ts"
 import { GraphView, neighbourInDirection, useGraphLayout } from "./GraphView.tsx"
 import { useSupervisorVersion, useTick } from "./hooks.ts"
+import { clipboard } from "./clipboard.ts"
 import { LogView } from "./LogView.tsx"
 import { CommandPalette, ConfirmOverlay, EnvOverlay, envPageSize, filterCommands, HelpOverlay, type Command } from "./Overlays.tsx"
 import { ServiceDetail } from "./ServiceDetail.tsx"
@@ -14,7 +18,7 @@ import { ServiceList } from "./ServiceList.tsx"
 import { statusStyle, theme } from "./theme.ts"
 
 type View = "dashboard" | "graph" | "logs"
-type Mode = "normal" | "palette" | "filter" | "help" | "env" | "quit" | "stopping" | "external"
+type Mode = "normal" | "palette" | "filter" | "help" | "env" | "quit" | "stopping" | "external" | "copy"
 
 type Pane = "services" | "detail" | "logs" | "graph"
 
@@ -56,12 +60,23 @@ export function App({ sup, onQuit }: Props) {
   const [filter, setFilter] = useState("")
   const [scrollBack, setScrollBack] = useState(0)
   const [showTime, setShowTime] = useState(false)
+  const [wrap, setWrap] = useState(true)
+  // the bar opened by "/" either hides non-matching lines (filter) or highlights matches and lets n/N jump (search)
+  const [barKind, setBarKind] = useState<"filter" | "search">("filter")
+  const [search, setSearch] = useState("")
+  const [match, setMatch] = useState<number | undefined>()
+  // copy mode: line cursor and optional selection anchor, both by line seq
+  const [copy, setCopy] = useState<{ cursor: number; anchor?: number } | undefined>()
   const [query, setQuery] = useState("")
   const [paletteIndex, setPaletteIndex] = useState(0)
   const [envScroll, setEnvScroll] = useState(0)
   const [envReveal, setEnvReveal] = useState(false)
   const [toast, setToast] = useState<{ text: string; color: string } | undefined>()
   const toastTimer = useRef<ReturnType<typeof setTimeout>>(undefined)
+
+  const logService = view === "logs" && logScope === "all" ? undefined : selected
+  /** the lines the focused log panel shows (after the filter) */
+  const viewLines = () => filterLines(sup.logs.lines(logService), filter)
 
   const [sidebarDelta, setSidebarDelta] = useState<Record<View, number>>({ dashboard: 0, graph: 0, logs: 0 })
   const [detailH, setDetailH] = useState<number | undefined>()
@@ -95,6 +110,7 @@ export function App({ sup, onQuit }: Props) {
     else setDetailH(undefined)
   }
 
+  const logActions = useRef({ export: () => {}, copyAll: () => {} })
   const resizeRef = useRef({ resize, resetSize })
   resizeRef.current = { resize, resetSize }
 
@@ -227,6 +243,9 @@ export function App({ sup, onQuit }: Props) {
         return items
       }),
       { id: "clear-logs", label: "Clear all logs", run: () => sup.clearLogs() },
+      { id: "toggle-wrap", label: "Toggle log line wrap", hint: "w", run: () => setWrap((v) => !v) },
+      { id: "export-logs", label: "Export visible logs to a file", hint: "E", run: () => logActions.current.export() },
+      { id: "copy-logs", label: "Copy visible logs to the clipboard", hint: "Y", run: () => logActions.current.copyAll() },
       { id: "toggle-time", label: "Toggle log timestamps", hint: "t", run: () => setShowTime((v) => !v) },
       { id: "env", label: "Show environment variables", hint: "e", run: openEnv },
       { id: "help", label: "Show keyboard shortcuts", hint: "?", run: () => setMode("help") },
@@ -246,8 +265,72 @@ export function App({ sup, onQuit }: Props) {
   const moveSelection = (delta: number) =>
     setSelected((cur) => names[(names.indexOf(cur) + delta + names.length) % names.length]!)
 
+  function clearLogQueries() {
+    clearTimeout(toastTimer.current)
+    setToast(undefined) // a lingering "match 3/17" would keep hiding the key hints
+    setFilter("")
+    setSearch("")
+    setMatch(undefined)
+  }
+
+  function exitCopy() {
+    setCopy(undefined)
+    setMode("normal")
+  }
+
+  function copyLines(lines: readonly import("../core/logs.ts").LogLine[], what: string) {
+    if (!lines.length) return notify("nothing to copy", theme.yellow)
+    const text = formatLines(lines, { time: showTime, prefix: !logService })
+    void clipboard.copy(renderer, text).then((r) =>
+      r.ok ? notify(`copied ${what} (${lines.length} line${lines.length === 1 ? "" : "s"}) via ${r.via}`, theme.green) : notify(r.error ?? "copy failed", theme.red),
+    )
+  }
+
+  function exportLogs() {
+    const lines = viewLines()
+    if (!lines.length) return notify("no logs to export", theme.yellow)
+    try {
+      const dir = join(sup.stateDir, "exports")
+      mkdirSync(dir, { recursive: true })
+      const d = new Date()
+      const p2 = (n: number) => String(n).padStart(2, "0")
+      const stamp = `${d.getFullYear()}${p2(d.getMonth() + 1)}${p2(d.getDate())}-${p2(d.getHours())}${p2(d.getMinutes())}${p2(d.getSeconds())}`
+      const file = join(dir, `${logService ?? "all"}-${stamp}.log`)
+      writeFileSync(file, formatLines(lines, { time: true, prefix: !logService }) + "\n")
+      notify(`exported ${lines.length} lines → ${file}`, theme.green)
+      // the path is what you want next (open it, attach it, paste it in an issue)
+      void clipboard.copy(renderer, file).then((r) => {
+        if (r.ok) notify(`exported ${lines.length} lines → ${file} (path copied)`, theme.green)
+      })
+    } catch (err) {
+      notify(`export failed: ${(err as Error).message}`, theme.red)
+    }
+  }
+
+  /** n / N: move to the next (newer) / previous (older) line matching the search; the first jump goes to the newest. */
+  function jumpMatch(dir: 1 | -1, fromEnd = false) {
+    if (!search) return notify("no search: press /, tab, type, enter", theme.yellow)
+    const lines = viewLines()
+    const hit = matcher(search)
+    const idxs = lines.flatMap((l, i) => (hit(l) ? [i] : []))
+    if (!idxs.length) return notify(`no matches for /${search}`, theme.yellow)
+    const at = match === undefined || fromEnd ? -1 : lines.findIndex((l) => l.seq === match)
+    let k = idxs.length - 1
+    if (at >= 0) {
+      const after = idxs.findIndex((i) => i > at)
+      const before = idxs.filter((i) => i < at).length - 1
+      k = dir > 0 ? (after < 0 ? 0 : after) : before < 0 ? idxs.length - 1 : before
+    }
+    setMatch(lines[idxs[k]!]!.seq)
+    notify(`match ${k + 1}/${idxs.length}`, theme.accent)
+  }
+
+  logActions.current = { export: exportLogs, copyAll: () => copyLines(viewLines(), "all logs in view") }
+
   useKeyboard((key: KeyEvent) => {
     const ch = key.sequence
+    const page = Math.max(5, height - (zoomed ? 4 : view === "dashboard" ? detailRows + 3 : 5))
+    const logPage = page
     if (mode === "stopping" || mode === "external") return
     if (mode === "help") return setMode("normal")
     if (mode === "env") {
@@ -283,9 +366,44 @@ export function App({ sup, onQuit }: Props) {
     }
     if (mode === "filter") {
       if (key.name === "escape") {
-        setFilter("")
+        clearLogQueries()
         setMode("normal")
-      } else if (key.name === "return") setMode("normal")
+      } else if (key.name === "return") {
+        setMode("normal")
+        // a new search starts at its newest match
+        if (barKind === "search" && search) jumpMatch(1, true)
+      } else if (key.name === "tab") {
+        // the text typed so far moves over to the other kind of bar
+        const text = barKind === "filter" ? filter : search
+        setFilter(barKind === "filter" ? "" : text)
+        setSearch(barKind === "filter" ? text : "")
+        setMatch(undefined)
+        setBarKind(barKind === "filter" ? "search" : "filter")
+      }
+      return
+    }
+    if (mode === "copy") {
+      const lines = viewLines()
+      if (!lines.length || !copy) return exitCopy()
+      const at = Math.max(0, lines.findIndex((l) => l.seq === copy.cursor))
+      const half = Math.max(2, Math.floor(logPage / 2))
+      const go = (i: number) => setCopy({ ...copy, cursor: lines[Math.max(0, Math.min(lines.length - 1, i))]!.seq })
+      if (key.name === "escape" || ch === "q") return exitCopy()
+      if (key.name === "down" || ch === "j") return go(at + 1)
+      if (key.name === "up" || ch === "k") return go(at - 1)
+      if (key.ctrl && key.name === "d") return go(at + half)
+      if (key.ctrl && key.name === "u") return go(at - half)
+      if (key.name === "pagedown") return go(at + logPage)
+      if (key.name === "pageup") return go(at - logPage)
+      if (ch === "g" || key.name === "home") return go(0)
+      if (ch === "G" || key.name === "end") return go(lines.length - 1)
+      if (ch === "v" || ch === " ") return setCopy({ cursor: copy.cursor, anchor: copy.anchor === undefined ? copy.cursor : undefined })
+      if (ch === "y" || key.name === "return") {
+        const from = copy.anchor === undefined ? at : Math.max(0, lines.findIndex((l) => l.seq === copy.anchor))
+        const range = lines.slice(Math.min(at, from), Math.max(at, from) + 1)
+        exitCopy()
+        return copyLines(range, "selection")
+      }
       return
     }
 
@@ -307,9 +425,9 @@ export function App({ sup, onQuit }: Props) {
     if (ch === "+") return resize(1)
     if (ch === "-") return resize(-1)
     if (ch === "=") return resetSize()
+    if (key.name === "escape" && (search || filter)) return clearLogQueries()
     if (key.name === "escape" && zoomed) return setZoomed(false)
 
-    const page = Math.max(5, height - (zoomed ? 4 : view === "dashboard" ? detailRows + 3 : 5))
     if (focus === "logs") {
       if (key.name === "down" || ch === "j") return setScrollBack((v) => Math.max(0, v - 1))
       if (key.name === "up" || ch === "k") return setScrollBack((v) => v + 1)
@@ -317,6 +435,13 @@ export function App({ sup, onQuit }: Props) {
       if (key.ctrl && key.name === "u") return setScrollBack((v) => v + Math.floor(page / 2))
       if (ch === "g" || key.name === "home") return setScrollBack(Number.MAX_SAFE_INTEGER)
       if (ch === "G" || key.name === "end") return setScrollBack(0)
+      if (ch === "v") {
+        const lines = viewLines()
+        const last = lines[Math.max(0, lines.length - 1 - scrollBack)]
+        if (!last) return notify("no logs to select", theme.yellow)
+        setCopy({ cursor: last.seq })
+        return setMode("copy")
+      }
     }
 
     if (view === "graph" && focus === "graph" && ["up", "down", "left", "right"].includes(key.name)) {
@@ -349,6 +474,11 @@ export function App({ sup, onQuit }: Props) {
     if (ch === "/") return setMode("filter")
     if (ch === "f") return setScrollBack(0)
     if (ch === "t") return setShowTime((v) => !v)
+    if (ch === "w") return setWrap((v) => !v)
+    if (ch === "Y") return copyLines(viewLines(), "all logs in view")
+    if (ch === "E") return exportLogs()
+    if (ch === "n") return jumpMatch(1)
+    if (ch === "N") return jumpMatch(-1)
     if (ch === "c") {
       sup.clearLogs(view === "logs" && logScope === "all" ? undefined : selected)
       return notify("logs cleared", theme.muted)
@@ -388,8 +518,41 @@ export function App({ sup, onQuit }: Props) {
     { up: 0, bad: 0, busy: 0 },
   )
 
-  const logService = view === "logs" && logScope === "all" ? undefined : selected
+  const logExtras = {
+    cursor: mode === "copy" ? copy?.cursor : undefined,
+    anchor: mode === "copy" ? copy?.anchor : undefined,
+    freeze: mode === "copy",
+    search: search || undefined,
+    current: match,
+    onSelect: (anchor: number, cursor: number) => {
+      setCopy({ cursor, anchor: anchor === cursor ? undefined : anchor })
+      setMode("copy")
+    },
+  }
   const logTitle = logService ? `Logs · ${logService}` : "Logs · all services"
+
+  const footerHints: string[][] =
+    mode === "copy"
+      ? [
+          ["j/k", "move"],
+          ["ctrl+d/u", "page"],
+          ["v", "start/clear selection"],
+          ["y", "copy"],
+          ["esc", "cancel"],
+        ]
+      : [
+          ["space", "start/stop"],
+          ["r", "restart"],
+          ["S/X", "all"],
+          ["l", "logs"],
+          ["tab", "focus"],
+          ["z", "zoom"],
+          ["/", "filter"],
+          ["o", "open"],
+          [":", "commands"],
+          ["?", "help"],
+          ["q", "quit"],
+        ]
 
   return (
     <box flexDirection="column" width="100%" height="100%" backgroundColor={theme.bg}>
@@ -464,6 +627,8 @@ export function App({ sup, onQuit }: Props) {
                     title={`Logs · ${selected}`}
                     focused={focus === "logs"}
                     showTime={showTime}
+                    wrap={wrap}
+                    {...logExtras}
                     onFocus={() => setFocus("logs")}
                   />
                 ) : null}
@@ -483,6 +648,8 @@ export function App({ sup, onQuit }: Props) {
                 title={`${logTitle}  (a: ${logScope === "all" ? "only selected" : "all"})`}
                 focused={focus === "logs"}
                 showTime={showTime}
+                    wrap={wrap}
+                    {...logExtras}
                 onFocus={() => setFocus("logs")}
               />
             ) : null}
@@ -493,13 +660,18 @@ export function App({ sup, onQuit }: Props) {
       {/* filter bar */}
       {mode === "filter" ? (
         <box height={1} flexDirection="row" paddingLeft={1} backgroundColor={theme.panelAlt}>
-          <text fg={theme.accent}>{"/ "}</text>
+          <text fg={theme.accent}>{barKind === "filter" ? "filter " : "search "}</text>
           <input
+            key={barKind}
             flexGrow={1}
             focused
-            value={filter}
-            placeholder="filter logs (regex) · enter to keep · esc to clear"
-            onInput={setFilter}
+            value={barKind === "filter" ? filter : search}
+            placeholder={
+              barKind === "filter"
+                ? "hide lines not matching (regex) · tab: search instead · enter keep · esc clear"
+                : "highlight matches (regex), n/N to jump · tab: filter instead · enter go · esc clear"
+            }
+            onInput={barKind === "filter" ? setFilter : setSearch}
             backgroundColor={theme.panelAlt}
             focusedBackgroundColor={theme.panelAlt}
             textColor={theme.text}
@@ -514,19 +686,7 @@ export function App({ sup, onQuit }: Props) {
           <text fg={toast.color}>{toast.text}</text>
         ) : (
           <text>
-            {[
-              ["space", "start/stop"],
-              ["r", "restart"],
-              ["S/X", "all"],
-              ["l", "logs"],
-              ["tab", "focus"],
-              ["z", "zoom"],
-              ["/", "filter"],
-              ["o", "open"],
-              [":", "commands"],
-              ["?", "help"],
-              ["q", "quit"],
-            ].flatMap(([k, v]) => [
+            {footerHints.flatMap(([k, v]) => [
               <span key={`k${k}`} fg={theme.accent}>
                 {k}
               </span>,
@@ -544,7 +704,7 @@ export function App({ sup, onQuit }: Props) {
       </box>
 
       {mode === "palette" ? <CommandPalette commands={matches} selected={paletteIndex} onQuery={setQuery} width={width} /> : null}
-      {mode === "help" ? <HelpOverlay width={width} /> : null}
+      {mode === "help" ? <HelpOverlay width={width} height={height} /> : null}
       {mode === "env" && selected ? (
         <EnvOverlay service={selected} {...resolveEnv(sup.service(selected), sup.config.root)} scroll={envScroll} reveal={envReveal} width={width} height={height} />
       ) : null}

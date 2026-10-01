@@ -25,6 +25,8 @@ Built with TypeScript, [Bun](https://bun.sh) and [OpenTUI](https://github.com/an
 - **Healthchecks**: HTTP, TCP, command, or Docker's `HEALTHCHECK`. If you set `port` without
   `health`, a TCP check to that port is used.
 - **Restart policy** `no | on-failure | always` with exponential backoff (1s → 30s).
+- **Long log lines wrap** (`w` toggles), the view stays put while you scroll up, and copy mode
+  (`v`) selects across scrolling and copies whole lines via OSC 52 (or `wl-copy`/`xclip`/`pbcopy`/`clip.exe`).
 - **Live logs** per service or combined with color prefix, regex filter, scroll
   (wheel/PgUp/PgDn), timestamps, error/warning highlighting.
 - **CPU and memory** per process tree (via `/proc`) and per container (`docker stats`), with
@@ -68,6 +70,8 @@ orbit up [svc|group] # without TUI: starts and shows logs (ctrl+c to stop)
 orbit down           # stops whatever orbit left running (processes, containers)
 orbit graph          # prints the dependency graph
 orbit ls             # lists services
+orbit logs [svc|group…] [-f] [-n 200] [--grep re] [--since 10m]
+                     # prints recent logs without the TUI (works while orbit is open or closed)
 orbit init [dir]     # generates an orbit.yaml by scanning the project
 ```
 
@@ -87,9 +91,12 @@ Without `orbit.yaml`, orbit opens the services from a `docker-compose.yml` direc
 | `+` `-` `=` | grow / shrink the focused panel · reset sizes |
 | `j k` `ctrl+u/d` `g G` (logs focused) | scroll logs by line / half page / top / bottom |
 | `enter` / `l` | logs of the selected one · `a` toggles selected ⇄ all |
-| `/` | filter logs (regex) · `esc` clears |
+| `/` | filter logs (regex) · `tab` switches to search (highlight, keep all lines) · `esc` clears |
+| `n` · `N` | next (newer) · previous (older) search match |
 | `f` · `PgUp PgDn` · wheel | follow / scroll logs |
-| `t` · `c` | timestamps · clear logs |
+| `t` · `w` · `c` | timestamps · line wrap · clear logs |
+| `v` (logs focused) | copy mode: `j k` `ctrl+u/d` `g G` move, `v` start/clear selection, `y` copy, `esc` cancel |
+| `Y` · `E` | copy all visible logs · export them to `~/.local/state/orbit/<project>/exports/` (the path is copied) |
 | `o` | open `http://localhost:<port>` (or `url`) in the browser |
 | `e` | environment variables of the selected service (secrets masked, `v` reveals) |
 | `L` | open the selected service's git repo in [lazygit](https://github.com/jesseduffield/lazygit) (if installed) |

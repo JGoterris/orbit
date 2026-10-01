@@ -52,6 +52,54 @@ export function detectLevel(text: string): LogLevel {
   return undefined
 }
 
+/** Builds a line predicate from a user filter: regex (case-insensitive), or plain substring if it is not a valid regex. */
+export function matcher(filter: string): (l: LogLine) => boolean {
+  if (!filter) return () => true
+  try {
+    const re = new RegExp(filter, "i")
+    return (l) => re.test(l.text) || re.test(l.service)
+  } catch {
+    const f = filter.toLowerCase()
+    return (l) => l.text.toLowerCase().includes(f) || l.service.includes(f)
+  }
+}
+
+export function filterLines(lines: readonly LogLine[], filter: string): readonly LogLine[] {
+  return filter ? lines.filter(matcher(filter)) : lines
+}
+
+export function clock(ts: number): string {
+  const d = new Date(ts)
+  return `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}:${String(d.getSeconds()).padStart(2, "0")}`
+}
+
+/** Plain text for copying/exporting: one line per entry, optionally with time and service prefix. */
+export function formatLines(lines: readonly LogLine[], opts: { time?: boolean; prefix?: boolean } = {}): string {
+  const width = opts.prefix ? Math.max(0, ...lines.map((l) => l.service.length)) : 0
+  return lines
+    .map((l) => {
+      const head = [opts.time ? clock(l.ts) : "", opts.prefix ? `${l.service.padEnd(width)} │` : ""].filter(Boolean).join(" ")
+      const text = l.stream === "system" ? `» ${l.text}` : l.text
+      return head ? `${head} ${text}` : text
+    })
+    .join("\n")
+}
+
+/** Last `lines` lines of a file, reading at most the last `bytes` bytes. Empty if the file does not exist. */
+export async function readTail(path: string, lines: number, bytes = 256 * 1024): Promise<string[]> {
+  const file = Bun.file(path)
+  if (!(await file.exists())) return []
+  const size = file.size
+  if (size === 0 || lines <= 0) return []
+  const start = Math.max(0, size - bytes)
+  let text = new TextDecoder().decode(await file.slice(start, size).bytes())
+  // a cut in the middle of a line is not worth showing
+  if (start > 0) text = text.slice(text.indexOf("\n") + 1)
+  const out = text.split("\n")
+  if (out.at(-1) === "") out.pop()
+  return out.slice(-lines)
+}
+
 export class LogStore {
   private seq = 0
   readonly all: Ring<LogLine>
@@ -120,15 +168,8 @@ export class FileTail {
   async start(backlog?: { bytes: number; lines: number }) {
     const size = Bun.file(this.path).size
     if (backlog && size > 0) {
-      this.offset = Math.max(0, size - backlog.bytes)
-      const bytes = await Bun.file(this.path).slice(this.offset, size).bytes()
+      for (const l of await readTail(this.path, backlog.lines, backlog.bytes)) this.onLine(l)
       this.offset = size
-      let text = this.decoder.decode(bytes)
-      // a cut in the middle of a line is not worth showing
-      if (size > backlog.bytes) text = text.slice(text.indexOf("\n") + 1)
-      const lines = text.split("\n")
-      if (lines.at(-1) === "") lines.pop()
-      for (const l of lines.slice(-backlog.lines)) this.onLine(l)
     }
     this.timer = setInterval(() => void this.poll(), this.interval)
   }
