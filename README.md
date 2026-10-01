@@ -78,7 +78,10 @@ Without `orbit.yaml`, orbit opens the services from a `docker-compose.yml` direc
 | `space` | start / stop the selected one (with dependencies) |
 | `s` `x` `r` | start / stop / restart the selected one |
 | `S` `X` `R` | start / stop / restart everything |
-| `1` `2` `3` / `tab` | Dashboard / Graph / Logs |
+| `1` `2` `3` | Dashboard / Graph / Logs |
+| `tab` / `shift+tab` | move focus between panels |
+| `z` · `esc` | zoom the focused panel to full screen · back |
+| `j k` `ctrl+u/d` `g G` (logs focused) | scroll logs by line / half page / top / bottom |
 | `enter` / `l` | logs of the selected one · `a` toggles selected ⇄ all |
 | `/` | filter logs (regex) · `esc` clears |
 | `f` · `PgUp PgDn` · wheel | follow / scroll logs |

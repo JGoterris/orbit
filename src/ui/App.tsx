@@ -15,6 +15,15 @@ import { statusStyle, theme } from "./theme.ts"
 type View = "dashboard" | "graph" | "logs"
 type Mode = "normal" | "palette" | "filter" | "help" | "quit" | "stopping" | "external"
 
+type Pane = "services" | "detail" | "logs" | "graph"
+
+const PANES: Record<View, Pane[]> = {
+  dashboard: ["services", "detail", "logs"],
+  graph: ["services", "graph"],
+  logs: ["services", "logs"],
+}
+const DEFAULT_PANE: Record<View, Pane> = { dashboard: "services", graph: "graph", logs: "logs" }
+
 const VIEWS: Array<{ id: View; label: string }> = [
   { id: "dashboard", label: "Dashboard" },
   { id: "graph", label: "Graph" },
@@ -37,6 +46,8 @@ export function App({ sup, onQuit }: Props) {
   const [selected, setSelected] = useState(names[0] ?? "")
   const [view, setView] = useState<View>("dashboard")
   const [mode, setMode] = useState<Mode>("normal")
+  const [focus, setFocus] = useState<Pane>("services")
+  const [zoomed, setZoomed] = useState(false)
   const [logScope, setLogScope] = useState<"selected" | "all">("all")
   const [filter, setFilter] = useState("")
   const [scrollBack, setScrollBack] = useState(0)
@@ -129,6 +140,7 @@ export function App({ sup, onQuit }: Props) {
         run: () => run("restart", Promise.all(names.filter((n) => sup.isUp(n)).map((n) => sup.restart(n)))),
       },
       ...VIEWS.map((v, i) => ({ id: `view-${v.id}`, label: `View: ${v.label}`, hint: String(i + 1), run: () => setView(v.id) })),
+      { id: "toggle-zoom", label: "Toggle zoom of the focused panel", hint: "z", run: () => setZoomed((v) => !v) },
       ...Object.entries(sup.config.groups).flatMap(([g, members]) => [
         { id: `group-start-${g}`, label: `Start group ${g}`, hint: members.join(","), run: () => run(g, sup.startMany(members)) },
         {
@@ -151,6 +163,7 @@ export function App({ sup, onQuit }: Props) {
               setSelected(n)
               setLogScope("selected")
               setView("logs")
+              setFocus("logs")
             },
           },
         ]
@@ -209,11 +222,24 @@ export function App({ sup, onQuit }: Props) {
     if (ch === "2") return setView("graph")
     if (ch === "3") return setView("logs")
     if (key.name === "tab") {
-      const i = VIEWS.findIndex((v) => v.id === view)
-      return setView(VIEWS[(i + (key.shift ? VIEWS.length - 1 : 1)) % VIEWS.length]!.id)
+      const panes = PANES[view]
+      const i = Math.max(0, panes.indexOf(focus))
+      return setFocus(panes[(i + (key.shift ? panes.length - 1 : 1)) % panes.length]!)
+    }
+    if (ch === "z") return setZoomed((v) => !v)
+    if (key.name === "escape" && zoomed) return setZoomed(false)
+
+    const page = Math.max(5, height - (zoomed ? 4 : 12))
+    if (focus === "logs") {
+      if (key.name === "down" || ch === "j") return setScrollBack((v) => Math.max(0, v - 1))
+      if (key.name === "up" || ch === "k") return setScrollBack((v) => v + 1)
+      if (key.ctrl && key.name === "d") return setScrollBack((v) => Math.max(0, v - Math.floor(page / 2)))
+      if (key.ctrl && key.name === "u") return setScrollBack((v) => v + Math.floor(page / 2))
+      if (ch === "g" || key.name === "home") return setScrollBack(Number.MAX_SAFE_INTEGER)
+      if (ch === "G" || key.name === "end") return setScrollBack(0)
     }
 
-    if (view === "graph" && ["up", "down", "left", "right"].includes(key.name)) {
+    if (view === "graph" && focus === "graph" && ["up", "down", "left", "right"].includes(key.name)) {
       const dir = key.name as "up" | "down" | "left" | "right"
       return setSelected((cur) => neighbourInDirection(layout, cur, dir) ?? cur)
     }
@@ -235,6 +261,7 @@ export function App({ sup, onQuit }: Props) {
     if (key.name === "return" || ch === "l") {
       setLogScope("selected")
       setScrollBack(0)
+      setFocus("logs")
       return setView("logs")
     }
     if (ch === "a") return setLogScope((s) => (s === "all" ? "selected" : "all"))
@@ -245,8 +272,8 @@ export function App({ sup, onQuit }: Props) {
       sup.clearLogs(view === "logs" && logScope === "all" ? undefined : selected)
       return notify("logs cleared", theme.muted)
     }
-    if (key.name === "pageup") return setScrollBack((v) => v + Math.max(5, height - 12))
-    if (key.name === "pagedown") return setScrollBack((v) => Math.max(0, v - Math.max(5, height - 12)))
+    if (key.name === "pageup") return setScrollBack((v) => v + page)
+    if (key.name === "pagedown") return setScrollBack((v) => Math.max(0, v - page))
   })
 
   function openPalette() {
@@ -257,6 +284,10 @@ export function App({ sup, onQuit }: Props) {
 
   useEffect(() => setPaletteIndex(0), [query])
   useEffect(() => setScrollBack(0), [selected, logScope, view])
+  useEffect(() => {
+    setFocus(DEFAULT_PANE[view])
+    setZoomed(false)
+  }, [view])
 
   const sidebarW = view === "graph" ? Math.min(30, Math.max(22, Math.floor(width * 0.18))) : Math.min(52, Math.max(40, Math.floor(width * 0.3)))
   const counts = names.reduce(
@@ -289,6 +320,7 @@ export function App({ sup, onQuit }: Props) {
               <span key={v.id} fg={theme.muted}>{` ${i + 1} ${v.label} `}</span>
             ),
           )}
+          {zoomed ? <span fg={theme.accent}>{"  ⛶ zoom"}</span> : null}
         </text>
         <box flexGrow={1} />
         <text>
@@ -301,39 +333,68 @@ export function App({ sup, onQuit }: Props) {
 
       {/* body */}
       <box flexGrow={1} flexDirection="row">
-        <ServiceList sup={sup} names={names} selected={selected} onSelect={setSelected} tick={tick} width={sidebarW} focused={view !== "logs" || logScope === "selected"} compact={view === "graph"} />
-        <box flexGrow={1} flexDirection="column">
-          {view === "dashboard" && selected ? (
-            <>
-              <ServiceDetail sup={sup} name={selected} width={width - sidebarW} />
+        {!zoomed || focus === "services" ? (
+          <ServiceList
+            sup={sup}
+            names={names}
+            selected={selected}
+            onSelect={setSelected}
+            tick={tick}
+            width={zoomed ? width : sidebarW}
+            focused={focus === "services"}
+            compact={view === "graph" && !zoomed}
+            onFocus={() => setFocus("services")}
+          />
+        ) : null}
+        {!zoomed || focus !== "services" ? (
+          <box flexGrow={1} flexDirection="column">
+            {view === "dashboard" && selected ? (
+              <>
+                {!zoomed || focus === "detail" ? (
+                  <ServiceDetail
+                    sup={sup}
+                    name={selected}
+                    width={zoomed ? width : width - sidebarW}
+                    focused={focus === "detail"}
+                    expanded={zoomed}
+                    onFocus={() => setFocus("detail")}
+                  />
+                ) : null}
+                {!zoomed || focus === "logs" ? (
+                  <LogView
+                    lines={sup.logs.lines(selected)}
+                    service={selected}
+                    names={names}
+                    filter={filter}
+                    scrollBack={scrollBack}
+                    onScroll={(d) => setScrollBack((v) => Math.max(0, v + d))}
+                    title={`Logs · ${selected}`}
+                    focused={focus === "logs"}
+                    showTime={showTime}
+                    onFocus={() => setFocus("logs")}
+                  />
+                ) : null}
+              </>
+            ) : null}
+            {view === "graph" ? (
+              <GraphView sup={sup} selected={selected} onSelect={setSelected} tick={tick} focused={focus === "graph"} onFocus={() => setFocus("graph")} />
+            ) : null}
+            {view === "logs" ? (
               <LogView
-                lines={sup.logs.lines(selected)}
-                service={selected}
+                lines={sup.logs.lines(logService)}
+                service={logService}
                 names={names}
                 filter={filter}
                 scrollBack={scrollBack}
                 onScroll={(d) => setScrollBack((v) => Math.max(0, v + d))}
-                title={`Logs · ${selected}`}
-                focused={false}
+                title={`${logTitle}  (a: ${logScope === "all" ? "only selected" : "all"})`}
+                focused={focus === "logs"}
                 showTime={showTime}
+                onFocus={() => setFocus("logs")}
               />
-            </>
-          ) : null}
-          {view === "graph" ? <GraphView sup={sup} selected={selected} onSelect={setSelected} tick={tick} focused /> : null}
-          {view === "logs" ? (
-            <LogView
-              lines={sup.logs.lines(logService)}
-              service={logService}
-              names={names}
-              filter={filter}
-              scrollBack={scrollBack}
-              onScroll={(d) => setScrollBack((v) => Math.max(0, v + d))}
-              title={`${logTitle}  (a: ${logScope === "all" ? "only selected" : "all"})`}
-              focused
-              showTime={showTime}
-            />
-          ) : null}
-        </box>
+            ) : null}
+          </box>
+        ) : null}
       </box>
 
       {/* filter bar */}
@@ -365,6 +426,8 @@ export function App({ sup, onQuit }: Props) {
               ["r", "restart"],
               ["S/X", "all"],
               ["l", "logs"],
+              ["tab", "focus"],
+              ["z", "zoom"],
               ["/", "filter"],
               ["o", "open"],
               [":", "commands"],

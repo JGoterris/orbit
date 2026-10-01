@@ -13,6 +13,7 @@ interface Props {
   onSelect: (name: string) => void
   tick: number
   focused: boolean
+  onFocus?: () => void
 }
 
 export function useGraphLayout(sup: Supervisor): GraphLayout {
@@ -43,7 +44,7 @@ export function neighbourInDirection(
   return best?.name
 }
 
-export function GraphView({ sup, selected, onSelect, tick, focused }: Props) {
+export function GraphView({ sup, selected, onSelect, tick, focused, onFocus }: Props) {
   const layout = useGraphLayout(sup)
   const { ref, size, onSizeChange } = useSize<BoxRenderable>()
   const offset = useRef({ x: 0, y: 0 })
@@ -108,6 +109,7 @@ export function GraphView({ sup, selected, onSelect, tick, focused }: Props) {
   const rows = grid.slice(o.y, o.y + viewH)
 
   const onMouseDown = (e: MouseEvent) => {
+    onFocus?.()
     const r = ref.current
     if (!r) return
     const gx = e.x - r.x - 1 - padX + o.x

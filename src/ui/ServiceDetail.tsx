@@ -8,6 +8,10 @@ interface Props {
   sup: Supervisor
   name: string
   width: number
+  focused?: boolean
+  /** zoomed: fill the available height instead of the fixed 9 rows */
+  expanded?: boolean
+  onFocus?: () => void
 }
 
 function Field({ label, value, color = theme.text }: { label: string; value: string; color?: string }) {
@@ -20,7 +24,7 @@ function Field({ label, value, color = theme.text }: { label: string; value: str
   )
 }
 
-export function ServiceDetail({ sup, name, width }: Props) {
+export function ServiceDetail({ sup, name, width, focused, expanded, onFocus }: Props) {
   const svc = sup.service(name)
   const st = sup.state(name)
   const style = styleFor(st.status, svc.oneshot)
@@ -48,13 +52,15 @@ export function ServiceDetail({ sup, name, width }: Props) {
       flexDirection="column"
       border
       borderStyle="rounded"
-      borderColor={theme.border}
+      borderColor={focused ? theme.borderFocus : theme.border}
       backgroundColor={theme.panel}
       paddingLeft={1}
       paddingRight={1}
-      height={9}
+      height={expanded ? undefined : 9}
+      flexGrow={expanded ? 1 : 0}
       title={` ${name} `}
       titleColor={theme.text}
+      onMouseDown={onFocus}
     >
       <text>
         <span fg={style.color}>{style.icon} </span>

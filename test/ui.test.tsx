@@ -75,6 +75,41 @@ describe("tui", () => {
     expect(frame).toContain("command palette")
   })
 
+  test("tab moves focus between panels and z zooms the focused one", async () => {
+    const t = await setup()
+    const frame = () => t.captureCharFrame()
+    expect(frame()).toContain("Services 0/8")
+
+    // dashboard: services -> detail -> logs
+    await press(t, "TAB")
+    await press(t, "z")
+    expect(frame()).not.toContain("Services 0/8")
+    expect(frame()).toContain("zoom")
+    expect(frame()).toContain("needs")
+    await press(t, "z")
+    expect(frame()).toContain("Services 0/8")
+
+    await press(t, "TAB")
+    await press(t, "z")
+    expect(frame()).toContain("Logs · ")
+    expect(frame()).not.toContain("Services 0/8")
+    expect(frame()).not.toContain("needs")
+    await press(t, "ESCAPE")
+    await Bun.sleep(100)
+    await t.renderOnce()
+    expect(frame()).toContain("Services 0/8")
+
+    // logs view: j/k scroll instead of changing the selected service
+    await press(t, "3")
+    await press(t, "z")
+    expect(frame()).toContain("Logs · all services")
+    expect(frame()).not.toContain("Services 0/8")
+    await press(t, "j")
+    await press(t, "z")
+    expect(frame()).toContain("Services 0/8")
+    expect(frame()).toContain("│▌○ postgres")
+  })
+
   test("mouse: click a service row and a graph node to select them", async () => {
     const t = await setup()
     const rowOf = (name: string) => t.captureCharFrame().split("\n").findIndex((l) => l.startsWith(`│ ○ ${name} `))

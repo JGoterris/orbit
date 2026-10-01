@@ -1,4 +1,5 @@
 import type { BoxRenderable, MouseEvent } from "@opentui/core"
+import { useEffect } from "react"
 import { detectLevel, type LogLine } from "../core/logs.ts"
 import { useSize } from "./hooks.ts"
 import { fit, serviceColor, theme } from "./theme.ts"
@@ -15,6 +16,7 @@ interface Props {
   title: string
   focused: boolean
   showTime: boolean
+  onFocus?: () => void
 }
 
 function time(ts: number) {
@@ -34,13 +36,17 @@ export function filterLines(lines: readonly LogLine[], filter: string): readonly
   return lines.filter((l) => re.test(l.text) || re.test(l.service))
 }
 
-export function LogView({ lines, service, names, filter, scrollBack, onScroll, title, focused, showTime }: Props) {
+export function LogView({ lines, service, names, filter, scrollBack, onScroll, title, focused, showTime, onFocus }: Props) {
   const { ref, size, onSizeChange } = useSize<BoxRenderable>()
   const filtered = filterLines(lines, filter)
   const height = Math.max(1, size.height - 2)
   const width = Math.max(10, size.width - 4)
   const maxBack = Math.max(0, filtered.length - height)
   const back = Math.min(scrollBack, maxBack)
+  // keep the parent's offset within range so "jump to top" doesn't leave a huge dead scroll
+  useEffect(() => {
+    if (scrollBack > maxBack && size.height > 0) onScroll(maxBack - scrollBack)
+  }, [scrollBack, maxBack, size.height, onScroll])
   const end = filtered.length - back
   const visible = filtered.slice(Math.max(0, end - height), end)
   const prefixW = service ? 0 : Math.min(14, Math.max(4, ...names.map((n) => n.length))) + 1
@@ -66,6 +72,7 @@ export function LogView({ lines, service, names, filter, scrollBack, onScroll, t
       titleColor={theme.text}
       bottomTitle={` ${status} `}
       bottomTitleAlignment="right"
+      onMouseDown={onFocus}
       onMouseScroll={(e: MouseEvent) => onScroll(e.scroll?.direction === "up" ? 3 : e.scroll?.direction === "down" ? -3 : 0)}
     >
       {visible.length === 0 ? (

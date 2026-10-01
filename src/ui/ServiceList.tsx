@@ -12,9 +12,10 @@ interface Props {
   focused: boolean
   /** icon + name + port only */
   compact?: boolean
+  onFocus?: () => void
 }
 
-export function ServiceList({ sup, names, selected, onSelect, tick, width, focused, compact }: Props) {
+export function ServiceList({ sup, names, selected, onSelect, tick, width, focused, compact, onFocus }: Props) {
   const up = names.filter((n) => sup.isUp(n)).length
   const nameW = Math.max(6, width - (compact ? 14 : 35))
   return (
@@ -27,6 +28,7 @@ export function ServiceList({ sup, names, selected, onSelect, tick, width, focus
       backgroundColor={theme.panel}
       title={` Services ${up}/${names.length} `}
       titleColor={theme.text}
+      onMouseDown={onFocus}
     >
       {names.map((name) => {
         const st = sup.state(name)
