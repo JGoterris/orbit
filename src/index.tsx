@@ -1,4 +1,5 @@
 #!/usr/bin/env bun
+import { statSync } from "node:fs"
 import { parseArgs } from "node:util"
 import { ConfigError, type OrbitConfig } from "./config/schema.ts"
 import { loadConfig } from "./config/load.ts"
@@ -27,7 +28,14 @@ options
   -h, --help                 show this help
 `
 
-const { values, positionals } = parseArgs({
+function fail(msg: string): never {
+  console.error(`\x1b[31morbit:\x1b[0m ${msg}\nrun \`orbit --help\` for usage`)
+  process.exit(1)
+}
+
+let parsed: ReturnType<typeof parse>
+function parse() {
+  return parseArgs({
   args: Bun.argv.slice(2),
   allowPositionals: true,
   options: {
@@ -40,7 +48,14 @@ const { values, positionals } = parseArgs({
     grep: { type: "string" },
     since: { type: "string" },
   },
-})
+  })
+}
+try {
+  parsed = parse()
+} catch (err) {
+  fail(err instanceof Error ? err.message.split(". ")[0]!.replace(/\.$/, "") : String(err))
+}
+const { values, positionals } = parsed
 
 if (values.help) {
   console.log(HELP)
@@ -51,6 +66,20 @@ const [command, ...rest] = positionals
 const SUBCOMMANDS = ["up", "down", "logs", "graph", "ls", "init"]
 const sub = command && SUBCOMMANDS.includes(command) ? command : undefined
 const dir = sub ? (sub === "init" ? rest[0] : undefined) : command
+
+// Only up/logs take extra positionals (service names); init takes one dir; the TUI takes one dir.
+const maxExtra = sub === "up" || sub === "logs" ? Infinity : sub === "init" ? 1 : 0
+if (rest.length > maxExtra) fail(`unexpected argument "${rest[maxExtra]}"`)
+if (dir !== undefined && sub !== "init") {
+  const isDir = (() => {
+    try {
+      return statSync(dir).isDirectory()
+    } catch {
+      return false
+    }
+  })()
+  if (!isDir) fail(`unknown command or directory "${dir}"`)
+}
 
 function load(): OrbitConfig {
   try {
