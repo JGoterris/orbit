@@ -364,15 +364,19 @@ export function App({ sup, onQuit }: Props) {
           <span fg={theme.dim}> · </span>
           <span fg={theme.text}>{sup.config.name}</span>
           <span fg={theme.dim}>{"    "}</span>
-          {VIEWS.map((v, i) =>
-            v.id === view ? (
-              <strong key={v.id} fg={theme.bg} bg={theme.accent}>{` ${i + 1} ${v.label} `}</strong>
-            ) : (
-              <span key={v.id} fg={theme.muted}>{` ${i + 1} ${v.label} `}</span>
-            ),
-          )}
-          {zoomed ? <span fg={theme.accent}>{"  ⛶ zoom"}</span> : null}
         </text>
+        {VIEWS.map((v, i) => (
+          <box key={v.id} height={1} onMouseDown={() => setView(v.id)}>
+            {v.id === view ? (
+              <text>
+                <strong fg={theme.bg} bg={theme.accent}>{` ${i + 1} ${v.label} `}</strong>
+              </text>
+            ) : (
+              <text fg={theme.muted}>{` ${i + 1} ${v.label} `}</text>
+            )}
+          </box>
+        ))}
+        {zoomed ? <text fg={theme.accent}>{"  ⛶ zoom"}</text> : null}
         <box flexGrow={1} />
         <text>
           <span fg={theme.green}>● {counts.up} up</span>

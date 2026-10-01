@@ -146,6 +146,25 @@ describe("tui", () => {
     expect(rowOf("Logs · ")).toBe(top - 1)
   })
 
+  test("mouse: click the header tabs to switch views", async () => {
+    const t = await setup()
+    const click = async (label: string) => {
+      const x = t.captureCharFrame().split("\n")[0]!.indexOf(label) + 1
+      await act(async () => {
+        await t.mockMouse.click(x, 0)
+        await Bun.sleep(30)
+      })
+      await t.renderOnce()
+    }
+    await click("2 Graph")
+    expect(t.captureCharFrame()).toContain("Dependency graph")
+    await click("3 Logs")
+    expect(t.captureCharFrame()).toContain("Logs · all services")
+    await click("1 Dashboard")
+    expect(t.captureCharFrame()).toContain("Services 0/8")
+    expect(t.captureCharFrame()).toContain("needs")
+  })
+
   test("mouse: click a service row and a graph node to select them", async () => {
     const t = await setup()
     const rowOf = (name: string) => t.captureCharFrame().split("\n").findIndex((l) => l.startsWith(`│ ○ ${name} `))
