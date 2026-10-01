@@ -12,13 +12,15 @@ import { GraphView, neighbourInDirection, useGraphLayout } from "./GraphView.tsx
 import { useSupervisorVersion, useTick } from "./hooks.ts"
 import { clipboard } from "./clipboard.ts"
 import { LogView } from "./LogView.tsx"
-import { CommandPalette, ConfirmOverlay, EnvOverlay, envPageSize, filterCommands, HelpOverlay, type Command } from "./Overlays.tsx"
+import { CommandPalette, ConfirmOverlay, EnvOverlay, envPageSize, filterCommands, HelpOverlay, ThemePicker, type Command } from "./Overlays.tsx"
 import { ServiceDetail } from "./ServiceDetail.tsx"
 import { ServiceList } from "./ServiceList.tsx"
-import { statusStyle, theme } from "./theme.ts"
+import { applyTheme, statusStyle, theme } from "./theme.ts"
+import { DEFAULT_THEME, THEMES, type Palette } from "./themes.ts"
+import { writeUserConfig } from "../core/userConfig.ts"
 
 type View = "dashboard" | "graph" | "logs"
-type Mode = "normal" | "palette" | "filter" | "help" | "env" | "quit" | "stopping" | "external" | "copy"
+type Mode = "normal" | "palette" | "filter" | "help" | "env" | "quit" | "stopping" | "external" | "copy" | "theme"
 
 type Pane = "services" | "detail" | "logs" | "graph"
 
@@ -41,9 +43,17 @@ const VIEWS: Array<{ id: View; label: string }> = [
 interface Props {
   sup: Supervisor
   onQuit: (how: "stop" | "detach") => Promise<void> | void
+  /** every selectable theme (built-in first, then the user's); defaults to the built-in ones */
+  themes?: Record<string, Palette>
+  /** names in `themes` that come from the user's themes dir */
+  customThemes?: string[]
+  /** theme applied before the first render */
+  initialTheme?: string
+  /** problems found while loading user themes, shown once as a toast */
+  themeErrors?: string[]
 }
 
-export function App({ sup, onQuit }: Props) {
+export function App({ sup, onQuit, themes = THEMES, customThemes = [], initialTheme = DEFAULT_THEME, themeErrors = [] }: Props) {
   useSupervisorVersion(sup)
   const tick = useTick(250)
   const { width, height } = useTerminalDimensions()
@@ -54,6 +64,10 @@ export function App({ sup, onQuit }: Props) {
   const [selected, setSelected] = useState(names[0] ?? "")
   const [view, setView] = useState<View>("dashboard")
   const [mode, setMode] = useState<Mode>("normal")
+  // `savedTheme` is what config.json holds; `themeName` is what is on screen (differs while previewing)
+  const [themeName, setThemeName] = useState(initialTheme)
+  const savedTheme = useRef(initialTheme)
+  const [themeIndex, setThemeIndex] = useState(0)
   const [focus, setFocus] = useState<Pane>("services")
   const [zoomed, setZoomed] = useState(false)
   const [logScope, setLogScope] = useState<"selected" | "all">("all")
@@ -246,6 +260,7 @@ export function App({ sup, onQuit }: Props) {
       { id: "toggle-wrap", label: "Toggle log line wrap", hint: "w", run: () => setWrap((v) => !v) },
       { id: "export-logs", label: "Export visible logs to a file", hint: "E", run: () => logActions.current.export() },
       { id: "copy-logs", label: "Copy visible logs to the clipboard", hint: "Y", run: () => logActions.current.copyAll() },
+      { id: "theme", label: "Change theme…", hint: "T", run: openThemePicker },
       { id: "toggle-time", label: "Toggle log timestamps", hint: "t", run: () => setShowTime((v) => !v) },
       { id: "env", label: "Show environment variables", hint: "e", run: openEnv },
       { id: "help", label: "Show keyboard shortcuts", hint: "?", run: () => setMode("help") },
@@ -364,6 +379,13 @@ export function App({ sup, onQuit }: Props) {
       }
       return
     }
+    if (mode === "theme") {
+      if (key.name === "escape" || ch === "q") return cancelTheme()
+      if (key.name === "return") return saveTheme()
+      if (key.name === "up" || ch === "k" || (key.ctrl && key.name === "p")) return previewTheme(themeIndex - 1)
+      if (key.name === "down" || ch === "j" || (key.ctrl && key.name === "n")) return previewTheme(themeIndex + 1)
+      return
+    }
     if (mode === "filter") {
       if (key.name === "escape") {
         clearLogQueries()
@@ -413,6 +435,7 @@ export function App({ sup, onQuit }: Props) {
     if (ch === "q") return requestQuit()
     if (ch === ":") return openPalette()
     if (ch === "?") return setMode("help")
+    if (ch === "T") return openThemePicker()
     if (ch === "1") return setView("dashboard")
     if (ch === "2") return setView("graph")
     if (ch === "3") return setView("logs")
@@ -493,6 +516,44 @@ export function App({ sup, onQuit }: Props) {
     setEnvReveal(false)
     setMode("env")
   }
+
+  const themeEntries = useMemo(
+    () => Object.entries(themes).map(([name, palette]) => ({ name, palette, custom: customThemes.includes(name) })),
+    [themes, customThemes],
+  )
+
+  function previewTheme(index: number) {
+    const entry = themeEntries[Math.max(0, Math.min(themeEntries.length - 1, index))]
+    if (!entry) return
+    setThemeIndex(themeEntries.indexOf(entry))
+    applyTheme(entry.palette)
+    setThemeName(entry.name)
+  }
+
+  function openThemePicker() {
+    setThemeIndex(Math.max(0, themeEntries.findIndex((e) => e.name === themeName)))
+    setMode("theme")
+  }
+
+  function saveTheme() {
+    savedTheme.current = themeName
+    setMode("normal")
+    if (writeUserConfig({ theme: themeName })) notify(`theme: ${themeName}`, theme.accent)
+    else notify(`theme: ${themeName} (could not save it to the config file)`, theme.yellow)
+  }
+
+  function cancelTheme() {
+    const saved = themeEntries.find((e) => e.name === savedTheme.current)
+    if (saved) {
+      applyTheme(saved.palette)
+      setThemeName(saved.name)
+    }
+    setMode("normal")
+  }
+
+  useEffect(() => {
+    if (themeErrors.length) notify(`${themeErrors[0]}${themeErrors.length > 1 ? ` (+${themeErrors.length - 1} more)` : ""}`, theme.yellow)
+  }, [])
 
   function openPalette() {
     setQuery("")
@@ -703,6 +764,7 @@ export function App({ sup, onQuit }: Props) {
         ) : null}
       </box>
 
+      {mode === "theme" ? <ThemePicker entries={themeEntries} selected={themeIndex} current={savedTheme.current} width={width} height={height} /> : null}
       {mode === "palette" ? <CommandPalette commands={matches} selected={paletteIndex} onQuery={setQuery} width={width} /> : null}
       {mode === "help" ? <HelpOverlay width={width} height={height} /> : null}
       {mode === "env" && selected ? (

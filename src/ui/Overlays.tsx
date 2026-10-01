@@ -1,5 +1,6 @@
 import type { EnvEntry } from "../config/envFiles.ts"
 import { fit, theme } from "./theme.ts"
+import type { Palette } from "./themes.ts"
 
 export interface Command {
   id: string
@@ -105,6 +106,57 @@ export function CommandPalette({
   )
 }
 
+export interface ThemeEntry {
+  name: string
+  palette: Palette
+  custom: boolean
+}
+
+const SWATCH_KEYS = ["accent", "accent2", "cyan", "green", "yellow", "orange", "red"] as const
+
+export function ThemePicker({
+  entries,
+  selected,
+  current,
+  width,
+  height,
+}: {
+  entries: ThemeEntry[]
+  selected: number
+  /** the theme that is saved right now */
+  current: string
+  width: number
+  height: number
+}) {
+  const w = Math.min(60, width - 4)
+  const maxRows = Math.max(1, Math.min(14, height - 6))
+  const start = Math.max(0, Math.min(selected - Math.floor(maxRows / 2), entries.length - maxRows))
+  const visible = entries.slice(start, start + maxRows)
+  const nameW = Math.max(1, w - 4 - 2 - SWATCH_KEYS.length - 9)
+  return (
+    <Modal title="Theme" width={w} height={visible.length + 4}>
+      {visible.map((e, i) => {
+        const isSel = start + i === selected
+        return (
+          <box key={e.name} height={1} backgroundColor={isSel ? theme.selection : undefined}>
+            <text>
+              <span fg={isSel ? theme.accent : theme.dim}>{isSel ? "▸ " : "  "}</span>
+              <span fg={isSel ? theme.text : theme.muted}>{fit(e.name + (e.custom ? " (custom)" : ""), nameW)}</span>
+              <span fg={theme.green}>{e.name === current ? "✓ " : "  "}</span>
+              {SWATCH_KEYS.map((k) => (
+                <span key={k} fg={e.palette[k]}>
+                  ■
+                </span>
+              ))}
+            </text>
+          </box>
+        )
+      })}
+      <text fg={theme.dim}>↑↓ preview · enter save · esc cancel</text>
+    </Modal>
+  )
+}
+
 const HELP: Array<[string, string]> = [
   ["↑↓ / j k", "select service"],
   ["← → (graph)", "move across the dependency graph"],
@@ -125,6 +177,7 @@ const HELP: Array<[string, string]> = [
   ["n · N", "next (newer) · previous (older) search match"],
   ["v (logs focused)", "copy mode: j k ctrl+u/d move, v select, y copy"],
   ["Y · E", "copy all visible logs · export them to a file"],
+  ["T", "change color theme (live preview, enter saves)"],
   ["e", "environment variables of the selected service"],
   ["o", "open service URL in the browser"],
   ["L", "open the service's git repo in lazygit"],

@@ -100,9 +100,27 @@ Without `orbit.yaml`, orbit opens the services from a `docker-compose.yml` direc
 | `o` | open `http://localhost:<port>` (or `url`) in the browser |
 | `e` | environment variables of the selected service (secrets masked, `v` reveals) |
 | `L` | open the selected service's git repo in [lazygit](https://github.com/jesseduffield/lazygit) (if installed) |
+| `T` | change color theme (live preview, `enter` saves, `esc` cancels) |
 | `:` / `ctrl+p` | command palette |
 | `?` | help |
 | `q` | quit: `s` stops everything, `d` leaves services running (reopen `orbit` to resume them) |
+
+## Themes
+
+Press `T` (or `: Change theme…`) to pick one; the choice is saved in `~/.config/orbit/config.json` and applies to every project.
+
+Built in: `orbit` (default), `catppuccin-mocha`, `catppuccin-macchiato`, `catppuccin-frappe`, `catppuccin-latte` (light), `tokyo-night`, `dracula`, `nord`, `gruvbox`, `rose-pine`, `one-dark`. Palettes come from the upstream projects (all MIT, see [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)); orbit is not affiliated with them.
+
+Your own themes are JSON files in `~/.config/orbit/themes/<name>.json` (`$XDG_CONFIG_HOME` is respected). They extend a built-in one (default `orbit`) and override any color:
+
+```json
+{
+  "extends": "catppuccin-mocha",
+  "colors": { "accent": "#ff79c6", "services": ["#ff79c6", "#8be9fd", "#50fa7b"] }
+}
+```
+
+Colors are `#rrggbb`. Keys: `bg panel panelAlt selection cursor match border borderFocus text muted dim accent accent2 cyan green yellow orange red edge upstream downstream`, plus `services` (list used for log prefixes). Broken files are skipped and reported on startup.
 
 ## orbit.yaml
 
@@ -175,11 +193,12 @@ src/
     graph.ts           DAG: cycles, topological order, levels
     supervisor.ts      states, dependencies, healthchecks, restarts, metrics
     runners.ts         process / docker / compose
+    userConfig.ts      ~/.config/orbit: saved theme, custom themes
     health.ts metrics.ts logs.ts exec.ts
   ui/
     App.tsx            layout, keyboard, views, overlays
     graphLayout.ts     graph layout by layers (pure, testable)
-    GraphView.tsx ServiceList.tsx ServiceDetail.tsx LogView.tsx Overlays.tsx theme.ts hooks.ts
+    GraphView.tsx ServiceList.tsx ServiceDetail.tsx LogView.tsx Overlays.tsx theme.ts themes.ts hooks.ts
 test/                  bun test (config, graph, supervisor with real processes, TUI with test renderer)
 ```
 

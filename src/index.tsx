@@ -91,6 +91,19 @@ const config = load()
 const { createCliRenderer } = await import("@opentui/core")
 const { createRoot } = await import("@opentui/react")
 const { App } = await import("./ui/App.tsx")
+const { applyTheme } = await import("./ui/theme.ts")
+const { DEFAULT_THEME, THEMES } = await import("./ui/themes.ts")
+const { loadCustomThemes, readUserConfig } = await import("./core/userConfig.ts")
+
+const custom = loadCustomThemes()
+const themes = { ...THEMES, ...custom.themes }
+const themeErrors = custom.errors
+let initialTheme = readUserConfig().theme || DEFAULT_THEME
+if (!themes[initialTheme]) {
+  themeErrors.push(`unknown theme "${initialTheme}", using ${DEFAULT_THEME}`)
+  initialTheme = DEFAULT_THEME
+}
+applyTheme(themes[initialTheme]!)
 
 const sup = new Supervisor(config)
 const holder = acquireLock(sup.stateDir)
@@ -117,7 +130,9 @@ async function quit(code = 0, how: "stop" | "detach" = "stop") {
 for (const sig of ["SIGTERM", "SIGHUP"] as const) process.on(sig, () => void quit(0))
 process.on("SIGINT", () => void quit(130))
 
-createRoot(renderer).render(<App sup={sup} onQuit={(how) => quit(0, how)} />)
+createRoot(renderer).render(
+  <App sup={sup} onQuit={(how) => quit(0, how)} themes={themes} customThemes={Object.keys(custom.themes)} initialTheme={initialTheme} themeErrors={themeErrors} />,
+)
 
 void sup.init().then(() => {
   if (values.up) void sup.startAll()

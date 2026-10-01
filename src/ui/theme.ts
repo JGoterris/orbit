@@ -1,47 +1,40 @@
 import type { ServiceType } from "../config/schema.ts"
 import type { Status } from "../core/supervisor.ts"
+import { DEFAULT_THEME, THEMES, type Palette } from "./themes.ts"
 
-export const theme = {
-  bg: "#11121b",
-  panel: "#161824",
-  panelAlt: "#1c1f2e",
-  selection: "#283052",
-  cursor: "#3d4a7a",
-  match: "#5a4a1e",
-  border: "#2f3450",
-  borderFocus: "#7aa2f7",
-  text: "#c0caf5",
-  muted: "#7a82ab",
-  dim: "#4b5275",
-  accent: "#7aa2f7",
-  accent2: "#bb9af7",
-  cyan: "#7dcfff",
-  green: "#9ece6a",
-  yellow: "#e0af68",
-  orange: "#ff9e64",
-  red: "#f7768e",
-  edge: "#3b4261",
-  upstream: "#7dcfff",
-  downstream: "#bb9af7",
-} as const
+/** The active palette. Mutable on purpose: `applyTheme` swaps its values, components read it at render time. */
+export const theme: Palette = { ...THEMES[DEFAULT_THEME]! }
+
+export function applyTheme(p: Palette) {
+  Object.assign(theme, p)
+}
+
+/** A style whose color is read from the active theme every time it is used. */
+const style = (icon: string, label: string, color: () => string) => ({
+  icon,
+  label,
+  get color() {
+    return color()
+  },
+})
 
 export const statusStyle: Record<Status, { icon: string; color: string; label: string }> = {
-  stopped: { icon: "○", color: theme.dim, label: "stopped" },
-  waiting: { icon: "◌", color: theme.yellow, label: "waiting" },
-  starting: { icon: "◐", color: theme.yellow, label: "starting" },
-  running: { icon: "●", color: theme.cyan, label: "running" },
-  healthy: { icon: "●", color: theme.green, label: "healthy" },
-  unhealthy: { icon: "●", color: theme.orange, label: "unhealthy" },
-  stopping: { icon: "◑", color: theme.yellow, label: "stopping" },
-  exited: { icon: "○", color: theme.muted, label: "exited" },
-  crashed: { icon: "✖", color: theme.red, label: "crashed" },
-  failed: { icon: "✖", color: theme.red, label: "failed" },
+  stopped: style("○", "stopped", () => theme.dim),
+  waiting: style("◌", "waiting", () => theme.yellow),
+  starting: style("◐", "starting", () => theme.yellow),
+  running: style("●", "running", () => theme.cyan),
+  healthy: style("●", "healthy", () => theme.green),
+  unhealthy: style("●", "unhealthy", () => theme.orange),
+  stopping: style("◑", "stopping", () => theme.yellow),
+  exited: style("○", "exited", () => theme.muted),
+  crashed: style("✖", "crashed", () => theme.red),
+  failed: style("✖", "failed", () => theme.red),
 }
 
 /** Status style, with finished oneshot tasks shown as done instead of exited. */
 export function styleFor(status: Status, oneshot?: boolean) {
   if (oneshot && status === "exited") return { icon: "✓", color: theme.green, label: "done" }
-  if (oneshot && status === "starting") return { ...statusStyle.starting, label: "running" }
+  if (oneshot && status === "starting") return { icon: statusStyle.starting.icon, color: statusStyle.starting.color, label: "running" }
   return statusStyle[status]
 }
 
@@ -54,16 +47,15 @@ export function statusIcon(status: Status, tick: number, oneshot?: boolean): str
 }
 
 export const typeBadge: Record<ServiceType, { label: string; color: string }> = {
-  process: { label: "proc", color: theme.accent },
-  docker: { label: "dock", color: theme.cyan },
-  compose: { label: "comp", color: theme.accent2 },
+  process: { label: "proc", get color() { return theme.accent } },
+  docker: { label: "dock", get color() { return theme.cyan } },
+  compose: { label: "comp", get color() { return theme.accent2 } },
 }
 
 /** Stable color per service name, for prefixes in the combined log view. */
-const SERVICE_COLORS = ["#7aa2f7", "#9ece6a", "#e0af68", "#bb9af7", "#7dcfff", "#ff9e64", "#73daca", "#f7768e", "#c3e88d", "#89ddff"]
 export function serviceColor(name: string, names: readonly string[]): string {
   const i = names.indexOf(name)
-  return SERVICE_COLORS[(i === -1 ? 0 : i) % SERVICE_COLORS.length]!
+  return theme.services[(i === -1 ? 0 : i) % theme.services.length]!
 }
 
 const BARS = "▁▂▃▄▅▆▇█"

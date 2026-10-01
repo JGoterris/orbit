@@ -4,9 +4,13 @@ import { loadConfig } from "../src/config/load.ts"
 import { Supervisor } from "../src/core/supervisor.ts"
 import { App } from "../src/ui/App.tsx"
 import { clipboard } from "../src/ui/clipboard.ts"
+import { readUserConfig } from "../src/core/userConfig.ts"
+import { applyTheme, theme } from "../src/ui/theme.ts"
+import { THEMES } from "../src/ui/themes.ts"
 import { mkdtempSync as __mk } from "node:fs"
 import { tmpdir as __tmp } from "node:os"
 process.env.XDG_STATE_HOME = __mk(`${__tmp()}/orbit-state-`) // tests must not touch the real ~/.local/state
+process.env.XDG_CONFIG_HOME = __mk(`${__tmp()}/orbit-config-`) // ...nor the real ~/.config
 
 // The app has live timers (spinners, clocks), so rendering is driven with renderOnce() + short
 // waits instead of act(); testRender() turns the act environment on, so switch it off again.
@@ -14,7 +18,10 @@ const noActEnvironment = () => ((globalThis as { IS_REACT_ACT_ENVIRONMENT?: bool
 const act = async (fn: () => Promise<void>) => fn()
 
 let cleanup: (() => void) | undefined
-afterEach(() => cleanup?.())
+afterEach(() => {
+  cleanup?.()
+  applyTheme(THEMES.orbit!)
+})
 
 async function setup() {
   const config = loadConfig({ dir: `${import.meta.dir}/fixtures/stack` })
@@ -381,5 +388,24 @@ describe("tui", () => {
     const t = await setup()
     await press(t, "L")
     expect(t.captureCharFrame()).toContain("lazygit is not installed")
+  })
+
+  test("T opens the theme picker: arrows preview, esc reverts, enter saves", async () => {
+    const t = await setup()
+    await press(t, "T")
+    expect(t.captureCharFrame()).toContain("catppuccin-mocha")
+    await press(t, "j")
+    expect(theme.bg).toBe(THEMES["catppuccin-mocha"]!.bg)
+    await press(t, "ESCAPE")
+    expect(theme.bg).toBe(THEMES.orbit!.bg)
+    expect(readUserConfig()).toEqual({})
+
+    await press(t, "T")
+    await press(t, "j")
+    await press(t, "j")
+    await press(t, "RETURN")
+    expect(theme.bg).toBe(THEMES["catppuccin-macchiato"]!.bg)
+    expect(readUserConfig()).toEqual({ theme: "catppuccin-macchiato" })
+    expect(t.captureCharFrame()).toContain("theme: catppuccin-macchiato")
   })
 })
