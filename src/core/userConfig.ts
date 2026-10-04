@@ -1,6 +1,6 @@
 import { mkdirSync, readdirSync, readFileSync, renameSync, writeFileSync } from "node:fs"
 import { homedir } from "node:os"
-import { basename, join } from "node:path"
+import { basename, dirname, join } from "node:path"
 import { DEFAULT_THEME, PALETTE_COLOR_KEYS, THEMES, type Palette } from "../ui/themes.ts"
 
 /** Per-user (not per-project) settings: $XDG_CONFIG_HOME/orbit or ~/.config/orbit. */
@@ -21,18 +21,22 @@ export function readUserConfig(): UserConfig {
   }
 }
 
-/** Merges `patch` into config.json. Returns false if it could not be written. */
-export function writeUserConfig(patch: UserConfig): boolean {
+/** Writes `data` as JSON next to its final path and renames it into place (never leaves a half-written file). */
+export function writeJsonAtomic(file: string, data: unknown): boolean {
   try {
-    const dir = configDir()
-    mkdirSync(dir, { recursive: true })
-    const tmp = join(dir, `config.json.${process.pid}.tmp`)
-    writeFileSync(tmp, JSON.stringify({ ...readUserConfig(), ...patch }, null, 2) + "\n")
-    renameSync(tmp, join(dir, "config.json"))
+    mkdirSync(dirname(file), { recursive: true })
+    const tmp = `${file}.${process.pid}.tmp`
+    writeFileSync(tmp, JSON.stringify(data, null, 2) + "\n")
+    renameSync(tmp, file)
     return true
   } catch {
     return false
   }
+}
+
+/** Merges `patch` into config.json. Returns false if it could not be written. */
+export function writeUserConfig(patch: UserConfig): boolean {
+  return writeJsonAtomic(join(configDir(), "config.json"), { ...readUserConfig(), ...patch })
 }
 
 const HEX = /^#[0-9a-fA-F]{6}$/

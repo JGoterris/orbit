@@ -1,5 +1,5 @@
 import { existsSync, readFileSync } from "node:fs"
-import { dirname, isAbsolute, join, resolve } from "node:path"
+import { basename, dirname, isAbsolute, join, resolve } from "node:path"
 import YAML from "yaml"
 import { COMPOSE_FILENAMES, parseComposeFile } from "./compose.ts"
 import { interpolate, parseDotEnv } from "./interpolate.ts"
@@ -156,6 +156,8 @@ export interface LoadOptions {
   dir?: string
   /** explicit config file */
   file?: string
+  /** a directory with neither orbit.yaml nor compose is a project with no services instead of an error */
+  allowEmpty?: boolean
   env?: Record<string, string | undefined>
 }
 
@@ -167,6 +169,7 @@ export function loadConfig(opts: LoadOptions = {}): OrbitConfig {
     // No orbit.yaml: fall back to a plain docker-compose project.
     const compose = findComposeFile(startDir)
     if (!compose) {
+      if (opts.allowEmpty) return { name: basename(startDir) || "orbit", root: startDir, services: {}, groups: {} }
       throw new ConfigError(`no orbit.yaml or docker-compose.yml found in ${startDir} (run \`orbit init\`)`)
     }
     const services = parseComposeFile(compose, readFileSync(compose, "utf8"))

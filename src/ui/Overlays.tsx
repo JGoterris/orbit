@@ -1,4 +1,6 @@
+import { statSync } from "node:fs"
 import type { EnvEntry } from "../config/envFiles.ts"
+import { expandPath, looksLikePath, sortProjects, type ProjectEntry, type ProjectStatus } from "../core/projects.ts"
 import { fit, theme } from "./theme.ts"
 import type { Palette } from "./themes.ts"
 
@@ -177,6 +179,7 @@ const HELP: Array<[string, string]> = [
   ["n · N", "next (newer) · previous (older) search match"],
   ["v (logs focused)", "copy mode: j k ctrl+u/d move, v select, y copy"],
   ["Y · E", "copy all visible logs · export them to a file"],
+  ["P", "open another project (recent, pinned, or a folder path)"],
   ["T", "change color theme (live preview, enter saves)"],
   ["e", "environment variables of the selected service"],
   ["o", "open service URL in the browser"],
@@ -205,10 +208,22 @@ export function HelpOverlay({ width, height }: { width: number; height: number }
   )
 }
 
-export function ConfirmOverlay({ message, width, busy }: { message: string; width: number; busy?: boolean }) {
+export function ConfirmOverlay({
+  message,
+  width,
+  busy,
+  action = "quit",
+}: {
+  message: string
+  width: number
+  busy?: boolean
+  /** what happens once the services are dealt with */
+  action?: "quit" | "switch"
+}) {
   const w = Math.min(60, width - 4)
+  const verb = action === "quit" ? "quit" : "switch project"
   return (
-    <Modal title={busy ? "Stopping" : "Quit"} width={w} height={busy ? 6 : 7}>
+    <Modal title={busy ? "Stopping" : action === "quit" ? "Quit" : "Switch project"} width={w} height={busy ? 6 : 7}>
       <text fg={theme.text}>{message}</text>
       <text>
         {busy ? (
@@ -216,7 +231,7 @@ export function ConfirmOverlay({ message, width, busy }: { message: string; widt
         ) : (
           <>
             <span fg={theme.green}>s</span>
-            <span fg={theme.dim}> stop all & quit</span>
+            <span fg={theme.dim}>{` stop all & ${verb}`}</span>
           </>
         )}
       </text>
@@ -224,7 +239,7 @@ export function ConfirmOverlay({ message, width, busy }: { message: string; widt
         <>
           <text>
             <span fg={theme.accent}>d</span>
-            <span fg={theme.dim}> leave running & quit (reopen orbit to resume)</span>
+            <span fg={theme.dim}>{` leave running & ${verb} (reopen that project to resume them)`}</span>
           </text>
           <text>
             <span fg={theme.red}>n / esc</span>
@@ -232,6 +247,126 @@ export function ConfirmOverlay({ message, width, busy }: { message: string; widt
           </text>
         </>
       )}
+    </Modal>
+  )
+}
+
+export interface ProjectRow {
+  key: string
+  label: string
+  hint: string
+  /** directory this row opens */
+  path: string
+  /** registry entry behind the row (absent for a typed path) */
+  entry?: ProjectEntry
+  /** the typed path is not a folder, or a remembered project's folder is gone */
+  missing?: boolean
+}
+
+const isDir = (p: string) => {
+  try {
+    return statSync(p).isDirectory()
+  } catch {
+    return false
+  }
+}
+
+/**
+ * Rows of the project picker: a typed path first ("open this folder"), then the registry
+ * (pinned, then recent) fuzzy-filtered by what was typed.
+ */
+export function projectRows(
+  entries: ProjectEntry[],
+  statuses: ReadonlyMap<string, ProjectStatus>,
+  query: string,
+  currentRoot: string,
+): ProjectRow[] {
+  const q = query.trim()
+  const rows: ProjectRow[] = []
+  const typedPath = looksLikePath(q)
+  if (typedPath) {
+    const path = expandPath(q)
+    rows.push({ key: `open:${path}`, label: `Open folder ${path}`, hint: isDir(path) ? "" : "not a folder", path, missing: !isDir(path) })
+  }
+  const scored = sortProjects(entries)
+    .map((e, i) => ({ e, i, s: typedPath ? fuzzyScore(expandPath(q), e.path) : fuzzyScore(q, `${e.name} ${e.path}`) }))
+    .filter((x): x is { e: ProjectEntry; i: number; s: number } => x.s !== undefined)
+    .sort((a, b) => a.s - b.s || a.i - b.i)
+  for (const { e } of scored) {
+    const st = statuses.get(e.path)
+    const flags = [
+      e.path === currentRoot ? "current" : "",
+      st?.openIn ? `open in pid ${st.openIn}` : "",
+      st?.running ? `● ${st.running} up` : "",
+      st && !st.exists ? "missing" : "",
+    ].filter(Boolean)
+    rows.push({
+      key: e.path,
+      label: `${e.pinned ? "★ " : ""}${e.name}  ${e.path}`,
+      hint: flags.join(" · "),
+      path: e.path,
+      entry: e,
+      missing: st ? !st.exists : false,
+    })
+  }
+  return rows
+}
+
+export function ProjectPicker({
+  rows,
+  selected,
+  value,
+  inputKey,
+  onQuery,
+  width,
+  height,
+}: {
+  rows: ProjectRow[]
+  selected: number
+  value: string
+  /** changes when `value` is set from outside (tab completion) so the input remounts with it */
+  inputKey: number
+  onQuery: (q: string) => void
+  width: number
+  height: number
+}) {
+  const w = Math.min(90, width - 4)
+  const maxRows = Math.max(1, Math.min(14, height - 8))
+  const start = Math.max(0, Math.min(selected - Math.floor(maxRows / 2), rows.length - maxRows))
+  const visible = rows.slice(start, start + maxRows)
+  return (
+    <Modal title="Projects" width={w} height={visible.length + 6}>
+      <box height={1} flexDirection="row">
+        <text fg={theme.accent}>{"› "}</text>
+        <input
+          key={inputKey}
+          flexGrow={1}
+          focused
+          value={value}
+          placeholder="search projects, or type a path (/, ~, ./) and press tab to complete"
+          onInput={onQuery}
+          backgroundColor={theme.panelAlt}
+          focusedBackgroundColor={theme.panelAlt}
+          textColor={theme.text}
+          placeholderColor={theme.dim}
+        />
+      </box>
+      <text fg={theme.border}>{"─".repeat(w - 4)}</text>
+      {visible.length === 0 ? <text fg={theme.dim}>no projects yet: type a folder path to open one</text> : null}
+      {visible.map((r, i) => {
+        const isSel = start + i === selected
+        return (
+          <box key={r.key} height={1} backgroundColor={isSel ? theme.selection : undefined}>
+            <text>
+              <span fg={isSel ? theme.accent : theme.dim}>{isSel ? "▸ " : "  "}</span>
+              <span fg={r.missing ? theme.red : isSel ? theme.text : theme.muted}>{fit(r.label, w - 8 - r.hint.length)}</span>
+              <span fg={r.missing ? theme.red : theme.dim}>{r.hint}</span>
+            </text>
+          </box>
+        )
+      })}
+      <box flexGrow={1} />
+      <text fg={theme.dim}>enter open · tab complete path · ctrl+f pin · ctrl+x forget · esc close</text>
     </Modal>
   )
 }

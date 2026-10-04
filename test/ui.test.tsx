@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, test } from "bun:test"
+import { afterEach, beforeEach, describe, expect, test } from "bun:test"
 import { testRender } from "@opentui/react/test-utils"
 import { loadConfig } from "../src/config/load.ts"
 import { Supervisor } from "../src/core/supervisor.ts"
@@ -7,8 +7,10 @@ import { clipboard } from "../src/ui/clipboard.ts"
 import { readUserConfig } from "../src/core/userConfig.ts"
 import { applyTheme, theme } from "../src/ui/theme.ts"
 import { THEMES } from "../src/ui/themes.ts"
-import { mkdtempSync as __mk } from "node:fs"
-import { tmpdir as __tmp } from "node:os"
+import { mkdirSync, mkdtempSync, mkdtempSync as __mk, writeFileSync } from "node:fs"
+import { tmpdir, tmpdir as __tmp } from "node:os"
+import { join } from "node:path"
+import { readProjects, registerProject, setPinned } from "../src/core/projects.ts"
 process.env.XDG_STATE_HOME = __mk(`${__tmp()}/orbit-state-`) // tests must not touch the real ~/.local/state
 process.env.XDG_CONFIG_HOME = __mk(`${__tmp()}/orbit-config-`) // ...nor the real ~/.config
 
@@ -388,6 +390,202 @@ describe("tui", () => {
     const t = await setup()
     await press(t, "L")
     expect(t.captureCharFrame()).toContain("lazygit is not installed")
+  })
+
+  test("a project without services renders every view and ignores navigation keys", async () => {
+    const sup = new Supervisor(loadConfig({ dir: mkdtempSync(`${tmpdir()}/orbit-empty-`), allowEmpty: true }))
+    const t = await testRender(<App sup={sup} onQuit={() => {}} />, { width: 150, height: 40 })
+    cleanup = () => t.renderer.destroy()
+    noActEnvironment()
+    await t.renderOnce()
+    expect(t.captureCharFrame()).toContain("This project has no services")
+    for (const k of ["j", "k", "g", "G", "2", "3", "1"]) await press(t, k)
+    expect(t.captureCharFrame()).toContain("This project has no services")
+  })
+
+  test("number keys follow the view registry", async () => {
+    const t = await setup()
+    await press(t, "3")
+    expect(t.captureCharFrame()).toContain("Logs · all services")
+    await press(t, "9")
+    expect(t.captureCharFrame()).toContain("Logs · all services")
+  })
+
+  describe("project picker", () => {
+    const calls: Array<[string, string]> = []
+    beforeEach(() => {
+      process.env.XDG_CONFIG_HOME = mkdtempSync(`${tmpdir()}/orbit-config-`) // each test gets its own registry
+    })
+    async function setupPicker(opts: { fail?: string; running?: boolean } = {}) {
+      calls.length = 0
+      // `running`: a project whose only service is a real process that gets started
+      const dir = opts.running ? projectDir("current", "services:\n  s:\n    cmd: sleep 30\n") : `${import.meta.dir}/fixtures/stack`
+      const sup = new Supervisor(loadConfig({ dir }))
+      const onOpenProject = async (dir: string, how: "stop" | "detach") => {
+        calls.push([dir, how])
+        return opts.fail
+      }
+      const t = await testRender(<App sup={sup} onQuit={() => {}} onOpenProject={onOpenProject} />, { width: 150, height: 40 })
+      cleanup = () => t.renderer.destroy()
+      noActEnvironment()
+      await t.renderOnce()
+      if (opts.running) expect(await sup.start("s")).toBe(true)
+      return { ...t, sup }
+    }
+    const type = async (t: Awaited<ReturnType<typeof setupPicker>>, text: string) => {
+      await act(async () => {
+        await t.mockInput.typeText(text)
+        await Bun.sleep(30)
+      })
+      await t.renderOnce()
+    }
+    const projectDir = (name: string, body = "services: {}\n") => {
+      const dir = join(mkdtempSync(`${tmpdir()}/orbit-pick-`), name)
+      mkdirSync(dir)
+      writeFileSync(join(dir, "orbit.yaml"), `name: ${name}\n${body}`)
+      return dir
+    }
+
+    test("P lists pinned and recent projects, enter opens one right away when nothing is running", async () => {
+      const a = projectDir("alpha")
+      const b = projectDir("beta")
+      registerProject(a, "alpha", 100)
+      registerProject(b, "beta", 200)
+      setPinned(a, true)
+      const t = await setupPicker()
+      await press(t, "P")
+      const frame = t.captureCharFrame()
+      expect(frame).toContain("Projects")
+      expect(frame).toContain("★ alpha")
+      expect(frame.indexOf("alpha")).toBeLessThan(frame.indexOf("beta"))
+
+      await press(t, "ARROW_DOWN") // j/k are search text here; only the arrows move
+      await press(t, "RETURN")
+      expect(calls).toEqual([[b, "stop"]])
+    })
+
+    test("startWithPicker opens it on launch", async () => {
+      registerProject(projectDir("alpha"), "alpha", 100)
+      const sup = new Supervisor(loadConfig({ dir: mkdtempSync(`${tmpdir()}/orbit-bare-`), allowEmpty: true }))
+      const t = await testRender(<App sup={sup} onQuit={() => {}} startWithPicker />, { width: 150, height: 40 })
+      cleanup = () => t.renderer.destroy()
+      noActEnvironment()
+      await t.renderOnce()
+      await Bun.sleep(30)
+      await t.renderOnce()
+      expect(t.captureCharFrame()).toContain("Projects")
+      expect(t.captureCharFrame()).toContain("alpha")
+    })
+
+    test("typing filters; a folder path adds an open-folder row; esc closes", async () => {
+      const a = projectDir("alpha")
+      registerProject(a, "alpha", 100)
+      registerProject(projectDir("beta"), "beta", 200)
+      const t = await setupPicker()
+      await press(t, "P")
+      await type(t, "alp")
+      let frame = t.captureCharFrame()
+      expect(frame).toContain("alpha")
+      expect(frame).not.toContain("beta")
+
+      await press(t, "ESCAPE")
+      expect(t.captureCharFrame()).not.toContain("Projects")
+
+      await press(t, "P")
+      const typed = projectDir("gamma")
+      await type(t, typed)
+      expect(t.captureCharFrame()).toContain(`Open folder ${typed}`)
+      await press(t, "RETURN")
+      expect(calls).toEqual([[typed, "stop"]])
+    })
+
+    test("tab completes a typed path", async () => {
+      const parent = mkdtempSync(`${tmpdir()}/orbit-tab-`)
+      mkdirSync(join(parent, "unique-project-dir"))
+      const t = await setupPicker()
+      await press(t, "P")
+      await type(t, `${parent}/uniq`)
+      await press(t, "TAB")
+      expect(t.captureCharFrame()).toContain(`${parent}/unique-project-dir/`)
+      await type(t, "sub") // the cursor must be at the end after completing
+      expect(t.captureCharFrame()).toContain(`${parent}/unique-project-dir/sub`)
+      await press(t, "BACKSPACE")
+      await press(t, "BACKSPACE")
+      await press(t, "BACKSPACE")
+      await press(t, "RETURN")
+      expect(calls).toEqual([[`${parent}/unique-project-dir`, "stop"]])
+    })
+
+    test("a path that is not a folder cannot be opened", async () => {
+      const t = await setupPicker()
+      await press(t, "P")
+      await type(t, "/no/such/folder")
+      expect(t.captureCharFrame()).toContain("not a folder")
+      await press(t, "RETURN")
+      expect(calls).toEqual([])
+      expect(t.captureCharFrame()).toContain("is not a folder")
+    })
+
+    test("with services running it asks: s stops them, d leaves them running, esc cancels", async () => {
+      const dir = projectDir("next")
+      registerProject(dir, "next", 100)
+      const t = await setupPicker({ running: true })
+      try {
+        await press(t, "P")
+        await press(t, "RETURN")
+        expect(t.captureCharFrame()).toContain("Switch project")
+        expect(calls).toEqual([])
+
+        await press(t, "ESCAPE")
+        expect(t.captureCharFrame()).not.toContain("Switch project")
+        expect(calls).toEqual([])
+
+        await press(t, "P")
+        await press(t, "RETURN")
+        await press(t, "d")
+        expect(calls).toEqual([[dir, "detach"]])
+      } finally {
+        await t.sup.dispose()
+      }
+    })
+
+    test("a failed switch shows the error and goes back to normal; q afterwards still says quit", async () => {
+      const dir = projectDir("nope")
+      registerProject(dir, "nope", 100)
+      const t = await setupPicker({ fail: "nope is already open in another orbit (pid 1)", running: true })
+      try {
+        await press(t, "P")
+        await press(t, "RETURN")
+        await press(t, "s")
+        await Bun.sleep(30)
+        await t.renderOnce()
+        const frame = t.captureCharFrame()
+        expect(frame).toContain("already open in another orbit")
+        expect(frame).not.toContain("Stopping")
+        await press(t, "q")
+        expect(t.captureCharFrame()).toContain("stop all & quit")
+      } finally {
+        await t.sup.dispose()
+      }
+    })
+
+    test("ctrl+f pins and ctrl+x forgets the selected project", async () => {
+      registerProject(projectDir("alpha"), "alpha", 100)
+      registerProject(projectDir("beta"), "beta", 200)
+      const t = await setupPicker()
+      await press(t, "P")
+      await act(async () => {
+        t.mockInput.pressKey("x", { ctrl: true })
+        await Bun.sleep(30)
+      })
+      await t.renderOnce()
+      expect(readProjects().map((p) => p.name)).toEqual(["alpha"])
+      await act(async () => {
+        t.mockInput.pressKey("f", { ctrl: true })
+        await Bun.sleep(30)
+      })
+      expect(readProjects()[0]!.pinned).toBe(true)
+    })
   })
 
   test("T opens the theme picker: arrows preview, esc reverts, enter saves", async () => {

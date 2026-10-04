@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test"
 import { mkdtempSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
-import { join } from "node:path"
+import { basename, join } from "node:path"
 import { loadConfig, parseDotEnv, interpolate } from "../src/config/load.ts"
 import { parseDuration, hostPortOf } from "../src/config/schema.ts"
 import { splitArgs } from "../src/core/runners.ts"
@@ -14,6 +14,15 @@ function project(files: Record<string, string>) {
 }
 
 describe("config", () => {
+  test("a directory without orbit.yaml or compose is an error, unless empty projects are allowed", () => {
+    const dir = project({})
+    expect(() => loadConfig({ dir })).toThrow("no orbit.yaml or docker-compose.yml")
+    const cfg = loadConfig({ dir, allowEmpty: true })
+    expect(cfg.services).toEqual({})
+    expect(cfg.root).toBe(dir)
+    expect(cfg.name).toBe(basename(dir))
+  })
+
   test("durations and ports", () => {
     expect(parseDuration("2s", "x", 0)).toBe(2000)
     expect(parseDuration("150ms", "x", 0)).toBe(150)

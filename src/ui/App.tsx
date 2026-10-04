@@ -11,38 +11,28 @@ import type { Supervisor } from "../core/supervisor.ts"
 import { GraphView, neighbourInDirection, useGraphLayout } from "./GraphView.tsx"
 import { useSupervisorVersion, useTick } from "./hooks.ts"
 import { clipboard } from "./clipboard.ts"
-import { LogView } from "./LogView.tsx"
-import { CommandPalette, ConfirmOverlay, EnvOverlay, envPageSize, filterCommands, HelpOverlay, ThemePicker, type Command } from "./Overlays.tsx"
-import { ServiceDetail } from "./ServiceDetail.tsx"
+import { CommandPalette, ConfirmOverlay, EnvOverlay, envPageSize, filterCommands, HelpOverlay, ProjectPicker, projectRows, ThemePicker, type Command } from "./Overlays.tsx"
 import { ServiceList } from "./ServiceList.tsx"
+import { viewById, VIEWS, type Pane, type ViewContext } from "./views/index.tsx"
 import { applyTheme, statusStyle, theme } from "./theme.ts"
 import { DEFAULT_THEME, THEMES, type Palette } from "./themes.ts"
 import { writeUserConfig } from "../core/userConfig.ts"
+import { completePath, forgetProject, looksLikePath, projectStatus, readProjects, setPinned, type ProjectEntry, type ProjectStatus } from "../core/projects.ts"
 
-type View = "dashboard" | "graph" | "logs"
-type Mode = "normal" | "palette" | "filter" | "help" | "env" | "quit" | "stopping" | "external" | "copy" | "theme"
+type Mode = "normal" | "palette" | "filter" | "help" | "env" | "quit" | "stopping" | "external" | "copy" | "theme" | "projects" | "switch"
 
-type Pane = "services" | "detail" | "logs" | "graph"
-
-const PANES: Record<View, Pane[]> = {
-  dashboard: ["services", "detail", "logs"],
-  graph: ["services", "graph"],
-  logs: ["services", "logs"],
-}
 const MIN_SIDEBAR = 16
 const MIN_DETAIL = 3
 const DEFAULT_DETAIL = 9
-const DEFAULT_PANE: Record<View, Pane> = { dashboard: "services", graph: "graph", logs: "logs" }
-
-const VIEWS: Array<{ id: View; label: string }> = [
-  { id: "dashboard", label: "Dashboard" },
-  { id: "graph", label: "Graph" },
-  { id: "logs", label: "Logs" },
-]
+const noSidebarDelta = (): Record<string, number> => Object.fromEntries(VIEWS.map((v) => [v.id, 0]))
 
 interface Props {
   sup: Supervisor
   onQuit: (how: "stop" | "detach") => Promise<void> | void
+  /** switches to another project; resolves to an error message if it could not (nothing changed then) */
+  onOpenProject?: (dir: string, how: "stop" | "detach") => Promise<string | undefined>
+  /** open the project picker right away (orbit was started in a folder that is not a project) */
+  startWithPicker?: boolean
   /** every selectable theme (built-in first, then the user's); defaults to the built-in ones */
   themes?: Record<string, Palette>
   /** names in `themes` that come from the user's themes dir */
@@ -53,7 +43,7 @@ interface Props {
   themeErrors?: string[]
 }
 
-export function App({ sup, onQuit, themes = THEMES, customThemes = [], initialTheme = DEFAULT_THEME, themeErrors = [] }: Props) {
+export function App({ sup, onQuit, onOpenProject, startWithPicker = false, themes = THEMES, customThemes = [], initialTheme = DEFAULT_THEME, themeErrors = [] }: Props) {
   useSupervisorVersion(sup)
   const tick = useTick(250)
   const { width, height } = useTerminalDimensions()
@@ -62,7 +52,8 @@ export function App({ sup, onQuit, themes = THEMES, customThemes = [], initialTh
   const names = sup.order
 
   const [selected, setSelected] = useState(names[0] ?? "")
-  const [view, setView] = useState<View>("dashboard")
+  const [view, setView] = useState(VIEWS[0]!.id)
+  const viewDef = viewById(view)
   const [mode, setMode] = useState<Mode>("normal")
   // `savedTheme` is what config.json holds; `themeName` is what is on screen (differs while previewing)
   const [themeName, setThemeName] = useState(initialTheme)
@@ -85,6 +76,13 @@ export function App({ sup, onQuit, themes = THEMES, customThemes = [], initialTh
   const [paletteIndex, setPaletteIndex] = useState(0)
   const [envScroll, setEnvScroll] = useState(0)
   const [envReveal, setEnvReveal] = useState(false)
+  // project picker (P): registry snapshot taken when it opens, what was typed, and the folder waiting for stop/leave
+  const [projEntries, setProjEntries] = useState<ProjectEntry[]>([])
+  const [projStatuses, setProjStatuses] = useState<ReadonlyMap<string, ProjectStatus>>(new Map())
+  const [projQuery, setProjQuery] = useState("")
+  const [projIndex, setProjIndex] = useState(0)
+  const [projInputKey, setProjInputKey] = useState(0)
+  const [pendingDir, setPendingDir] = useState<string | undefined>()
   const [toast, setToast] = useState<{ text: string; color: string } | undefined>()
   const toastTimer = useRef<ReturnType<typeof setTimeout>>(undefined)
 
@@ -92,11 +90,11 @@ export function App({ sup, onQuit, themes = THEMES, customThemes = [], initialTh
   /** the lines the focused log panel shows (after the filter) */
   const viewLines = () => filterLines(sup.logs.lines(logService), filter)
 
-  const [sidebarDelta, setSidebarDelta] = useState<Record<View, number>>({ dashboard: 0, graph: 0, logs: 0 })
+  const [sidebarDelta, setSidebarDelta] = useState(noSidebarDelta)
   const [detailH, setDetailH] = useState<number | undefined>()
 
   const defaultSidebarW =
-    view === "graph" ? Math.min(30, Math.max(22, Math.floor(width * 0.18))) : Math.min(52, Math.max(40, Math.floor(width * 0.3)))
+    viewDef.compactSidebar ? Math.min(30, Math.max(22, Math.floor(width * 0.18))) : Math.min(52, Math.max(40, Math.floor(width * 0.3)))
   const clampSidebar = (w: number) => Math.max(MIN_SIDEBAR, Math.min(w, Math.max(MIN_SIDEBAR, width - 30)))
   const clampDetail = (h: number) => Math.max(MIN_DETAIL, Math.min(h, Math.max(MIN_DETAIL, height - 10)))
   const sidebarW = clampSidebar(defaultSidebarW + sidebarDelta[view])
@@ -190,6 +188,21 @@ export function App({ sup, onQuit, themes = THEMES, customThemes = [], initialTh
     [sup, renderer, notify],
   )
 
+  const openProject = useCallback(
+    async (dir: string, how: "stop" | "detach") => {
+      if (!onOpenProject) return notify("switching projects is not available here", theme.yellow)
+      // keys are ignored while the services are dealt with; a successful switch remounts the app
+      setMode(how === "stop" ? "stopping" : "external")
+      const error = await onOpenProject(dir, how)
+      if (error) {
+        setPendingDir(undefined)
+        setMode("normal")
+        notify(error, theme.red)
+      }
+    },
+    [onOpenProject, notify],
+  )
+
   const requestQuit = useCallback(() => {
     if (sup.ownedRunningCount() === 0) return void onQuit("stop")
     setMode("quit")
@@ -221,7 +234,7 @@ export function App({ sup, onQuit, themes = THEMES, customThemes = [], initialTh
         label: "Reset panel sizes",
         hint: "=",
         run: () => {
-          setSidebarDelta({ dashboard: 0, graph: 0, logs: 0 })
+          setSidebarDelta(noSidebarDelta())
           setDetailH(undefined)
         },
       },
@@ -260,6 +273,7 @@ export function App({ sup, onQuit, themes = THEMES, customThemes = [], initialTh
       { id: "toggle-wrap", label: "Toggle log line wrap", hint: "w", run: () => setWrap((v) => !v) },
       { id: "export-logs", label: "Export visible logs to a file", hint: "E", run: () => logActions.current.export() },
       { id: "copy-logs", label: "Copy visible logs to the clipboard", hint: "Y", run: () => logActions.current.copyAll() },
+      { id: "projects", label: "Open project…", hint: "P", run: openProjects },
       { id: "theme", label: "Change theme…", hint: "T", run: openThemePicker },
       { id: "toggle-time", label: "Toggle log timestamps", hint: "t", run: () => setShowTime((v) => !v) },
       { id: "env", label: "Show environment variables", hint: "e", run: openEnv },
@@ -276,9 +290,15 @@ export function App({ sup, onQuit, themes = THEMES, customThemes = [], initialTh
   }, [sup, names, selected, run, openService, openLazygit, requestQuit, doQuit, onQuit])
 
   const matches = useMemo(() => filterCommands(commands, query), [commands, query])
+  const projRows = useMemo(
+    () => (mode === "projects" ? projectRows(projEntries, projStatuses, projQuery, sup.config.root) : []),
+    [mode, projEntries, projStatuses, projQuery, sup],
+  )
 
-  const moveSelection = (delta: number) =>
+  const moveSelection = (delta: number) => {
+    if (!names.length) return
     setSelected((cur) => names[(names.indexOf(cur) + delta + names.length) % names.length]!)
+  }
 
   function clearLogQueries() {
     clearTimeout(toastTimer.current)
@@ -368,6 +388,44 @@ export function App({ sup, onQuit, themes = THEMES, customThemes = [], initialTh
       else if (ch === "n" || key.name === "escape" || ch === "q") setMode("normal")
       return
     }
+    if (mode === "switch") {
+      if (!pendingDir) return setMode("normal")
+      if (ch === "y" || ch === "Y" || ch === "s" || ch === "S" || key.name === "return") void openProject(pendingDir, "stop")
+      else if (ch === "d" || ch === "D") void openProject(pendingDir, "detach")
+      else if (ch === "n" || key.name === "escape" || ch === "q") {
+        setPendingDir(undefined)
+        setMode("normal")
+      }
+      return
+    }
+    if (mode === "projects") {
+      const row = projRows[projIndex]
+      if (key.name === "escape") return setMode("normal")
+      if (key.name === "up" || (key.ctrl && key.name === "p")) return setProjIndex((i) => Math.max(0, i - 1))
+      if (key.name === "down" || (key.ctrl && key.name === "n")) return setProjIndex((i) => Math.min(projRows.length - 1, i + 1))
+      if (key.name === "tab") {
+        if (looksLikePath(projQuery)) {
+          setProjQuery(completePath(projQuery))
+          setProjInputKey((k) => k + 1)
+        }
+        return
+      }
+      if (key.ctrl && key.name === "f" && row?.entry) {
+        setPinned(row.entry.path, !row.entry.pinned)
+        return setProjEntries(readProjects())
+      }
+      if (key.ctrl && key.name === "x" && row?.entry) {
+        forgetProject(row.entry.path)
+        return setProjEntries(readProjects())
+      }
+      if (key.name === "return" && row) {
+        if (row.missing) return notify(`${row.path} is not a folder`, theme.red)
+        setPendingDir(row.path)
+        if (sup.ownedRunningCount() === 0) return void openProject(row.path, "stop")
+        return setMode("switch")
+      }
+      return
+    }
     if (mode === "palette") {
       if (key.name === "escape") return setMode("normal")
       if (key.name === "up" || (key.ctrl && key.name === "p")) return setPaletteIndex((i) => Math.max(0, i - 1))
@@ -436,11 +494,11 @@ export function App({ sup, onQuit, themes = THEMES, customThemes = [], initialTh
     if (ch === ":") return openPalette()
     if (ch === "?") return setMode("help")
     if (ch === "T") return openThemePicker()
-    if (ch === "1") return setView("dashboard")
-    if (ch === "2") return setView("graph")
-    if (ch === "3") return setView("logs")
+    if (ch === "P") return openProjects()
+    const byNumber = /^[1-9]$/.test(ch) ? VIEWS[Number(ch) - 1] : undefined
+    if (byNumber) return setView(byNumber.id)
     if (key.name === "tab") {
-      const panes = PANES[view]
+      const panes = viewDef.panes
       const i = Math.max(0, panes.indexOf(focus))
       return setFocus(panes[(i + (key.shift ? panes.length - 1 : 1)) % panes.length]!)
     }
@@ -473,8 +531,8 @@ export function App({ sup, onQuit, themes = THEMES, customThemes = [], initialTh
     }
     if (key.name === "down" || ch === "j") return moveSelection(1)
     if (key.name === "up" || ch === "k") return moveSelection(-1)
-    if (ch === "g" || key.name === "home") return setSelected(names[0]!)
-    if (ch === "G" || key.name === "end") return setSelected(names[names.length - 1]!)
+    if (ch === "g" || key.name === "home") return setSelected(names[0] ?? "")
+    if (ch === "G" || key.name === "end") return setSelected(names[names.length - 1] ?? "")
 
     if (!selected) return
     if (ch === " ") return run(selected, sup.toggle(selected))
@@ -552,8 +610,22 @@ export function App({ sup, onQuit, themes = THEMES, customThemes = [], initialTh
   }
 
   useEffect(() => {
+    if (startWithPicker) openProjects()
+  }, [])
+
+  useEffect(() => {
     if (themeErrors.length) notify(`${themeErrors[0]}${themeErrors.length > 1 ? ` (+${themeErrors.length - 1} more)` : ""}`, theme.yellow)
   }, [])
+
+  function openProjects() {
+    const entries = readProjects()
+    setProjEntries(entries)
+    setProjStatuses(new Map(entries.map((e) => [e.path, projectStatus(e)])))
+    setProjQuery("")
+    setProjIndex(0)
+    setProjInputKey((k) => k + 1)
+    setMode("projects")
+  }
 
   function openPalette() {
     setQuery("")
@@ -562,9 +634,10 @@ export function App({ sup, onQuit, themes = THEMES, customThemes = [], initialTh
   }
 
   useEffect(() => setPaletteIndex(0), [query])
+  useEffect(() => setProjIndex(0), [projQuery])
   useEffect(() => setScrollBack(0), [selected, logScope, view])
   useEffect(() => {
-    setFocus(DEFAULT_PANE[view])
+    setFocus(viewById(view).defaultPane)
     setZoomed(false)
   }, [view])
 
@@ -590,7 +663,31 @@ export function App({ sup, onQuit, themes = THEMES, customThemes = [], initialTh
       setMode("copy")
     },
   }
-  const logTitle = logService ? `Logs · ${logService}` : "Logs · all services"
+  const viewContext: ViewContext = {
+    sup,
+    names,
+    selected,
+    setSelected,
+    tick,
+    width,
+    height,
+    sidebarW,
+    detailRows,
+    zoomed,
+    focus,
+    setFocus,
+    logs: {
+      service: logService,
+      scope: logScope,
+      lines: (service) => sup.logs.lines(service),
+      filter,
+      scrollBack,
+      onScroll: (d) => setScrollBack((v) => Math.max(0, v + d)),
+      showTime,
+      wrap,
+      extras: logExtras,
+    },
+  }
 
   const footerHints: string[][] =
     mode === "copy"
@@ -648,7 +745,7 @@ export function App({ sup, onQuit, themes = THEMES, customThemes = [], initialTh
 
       {/* body */}
       <box flexGrow={1} flexDirection="row">
-        {!zoomed || focus === "services" ? (
+        {viewDef.panes.includes("services") && (!zoomed || focus === "services") ? (
           <ServiceList
             sup={sup}
             names={names}
@@ -657,63 +754,13 @@ export function App({ sup, onQuit, themes = THEMES, customThemes = [], initialTh
             tick={tick}
             width={zoomed ? width : sidebarW}
             focused={focus === "services"}
-            compact={(view === "graph" || sidebarW < 36) && !zoomed}
+            compact={(!!viewDef.compactSidebar || sidebarW < 36) && !zoomed}
             onFocus={() => setFocus("services")}
           />
         ) : null}
         {!zoomed || focus !== "services" ? (
           <box flexGrow={1} flexDirection="column">
-            {view === "dashboard" && selected ? (
-              <>
-                {!zoomed || focus === "detail" ? (
-                  <ServiceDetail
-                    sup={sup}
-                    name={selected}
-                    width={zoomed ? width : width - sidebarW}
-                    focused={focus === "detail"}
-                    expanded={zoomed}
-                    height={detailRows}
-                    rows={zoomed ? height - 6 : detailRows - 2}
-                    onFocus={() => setFocus("detail")}
-                  />
-                ) : null}
-                {!zoomed || focus === "logs" ? (
-                  <LogView
-                    lines={sup.logs.lines(selected)}
-                    service={selected}
-                    names={names}
-                    filter={filter}
-                    scrollBack={scrollBack}
-                    onScroll={(d) => setScrollBack((v) => Math.max(0, v + d))}
-                    title={`Logs · ${selected}`}
-                    focused={focus === "logs"}
-                    showTime={showTime}
-                    wrap={wrap}
-                    {...logExtras}
-                    onFocus={() => setFocus("logs")}
-                  />
-                ) : null}
-              </>
-            ) : null}
-            {view === "graph" ? (
-              <GraphView sup={sup} selected={selected} onSelect={setSelected} tick={tick} focused={focus === "graph"} onFocus={() => setFocus("graph")} />
-            ) : null}
-            {view === "logs" ? (
-              <LogView
-                lines={sup.logs.lines(logService)}
-                service={logService}
-                names={names}
-                filter={filter}
-                scrollBack={scrollBack}
-                onScroll={(d) => setScrollBack((v) => Math.max(0, v + d))}
-                title={`${logTitle}  (a: ${logScope === "all" ? "only selected" : "all"})`}
-                focused={focus === "logs"}
-                showTime={showTime}
-                    wrap={wrap}
-                    {...logExtras}
-                onFocus={() => setFocus("logs")}
-              />
-            ) : null}
+            {viewDef.render(viewContext)}
           </box>
         ) : null}
       </box>
@@ -766,13 +813,17 @@ export function App({ sup, onQuit, themes = THEMES, customThemes = [], initialTh
 
       {mode === "theme" ? <ThemePicker entries={themeEntries} selected={themeIndex} current={savedTheme.current} width={width} height={height} /> : null}
       {mode === "palette" ? <CommandPalette commands={matches} selected={paletteIndex} onQuery={setQuery} width={width} /> : null}
+      {mode === "projects" ? (
+        <ProjectPicker rows={projRows} selected={projIndex} value={projQuery} inputKey={projInputKey} onQuery={setProjQuery} width={width} height={height} />
+      ) : null}
       {mode === "help" ? <HelpOverlay width={width} height={height} /> : null}
       {mode === "env" && selected ? (
         <EnvOverlay service={selected} {...resolveEnv(sup.service(selected), sup.config.root)} scroll={envScroll} reveal={envReveal} width={width} height={height} />
       ) : null}
-      {mode === "quit" || mode === "stopping" ? (
+      {mode === "quit" || mode === "switch" || mode === "stopping" ? (
         <ConfirmOverlay
           width={width}
+          action={pendingDir ? "switch" : "quit"}
           busy={mode === "stopping"}
           message={
             mode === "stopping"

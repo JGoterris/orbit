@@ -43,6 +43,9 @@ Built with TypeScript, [Bun](https://bun.sh) and [OpenTUI](https://github.com/an
 - Kills **entire process trees** (its own process group): no orphaned
   `vite`/`esbuild` processes hogging ports.
 - Command palette with fuzzy search, service groups, open in browser.
+- **Several projects, one orbit**: press `P` to switch to another project (pinned and recent ones, or
+  type a folder path and `tab` to complete it). Services of the project you leave can be stopped or left
+  running; opening it again re-attaches. Starting `orbit` in a folder that is not a project opens the picker.
 - Press `L` to open the service's git repo in [lazygit](https://github.com/jesseduffield/lazygit)
   (if installed); orbit resumes when you quit it and services keep running meanwhile.
 
@@ -65,6 +68,8 @@ anywhere).
 
 ```bash
 orbit [dir]          # TUI using the orbit.yaml from dir (or a parent directory)
+orbit open <project> # TUI for a remembered project, by name (or unique fragment) or path
+orbit projects       # lists remembered projects (pinned first) and what is running in them
 orbit --up           # TUI starting all autostart services
 orbit up [svc|group] # without TUI: starts and shows logs (ctrl+c to stop)
 orbit down           # stops whatever orbit left running (processes, containers)
@@ -75,7 +80,11 @@ orbit logs [svc|group…] [-f] [-n 200] [--grep re] [--since 10m]
 orbit init [dir]     # generates an orbit.yaml by scanning the project
 ```
 
-Without `orbit.yaml`, orbit opens the services from a `docker-compose.yml` directly.
+Without `orbit.yaml`, orbit opens the services from a `docker-compose.yml` directly. In a folder with
+neither, the TUI opens with no services and the project picker (other commands report an error).
+
+Projects are remembered in `~/.config/orbit/projects.json` the first time orbit opens them (the 30 most
+recent unpinned ones are kept; pinned ones are never dropped).
 
 ### Keys
 
@@ -100,6 +109,7 @@ Without `orbit.yaml`, orbit opens the services from a `docker-compose.yml` direc
 | `o` | open `http://localhost:<port>` (or `url`) in the browser |
 | `e` | environment variables of the selected service (secrets masked, `v` reveals) |
 | `L` | open the selected service's git repo in [lazygit](https://github.com/jesseduffield/lazygit) (if installed) |
+| `P` | open another project: `enter` opens, `tab` completes a typed path, `ctrl+f` pins, `ctrl+x` forgets |
 | `T` | change color theme (live preview, `enter` saves, `esc` cancels) |
 | `:` / `ctrl+p` | command palette |
 | `?` | help |
@@ -194,10 +204,14 @@ src/
     supervisor.ts      states, dependencies, healthchecks, restarts, metrics
     runners.ts         process / docker / compose
     userConfig.ts      ~/.config/orbit: saved theme, custom themes
+    projects.ts        project registry (projects.json), status, path completion
+    session.ts         switching the open project
     health.ts metrics.ts logs.ts exec.ts
   ui/
     App.tsx            layout, keyboard, views, overlays
     graphLayout.ts     graph layout by layers (pure, testable)
+    ProjectHost.tsx    keeps the open project; remounts App when it changes
+    views/             view registry (Dashboard, Graph, Logs): label, panes, render
     GraphView.tsx ServiceList.tsx ServiceDetail.tsx LogView.tsx Overlays.tsx theme.ts themes.ts hooks.ts
 test/                  bun test (config, graph, supervisor with real processes, TUI with test renderer)
 ```

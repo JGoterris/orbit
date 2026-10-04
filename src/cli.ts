@@ -8,6 +8,7 @@ import { exec } from "./core/exec.ts"
 import { cleanLine, FileTail, matcher, pipeLines, readTail, type LogLine } from "./core/logs.ts"
 import { levels, depMapOf } from "./core/graph.ts"
 import { containerName, ProcessRunner } from "./core/runners.ts"
+import { projectStatus, readProjects, sortProjects } from "./core/projects.ts"
 import { procFiles, readLock, readState, stateDir, writeState } from "./core/state.ts"
 import { Supervisor, type Status } from "./core/supervisor.ts"
 import { gridToString, layoutGraph, paintGraph } from "./ui/graphLayout.ts"
@@ -67,6 +68,23 @@ export function runList(config: OrbitConfig): number {
   console.log(c.bold(line(header)))
   rows.forEach((r) => console.log(line(r)))
   for (const [g, members] of Object.entries(config.groups)) console.log(c.dim(`group ${g}: ${members.join(", ")}`))
+  return 0
+}
+
+/** `orbit projects`: the projects orbit remembers (pinned first, then recent) and what is going on in them. */
+export function runProjects(): number {
+  const list = sortProjects(readProjects())
+  if (!list.length) {
+    console.log(c.dim("no projects yet: they are remembered the first time orbit opens them"))
+    return 0
+  }
+  const rows = list.map((p) => {
+    const st = projectStatus(p)
+    const flags = [st.openIn ? c.cyan(`open (pid ${st.openIn})`) : "", st.running ? c.green(`● ${st.running} up`) : "", st.exists ? "" : c.red("missing")].filter(Boolean)
+    return { label: `${p.pinned ? "★" : " "} ${p.name}`, path: p.path, flags: flags.join(" ") }
+  })
+  const w = Math.max(...rows.map((r) => r.label.length))
+  for (const r of rows) console.log(`${r.label.padEnd(w)}  ${c.dim(r.path)}  ${r.flags}`.trimEnd())
   return 0
 }
 
