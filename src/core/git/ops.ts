@@ -131,6 +131,9 @@ export const createBranch = (root: string, name: string) => git(root, ["switch",
 /** `force` deletes unmerged branches too (`-D`). */
 export const deleteBranch = (root: string, name: string, force = false) => git(root, ["branch", force ? "-D" : "-d", name])
 
+/** Puts the version of `path` that `rev` (a commit or a stash) has into the working tree; the index is left alone. */
+export const restoreFile = (root: string, rev: string, path: string) => git(root, ["restore", `--source=${rev}`, "--worktree", "--", path])
+
 // ---------------------------------------------------------------- remotes
 
 export const fetch = (root: string) => git(root, ["fetch", "--prune"], { detached: true })

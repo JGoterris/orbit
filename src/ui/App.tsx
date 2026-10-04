@@ -60,6 +60,7 @@ export function App({ sup, onQuit, onOpenProject, startWithPicker = false, git, 
   // what the open view wants from the keyboard (see ViewContext.keys / .capture)
   const viewKeys = useRef<KeyHandler | undefined>(undefined)
   const viewCapture = useRef(false)
+  const [viewHints, setViewHints] = useState<string[][] | undefined>()
 
   const [selected, setSelected] = useState(names[0] ?? "")
   const [view, setView] = useState(VIEWS[0]!.id)
@@ -714,6 +715,7 @@ export function App({ sup, onQuit, onOpenProject, startWithPicker = false, git, 
     repoIndex,
     setRepoIndex,
     keys: viewKeys,
+    setHints: setViewHints,
     capture: viewCapture,
     logs: {
       service: logService,
@@ -737,7 +739,7 @@ export function App({ sup, onQuit, onOpenProject, startWithPicker = false, git, 
           ["y", "copy"],
           ["esc", "cancel"],
         ]
-      : (viewDef.hints?.(viewContext) ?? [
+      : (viewHints ?? viewDef.hints?.(viewContext) ?? [
           ["space", "start/stop"],
           ["r", "restart"],
           ["S/X", "all"],

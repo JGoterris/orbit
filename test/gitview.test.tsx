@@ -8,6 +8,7 @@ import { GitRepo } from "../src/core/git/repo.ts"
 import { readStatus } from "../src/core/git/status.ts"
 import { Supervisor } from "../src/core/supervisor.ts"
 import { App } from "../src/ui/App.tsx"
+import { clipboard } from "../src/ui/clipboard.ts"
 import { applyTheme } from "../src/ui/theme.ts"
 import { THEMES } from "../src/ui/themes.ts"
 
@@ -418,6 +419,149 @@ describe("git view", () => {
     await press(t, " ") // apply
     await settle(t)
     expect(readFileSync(join(dir, "b.txt"), "utf8")).toBe("stashed\n")
+  })
+
+  /** the repo after mixedCommit(), with the commits panel focused on the older commit */
+  const toFirstCommit = async (t: T) => {
+    await toCommits(t)
+    await press(t, "j") // "first commit"
+    await settle(t, 300)
+  }
+  const copying = async (fn: (copied: string[]) => Promise<void>) => {
+    const copied: string[] = []
+    const real = clipboard.copy
+    clipboard.copy = async (_r, text) => (copied.push(text), { ok: true, via: "test" })
+    try {
+      await fn(copied)
+    } finally {
+      clipboard.copy = real
+    }
+  }
+
+  test("c on a file of a commit brings its version into the working tree, after asking", async () => {
+    const dir = mixedCommit()
+    const t = await setup(dir)
+    await openGit(t)
+    await toFirstCommit(t)
+    await press(t, "RETURN") // its files: a.txt and b.txt
+    await settle(t, 300)
+    expect(frame(t)).toContain("checkout file") // the hint for this mode
+
+    await press(t, "c")
+    const hash = git(dir, "rev-parse", "--short", "HEAD~1").trim()
+    expect(frame(t)).toContain(`Overwrite a.txt in the working tree with its version from ${hash}`)
+    await press(t, "n")
+    expect(readFileSync(join(dir, "a.txt"), "utf8")).toContain("TWO") // untouched
+
+    await press(t, "c")
+    await press(t, "y")
+    await settle(t)
+    expect(readFileSync(join(dir, "a.txt"), "utf8")).toContain("line 2\n")
+    expect(readFileSync(join(dir, "a.txt"), "utf8")).not.toContain("TWO")
+    expect(git(dir, "diff", "--name-only").trim()).toBe("a.txt") // unstaged, so Changes shows it
+    expect(git(dir, "diff", "--cached", "--name-only").trim()).toBe("")
+    expect(frame(t)).toContain(`a.txt restored from ${hash}`)
+  })
+
+  test("a file deleted by the commit has no version to check out", async () => {
+    const dir = mixedCommit()
+    const t = await setup(dir)
+    await openGit(t)
+    await toCommits(t)
+    await press(t, "RETURN")
+    await settle(t, 300)
+    await press(t, "G") // b.txt, deleted
+    await settle(t, 300)
+    await press(t, "c")
+    expect(frame(t)).toContain("deleted in this commit")
+    expect(frame(t)).not.toContain("Overwrite")
+  })
+
+  test("y copies the path of the file (Y the absolute one), from the file list, the diff and Changes", async () => {
+    const dir = mixedCommit()
+    writeFileSync(join(dir, "b.txt"), "x\n")
+    await copying(async (copied) => {
+      const t = await setup(dir)
+      await openGit(t)
+      await press(t, "y") // Changes: b.txt is the only change
+      await toCommits(t)
+      await press(t, "RETURN")
+      await settle(t, 300)
+      await press(t, "j") // added.txt
+      await press(t, "Y")
+      await press(t, "RETURN") // diff
+      await press(t, "y")
+      await Bun.sleep(30)
+      expect(copied).toEqual(["b.txt", join(dir, "added.txt"), "added.txt"])
+      expect(frame(t)).toContain("copied added.txt via test")
+    })
+  })
+
+  test("{ and } step through the files from inside the diff, in a commit and in Changes", async () => {
+    const dir = mixedCommit()
+    const t = await setup(dir)
+    await openGit(t)
+    await toCommits(t)
+    await press(t, "RETURN")
+    await settle(t, 300)
+    await press(t, "RETURN") // focus the diff of a.txt
+    expect(frame(t)).toContain("file 1/3")
+    expect(frame(t)).toContain("{ } file") // hint, because there are several files
+    expect(frame(t)).toContain("checkout file")
+    await press(t, "}")
+    await settle(t, 300)
+    expect(frame(t)).toContain("file 2/3")
+    expect(frame(t)).toContain("+fresh")
+    expect(frame(t)).toContain("j/k scroll") // still in the diff
+    await press(t, "}")
+    await settle(t, 300)
+    expect(frame(t)).toContain("file 3/3")
+    await press(t, "}") // last one: stays
+    await settle(t, 300)
+    expect(frame(t)).toContain("file 3/3")
+    await press(t, "{")
+    await press(t, "{")
+    await settle(t, 300)
+    expect(frame(t)).toContain("file 1/3")
+    expect(frame(t)).toContain("+TWO")
+
+    // c works from the diff as well
+    await press(t, "c")
+    expect(frame(t)).toContain("Overwrite a.txt")
+    await press(t, "ESCAPE") // closes the confirmation
+    expect(frame(t)).not.toContain("Overwrite")
+  })
+
+  test("{ } in the diff of Changes walks the changed files; hints only offer what applies", async () => {
+    const dir = project()
+    writeFileSync(join(dir, "a.txt"), "changed a\n")
+    writeFileSync(join(dir, "b.txt"), "changed b\n")
+    const t = await setup(dir)
+    await openGit(t)
+    expect(frame(t)).toContain("Diff · a.txt")
+    await press(t, "RETURN")
+    expect(frame(t)).toContain("file 1/2")
+    expect(frame(t)).toContain("stage hunk") // Changes diff: hunk actions are offered…
+    expect(frame(t)).not.toContain("checkout file") // …and checkout is not (that is for commits)
+    await press(t, "}")
+    await settle(t, 300)
+    expect(frame(t)).toContain("Diff · b.txt")
+    expect(frame(t)).toContain("file 2/2")
+    await press(t, "{")
+    await settle(t, 300)
+    expect(frame(t)).toContain("Diff · a.txt")
+  })
+
+  test("with a single file there is nothing to step through, and no hint for it", async () => {
+    const dir = project()
+    writeFileSync(join(dir, "b.txt"), "changed\n")
+    const t = await setup(dir)
+    await openGit(t)
+    await press(t, "RETURN")
+    expect(frame(t)).not.toContain("{ } file")
+    expect(frame(t)).not.toContain("file 1/1")
+    await press(t, "}")
+    expect(frame(t)).toContain("Diff · b.txt") // no-op, no crash
   })
 
   test("zoom shows only the focused panel", async () => {

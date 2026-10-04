@@ -136,11 +136,11 @@ password (they fail instead; use an agent or a credential helper).
 | --- | --- |
 | everywhere | `f` fetch · `p` pull · `u` push (of the selected repo) · `F` fetch every repo · `j k` move · `g G` first / last · `z` zoom |
 | Repos | `j k` pick the repo · `enter` go to its changes |
-| Changes | `space` stage / unstage the file · `a` stage / unstage all · `c` commit · `A` amend (editing the subject keeps the body) · `d` discard (asks) · `s` stash · `v` staged ⇄ unstaged side · `enter` open the diff |
+| Changes | `space` stage / unstage the file · `a` stage / unstage all · `c` commit · `A` amend (editing the subject keeps the body) · `d` discard (asks) · `s` stash · `v` staged ⇄ unstaged side · `y` / `Y` copy the path (relative / absolute) · `enter` open the diff |
 | Branches | `enter` switch · `n` new branch · `d` delete (asks; unmerged work is refused) |
-| Commits | `enter` browse the files the commit changed: `j k` pick one (the diff follows), `enter` focus its diff, `esc` back to the commit list. Merge commits are compared with their first parent |
-| Stash | `enter` browse its files, same as commits · `space` apply · `o` pop · `d` drop (asks) |
-| Diff | `esc` back to the panel (or file list) you came from · `j k` `ctrl+u/d` `g G` scroll · `[` `]` previous / next hunk · `space` stage hunk (unstage on the staged side) · `d` discard hunk (asks) · `s` side-by-side (read only, mouse wheel scrolls) |
+| Commits | `enter` browse the files the commit changed: `j k` pick one (the diff follows), `enter` focus its diff, `c` check the file out (its version from that commit goes into your working tree, shows up in Changes; asks first), `y` / `Y` copy its path, `esc` back to the commit list. Merge commits are compared with their first parent |
+| Stash | `enter` browse its files, same keys as commits (`c` brings a file's stashed version back) · `space` apply · `o` pop · `d` drop (asks) |
+| Diff | `esc` back to the panel (or file list) you came from · `{` `}` previous / next file without leaving the diff (in a commit, a stash or Changes) · `c` check the file out (commits and stashes) · `y` / `Y` copy its path · `j k` `ctrl+u/d` `g G` scroll · `[` `]` previous / next hunk · `space` stage hunk (unstage on the staged side) · `d` discard hunk (asks) · `s` side-by-side (read only, mouse wheel scrolls) |
 
 Commit messages are one line for now; amending keeps the existing body.
 

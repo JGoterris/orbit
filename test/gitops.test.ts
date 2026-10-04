@@ -373,6 +373,29 @@ describe("files of a commit or stash", () => {
     expect(parseDiff(await revFileDiff(dir, head!.hash, gone!))[0]!.hunks[0]!.lines).toEqual(["-b"])
   })
 
+  test("restoreFile brings a commit's or stash's version into the working tree without touching the index", async () => {
+    const dir = repo()
+    const [first] = await ops.log(dir)
+    edit(dir, "a.txt", () => "second version\n")
+    sh(dir, "commit", "-qam", "rewrite a")
+    edit(dir, "a.txt", () => "local edit\n")
+
+    expect((await ops.restoreFile(dir, first!.hash, "a.txt")).ok).toBe(true)
+    expect(readFileSync(join(dir, "a.txt"), "utf8")).toContain("line 1\n") // the original 30 lines
+    const st = (await readStatus(dir))!
+    expect(st.files[0]).toMatchObject({ path: "a.txt", x: ".", y: "M" }) // changed against HEAD, nothing staged
+
+    edit(dir, "b.txt", () => "for the stash\n")
+    await ops.stashPush(dir, "s")
+    const [stash] = await ops.stashes(dir)
+    expect(readFileSync(join(dir, "b.txt"), "utf8")).toBe("b\n")
+    expect((await ops.restoreFile(dir, stash!.hash, "b.txt")).ok).toBe(true)
+    expect(readFileSync(join(dir, "b.txt"), "utf8")).toBe("for the stash\n")
+
+    const missing = await ops.restoreFile(dir, first!.hash, "nope.txt")
+    expect(missing.ok).toBe(false)
+  })
+
   test("a merge commit is compared with its first parent", async () => {
     const dir = repo()
     sh(dir, "switch", "-q", "-c", "side")

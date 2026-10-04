@@ -1,9 +1,12 @@
-import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from "react"
+import { useRenderer } from "@opentui/react"
+import { join } from "node:path"
+import { useEffect, useMemo, useReducer, useRef, useState } from "react"
 import { commitDiff, fileDiff, parseDiff, rangeDiff, revFileDiff, revFiles, stashDiff, type DiffSide, type RevFile } from "../../core/git/diff.ts"
 import * as ops from "../../core/git/ops.ts"
 import type { GitRepo } from "../../core/git/repo.ts"
 import type { RepoEntry } from "../../core/git/repos.ts"
 import { hasStaged, hasUnstaged, type FileChange } from "../../core/git/status.ts"
+import { clipboard } from "../clipboard.ts"
 import { DiffPane } from "../DiffPane.tsx"
 import { buildRows, currentHunk, revealHunk } from "../diffRows.ts"
 import { ListPanel, type ListRow } from "../ListPanel.tsx"
@@ -47,6 +50,7 @@ export function GitView({ ctx }: { ctx: ViewContext }) {
     () => () => {
       ctx.keys.current = undefined
       ctx.capture.current = false
+      ctx.setHints(undefined)
     },
     [], // eslint-disable-line react-hooks/exhaustive-deps
   )
@@ -65,6 +69,7 @@ export function GitView({ ctx }: { ctx: ViewContext }) {
 function GitPanels({ ctx, entry, index }: { ctx: ViewContext; entry: RepoEntry; index: number }) {
   const repo: GitRepo = entry.repo
   const { focus, setFocus, notify } = ctx
+  const renderer = useRenderer()
   const root = repo.root
   const [, rerender] = useReducer((n: number) => n + 1, 0)
   const [diffVersion, bumpDiff] = useReducer((n: number) => n + 1, 0)
@@ -112,6 +117,8 @@ function GitPanels({ ctx, entry, index }: { ctx: ViewContext; entry: RepoEntry; 
   const revList = revView?.files ?? []
   const revAt = Math.max(0, Math.min(revSel, revList.length - 1))
   const revFile = revView && source === revView.pane ? revList[revAt] : undefined
+  /** the file the diff is showing, when it is one file of a list */
+  const diffPath = revFile?.path ?? (source === "changes" ? file?.path : undefined)
 
   const target = useMemo((): { key: string; title: string; load: () => Promise<string> } | undefined => {
     if (source === "changes" && file) return { key: `c:${file.path}:${side}`, title: `${file.path} · ${side}`, load: () => fileDiff(root, file, side) }
@@ -177,6 +184,30 @@ function GitPanels({ ctx, entry, index }: { ctx: ViewContext; entry: RepoEntry; 
     const n = revList.length
     if (!n) return
     setRevSel(delta === "first" ? 0 : delta === "last" ? n - 1 : Math.max(0, Math.min(n - 1, revAt + delta)))
+  }
+
+  /** `{` `}` in the diff: the previous / next file of whatever list the diff is following. */
+  const stepFile = (delta: 1 | -1) => {
+    if (revView && source === revView.pane) return moveRev(delta)
+    if (source === "changes") return move("changes", delta)
+  }
+
+  const copyPath = (path: string, absolute: boolean) => {
+    const text = absolute ? join(root, path) : path
+    void clipboard.copy(renderer, text).then((r) => (r.ok ? notify(`copied ${text} via ${r.via}`, theme.green) : notify(r.error ?? "copy failed", theme.red)))
+  }
+
+  /** `c` on a file of a commit/stash: bring its version into the working tree (asks: it overwrites local edits). */
+  const askRestore = () => {
+    if (!revView || !revFile) return
+    if (revFile.status === "D") return notify("deleted in this commit: there is no version of it to bring back", theme.yellow)
+    const { rev, label } = revView
+    const path = revFile.path
+    setConfirm({
+      title: "Checkout file",
+      message: `Overwrite ${path} in the working tree with its version from ${label}?`,
+      run: () => void act(`checkout ${path}`, () => ops.restoreFile(root, rev, path), `${path} restored from ${label} (it shows in Changes)`),
+    })
   }
 
   const move = (pane: ListPane, delta: number | "first" | "last") => {
@@ -300,6 +331,10 @@ function GitPanels({ ctx, entry, index }: { ctx: ViewContext; entry: RepoEntry; 
       if (ch === " ") return hunkOp(side === "staged" ? "unstage" : "stage"), true
       if (ch === "d") return hunkOp("discard"), true
       if (ch === "s") return setSplit((v) => !v), true
+      if (ch === "}") return stepFile(1), true
+      if (ch === "{") return stepFile(-1), true
+      if (ch === "c" && revFile) return askRestore(), true
+      if ((ch === "y" || ch === "Y") && diffPath) return copyPath(diffPath, ch === "Y"), true
     }
     if (focus === "gitdiff" || focus === "changes") {
       if (ch === "v" && file && file.kind === "tracked" && hasStaged(file) && hasUnstaged(file))
@@ -324,6 +359,8 @@ function GitPanels({ ctx, entry, index }: { ctx: ViewContext; entry: RepoEntry; 
       if (ch === "g" || key.name === "home") return moveRev("first"), true
       if (ch === "G" || key.name === "end") return moveRev("last"), true
       if (enter) return revFile ? setFocus("gitdiff") : undefined, true
+      if (ch === "c" && revFile) return askRestore(), true
+      if ((ch === "y" || ch === "Y") && revFile) return copyPath(revFile.path, ch === "Y"), true
       return false
     }
 
@@ -337,6 +374,7 @@ function GitPanels({ ctx, entry, index }: { ctx: ViewContext; entry: RepoEntry; 
       if (ch === "a") return toggleAll(), true
       if (ch === "d" && file) return askDiscard(file), true
       if (ch === "c") return openCommit(), true
+      if ((ch === "y" || ch === "Y") && file) return copyPath(file.path, ch === "Y"), true
       if (ch === "A") return void openAmend(), true
       if (ch === "s") return setPrompt({ kind: "stash", title: "Stash changes", hint: "enter stash (message optional, untracked files included) · esc cancel", value: "" }), true
       if (enter) return setFocus("gitdiff"), true
@@ -450,7 +488,17 @@ function GitPanels({ ctx, entry, index }: { ctx: ViewContext; entry: RepoEntry; 
   const sync = status?.upstream ? `${status.ahead ? ` ↑${status.ahead}` : ""}${status.behind ? ` ↓${status.behind}` : ""}` : status?.branch ? " (no upstream)" : ""
   const panel = (pane: ListPane) => ({ focused: focus === pane, onFocus: () => setFocus(pane), selected: at(pane), onSelect: (i: number) => setSel((s) => ({ ...s, [pane]: i })) })
   const hunkNo = curHunk + 1
-  const diffStatus = [rows.hunks.length ? `hunk ${hunkNo}/${rows.hunks.length}` : "", split ? "split" : ""].filter(Boolean).join(" · ")
+  const [fileNo, fileCount] = revFile ? [revAt + 1, revList.length] : source === "changes" ? [at("changes") + 1, files.length] : [0, 0]
+  const diffStatus = [fileCount > 1 ? `file ${fileNo}/${fileCount}` : "", rows.hunks.length ? `hunk ${hunkNo}/${rows.hunks.length}` : "", split ? "split" : ""].filter(Boolean).join(" · ")
+
+  const hints = gitHints(focus, {
+    source,
+    browsing: !!revView && focus === revView.pane,
+    canStep: fileCount > 1,
+    inRev: !!revFile,
+  })
+  const hintsKey = JSON.stringify(hints)
+  useEffect(() => ctx.setHints(hints), [hintsKey]) // eslint-disable-line react-hooks/exhaustive-deps
 
   const showLists = !ctx.zoomed || isList(focus) || focus === "repos"
   const showDiff = !ctx.zoomed || focus === "gitdiff"
@@ -506,13 +554,34 @@ function GitPanels({ ctx, entry, index }: { ctx: ViewContext; entry: RepoEntry; 
   )
 }
 
-/** Footer hints for the focused panel. */
-export function gitHints(focus: Pane): string[][] {
-  const common = [["f/p/u", "fetch/pull/push"], ["tab", "panel"], [":", "commands"], ["q", "quit"]]
-  if (focus === "repos") return [["j/k", "pick repo"], ["enter", "changes"], ["F", "fetch all"], ...common]
-  if (focus === "changes") return [["space", "stage"], ["a", "all"], ["c", "commit"], ["A", "amend"], ["d", "discard"], ["s", "stash"], ["enter", "diff"], ...common]
-  if (focus === "branches") return [["enter", "switch"], ["n", "new"], ["d", "delete"], ...common]
-  if (focus === "commits") return [["enter", "files"], ["esc", "back"], ...common]
-  if (focus === "stash") return [["enter", "files"], ["space", "apply"], ["o", "pop"], ["d", "drop"], ...common]
-  return [["esc", "back"], ["j/k", "scroll"], ["[ ]", "hunk"], ["space", "stage hunk"], ["d", "discard hunk"], ["v", "staged/unstaged"], ["s", "split"], ...common]
+/** What changes the footer hints besides the focused panel. */
+export interface HintMode {
+  /** the diff follows this list */
+  source?: "changes" | "branches" | "commits" | "stash"
+  /** a commit or stash is opened as a file list in the focused panel */
+  browsing?: boolean
+  /** the diff follows a list of several files, so `{ }` can step through them */
+  canStep?: boolean
+  /** the diff is of one file of a commit/stash */
+  inRev?: boolean
+}
+
+/** Footer hints for the focused panel (kept short: they have to fit in 100 columns or so). */
+export function gitHints(focus: Pane, mode: HintMode = {}): string[][] {
+  const common = [["?", "help"], ["q", "quit"]]
+  const net = ["f/p/u", "fetch/pull/push"]
+  if (focus === "repos") return [["j/k", "pick repo"], ["enter", "changes"], ["F", "fetch all"], net, ...common]
+  if (focus === "changes") return [["space", "stage"], ["a", "all"], ["c", "commit"], ["A", "amend"], ["d", "discard"], ["s", "stash"], ["y", "copy path"], ["enter", "diff"], net, ...common]
+  if (focus === "branches") return [["enter", "switch"], ["n", "new"], ["d", "delete"], net, ...common]
+  if (focus === "commits" || focus === "stash") {
+    if (mode.browsing) return [["enter", "diff"], ["c", "checkout file"], ["y", "copy path"], ["esc", "back"], ...common]
+    return focus === "commits"
+      ? [["enter", "files"], ["esc", "back"], net, ...common]
+      : [["enter", "files"], ["space", "apply"], ["o", "pop"], ["d", "drop"], net, ...common]
+  }
+  const files = mode.canStep ? [["{ }", "file"]] : []
+  const base = [["esc", "back"], ["j/k", "scroll"], ["[ ]", "hunk"], ...files]
+  if (mode.inRev) return [...base, ["c", "checkout file"], ["s", "split"], ["y", "copy path"], ...common]
+  if (mode.source === "changes") return [...base, ["space", "stage hunk"], ["d", "discard"], ["v", "side"], ["s", "split"], ["y", "copy path"], ...common]
+  return [...base, ["s", "split"], ...common]
 }

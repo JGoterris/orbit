@@ -36,6 +36,8 @@ export interface ViewContext {
    * global shortcut (quit, views, tab, palette…) took, before the service shortcuts.
    */
   keys: MutableRefObject<KeyHandler | undefined>
+  /** Replaces the footer key hints (e.g. while a mode is active); `undefined` goes back to `ViewDef.hints`. */
+  setHints: (hints: string[][] | undefined) => void
   /** While a view sets this (a text prompt is open) it gets *every* key and the shell takes none. */
   capture: MutableRefObject<boolean>
   logs: {
