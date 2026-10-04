@@ -38,7 +38,7 @@ export function filterCommands(commands: Command[], query: string): Command[] {
     .map((x) => x.c)
 }
 
-function Modal({ title, width, height, children }: { title: string; width: number; height: number; children: React.ReactNode }) {
+export function Modal({ title, width, height, children }: { title: string; width: number; height: number; children: React.ReactNode }) {
   return (
     <box position="absolute" top={0} left={0} width="100%" height="100%" zIndex={10} alignItems="center" justifyContent="center">
       <box
@@ -422,6 +422,59 @@ export function EnvOverlay({
       {missing.length ? <text fg={theme.yellow}>{fit(`missing env_file: ${missing.join(", ")}`, w - 4)}</text> : null}
       <text fg={theme.dim}>
         {`j/k scroll · v ${reveal ? "hide" : "reveal"} secrets · esc close${entries.length > page ? `  (${start + 1}-${start + shown.length}/${entries.length})` : ""}`}
+      </text>
+    </Modal>
+  )
+}
+
+/** One-line text prompt (commit message, branch name…). Enter and esc are handled by the owner's key handler. */
+export function PromptOverlay({
+  title,
+  hint,
+  value,
+  onInput,
+  width,
+}: {
+  title: string
+  hint: string
+  value: string
+  onInput: (v: string) => void
+  width: number
+}) {
+  const w = Math.min(80, width - 4)
+  return (
+    <Modal title={title} width={w} height={5}>
+      <box height={1} flexDirection="row">
+        <text fg={theme.accent}>{"› "}</text>
+        <input
+          flexGrow={1}
+          focused
+          value={value}
+          onInput={onInput}
+          backgroundColor={theme.panelAlt}
+          focusedBackgroundColor={theme.panelAlt}
+          textColor={theme.text}
+          placeholderColor={theme.dim}
+        />
+      </box>
+      <text fg={theme.border}>{"─".repeat(w - 4)}</text>
+      <text fg={theme.dim}>{hint}</text>
+    </Modal>
+  )
+}
+
+export function YesNoOverlay({ title, message, width }: { title: string; message: string; width: number }) {
+  const w = Math.min(70, width - 4)
+  return (
+    <Modal title={title} width={w} height={6}>
+      <text fg={theme.text}>{fit(message, w - 4)}</text>
+      <text>
+        <span fg={theme.red}>y / enter</span>
+        <span fg={theme.dim}> confirm</span>
+      </text>
+      <text>
+        <span fg={theme.accent}>n / esc</span>
+        <span fg={theme.dim}> cancel</span>
       </text>
     </Modal>
   )

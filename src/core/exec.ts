@@ -7,7 +7,15 @@ export interface ExecResult {
 /** Runs a command to completion and captures its output. Never throws for non-zero exits. */
 export async function exec(
   argv: string[],
-  opts: { cwd?: string; env?: Record<string, string | undefined>; timeout?: number } = {},
+  opts: {
+    cwd?: string
+    env?: Record<string, string | undefined>
+    timeout?: number
+    /** written to the command's stdin (default: stdin is closed) */
+    input?: string
+    /** run in a new session, without a controlling terminal: ssh/gpg cannot prompt over the TUI, they fail instead */
+    detached?: boolean
+  } = {},
 ): Promise<ExecResult> {
   try {
     const proc = Bun.spawn(argv, {
@@ -15,7 +23,8 @@ export async function exec(
       env: opts.env as Record<string, string> | undefined,
       stdout: "pipe",
       stderr: "pipe",
-      stdin: "ignore",
+      stdin: opts.input === undefined ? "ignore" : Buffer.from(opts.input),
+      detached: opts.detached,
     })
     let timer: ReturnType<typeof setTimeout> | undefined
     if (opts.timeout) timer = setTimeout(() => proc.kill("SIGKILL"), opts.timeout)

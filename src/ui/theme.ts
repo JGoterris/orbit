@@ -88,3 +88,14 @@ export function fit(s: string, width: number): string {
   if (width <= 0) return ""
   return s.length > width ? s.slice(0, Math.max(0, width - 1)) + "…" : s.padEnd(width, " ")
 }
+
+/** Blends `color` over `base` (`#rrggbb` both), `amount` 0..1 of `color`: a tint for diff backgrounds. */
+export function mix(base: string, color: string, amount: number): string {
+  const c = (hex: string, i: number) => Number.parseInt(hex.slice(1 + i * 2, 3 + i * 2), 16)
+  return (
+    "#" +
+    [0, 1, 2]
+      .map((i) => Math.round(c(base, i) * (1 - amount) + c(color, i) * amount).toString(16).padStart(2, "0"))
+      .join("")
+  )
+}

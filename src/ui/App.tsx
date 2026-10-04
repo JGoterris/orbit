@@ -13,7 +13,10 @@ import { useSupervisorVersion, useTick } from "./hooks.ts"
 import { clipboard } from "./clipboard.ts"
 import { CommandPalette, ConfirmOverlay, EnvOverlay, envPageSize, filterCommands, HelpOverlay, ProjectPicker, projectRows, ThemePicker, type Command } from "./Overlays.tsx"
 import { ServiceList } from "./ServiceList.tsx"
+import type { GitRepo } from "../core/git/repo.ts"
+import { discoverRepos, repoEntries, repoOfService, summarize } from "../core/git/repos.ts"
 import { viewById, VIEWS, type Pane, type ViewContext } from "./views/index.tsx"
+import type { KeyHandler } from "./views/types.ts"
 import { applyTheme, statusStyle, theme } from "./theme.ts"
 import { DEFAULT_THEME, THEMES, type Palette } from "./themes.ts"
 import { writeUserConfig } from "../core/userConfig.ts"
@@ -33,6 +36,8 @@ interface Props {
   onOpenProject?: (dir: string, how: "stop" | "detach") => Promise<string | undefined>
   /** open the project picker right away (orbit was started in a folder that is not a project) */
   startWithPicker?: boolean
+  /** the git repositories to show; by default those the services live in, `null` turns git off */
+  git?: GitRepo | GitRepo[] | null
   /** every selectable theme (built-in first, then the user's); defaults to the built-in ones */
   themes?: Record<string, Palette>
   /** names in `themes` that come from the user's themes dir */
@@ -43,13 +48,18 @@ interface Props {
   themeErrors?: string[]
 }
 
-export function App({ sup, onQuit, onOpenProject, startWithPicker = false, themes = THEMES, customThemes = [], initialTheme = DEFAULT_THEME, themeErrors = [] }: Props) {
+export function App({ sup, onQuit, onOpenProject, startWithPicker = false, git, themes = THEMES, customThemes = [], initialTheme = DEFAULT_THEME, themeErrors = [] }: Props) {
   useSupervisorVersion(sup)
   const tick = useTick(250)
   const { width, height } = useTerminalDimensions()
   const renderer = useRenderer()
   const layout = useGraphLayout(sup)
   const names = sup.order
+  const repos = useMemo(() => (git === null ? [] : git ? repoEntries([git].flat()) : discoverRepos(sup.config)), [git, sup])
+  const [repoIndex, setRepoIndex] = useState(0)
+  // what the open view wants from the keyboard (see ViewContext.keys / .capture)
+  const viewKeys = useRef<KeyHandler | undefined>(undefined)
+  const viewCapture = useRef(false)
 
   const [selected, setSelected] = useState(names[0] ?? "")
   const [view, setView] = useState(VIEWS[0]!.id)
@@ -488,6 +498,12 @@ export function App({ sup, onQuit, onOpenProject, startWithPicker = false, theme
     }
 
     // ---- normal mode
+    if (viewCapture.current) {
+      // a text prompt inside the view is open: it takes every key, except the way out
+      if (key.ctrl && key.name === "c") return requestQuit()
+      viewKeys.current?.(key)
+      return
+    }
     if (key.ctrl && key.name === "c") return requestQuit()
     if (key.ctrl && key.name === "p") return openPalette()
     if (ch === "q") return requestQuit()
@@ -498,7 +514,7 @@ export function App({ sup, onQuit, onOpenProject, startWithPicker = false, theme
     const byNumber = /^[1-9]$/.test(ch) ? VIEWS[Number(ch) - 1] : undefined
     if (byNumber) return setView(byNumber.id)
     if (key.name === "tab") {
-      const panes = viewDef.panes
+      const panes = viewDef.visiblePanes?.(viewContext) ?? viewDef.panes
       const i = Math.max(0, panes.indexOf(focus))
       return setFocus(panes[(i + (key.shift ? panes.length - 1 : 1)) % panes.length]!)
     }
@@ -508,6 +524,7 @@ export function App({ sup, onQuit, onOpenProject, startWithPicker = false, theme
     if (ch === "=") return resetSize()
     if (key.name === "escape" && (search || filter)) return clearLogQueries()
     if (key.name === "escape" && zoomed) return setZoomed(false)
+    if (viewKeys.current?.(key)) return
 
     if (focus === "logs") {
       if (key.name === "down" || ch === "j") return setScrollBack((v) => Math.max(0, v - 1))
@@ -633,10 +650,26 @@ export function App({ sup, onQuit, onOpenProject, startWithPicker = false, theme
     setMode("palette")
   }
 
+  // branch and change count for the header: a cheap `git status` every few seconds (App re-renders on its own tick)
+  useEffect(() => {
+    if (!repos.length) return
+    const refresh = () => repos.forEach((e) => void e.repo.refresh())
+    refresh()
+    const timer = setInterval(refresh, 5000)
+    return () => clearInterval(timer)
+  }, [repos])
+  const gitSummary = summarize(repos)
+  const onlyRepo = repos.length === 1 ? repos[0]!.repo.status : undefined
+
   useEffect(() => setPaletteIndex(0), [query])
   useEffect(() => setProjIndex(0), [projQuery])
   useEffect(() => setScrollBack(0), [selected, logScope, view])
   useEffect(() => {
+    // the Git view opens on the repo of the service you were looking at
+    if (view === "git") {
+      const i = repoOfService(repos, selected)
+      if (i >= 0) setRepoIndex(i)
+    }
     setFocus(viewById(view).defaultPane)
     setZoomed(false)
   }, [view])
@@ -676,6 +709,12 @@ export function App({ sup, onQuit, onOpenProject, startWithPicker = false, theme
     zoomed,
     focus,
     setFocus,
+    notify,
+    repos,
+    repoIndex,
+    setRepoIndex,
+    keys: viewKeys,
+    capture: viewCapture,
     logs: {
       service: logService,
       scope: logScope,
@@ -698,7 +737,7 @@ export function App({ sup, onQuit, onOpenProject, startWithPicker = false, theme
           ["y", "copy"],
           ["esc", "cancel"],
         ]
-      : [
+      : (viewDef.hints?.(viewContext) ?? [
           ["space", "start/stop"],
           ["r", "restart"],
           ["S/X", "all"],
@@ -710,7 +749,7 @@ export function App({ sup, onQuit, onOpenProject, startWithPicker = false, theme
           [":", "commands"],
           ["?", "help"],
           ["q", "quit"],
-        ]
+        ])
 
   return (
     <box flexDirection="column" width="100%" height="100%" backgroundColor={theme.bg}>
@@ -735,6 +774,17 @@ export function App({ sup, onQuit, onOpenProject, startWithPicker = false, theme
         ))}
         {zoomed ? <text fg={theme.accent}>{"  ⛶ zoom"}</text> : null}
         <box flexGrow={1} />
+        {repos.length ? (
+          <text>
+            <span fg={theme.accent2}>
+              {onlyRepo ? ` ⎇ ${onlyRepo.branch ?? `detached ${onlyRepo.oid ?? ""}`}` : repos.length > 1 ? ` ⎇ ${repos.length} repos` : " ⎇ …"}
+            </span>
+            {gitSummary.ahead ? <span fg={theme.yellow}>{` ↑${gitSummary.ahead}`}</span> : null}
+            {gitSummary.behind ? <span fg={theme.yellow}>{` ↓${gitSummary.behind}`}</span> : null}
+            {gitSummary.changes ? <span fg={theme.orange}>{` ✎${gitSummary.changes}${repos.length > 1 ? ` in ${gitSummary.dirty}` : ""}`}</span> : null}
+            <span fg={theme.dim}>{"   "}</span>
+          </text>
+        ) : null}
         <text>
           <span fg={theme.green}>● {counts.up} up</span>
           {counts.busy ? <span fg={theme.yellow}>{`  ◐ ${counts.busy}`}</span> : null}
@@ -803,7 +853,7 @@ export function App({ sup, onQuit, onOpenProject, startWithPicker = false, theme
           </text>
         )}
         <box flexGrow={1} />
-        {selected ? (
+        {selected && viewDef.panes.includes("services") ? (
           <text>
             <span fg={statusStyle[sup.state(selected).status].color}>{statusStyle[sup.state(selected).status].icon} </span>
             <span fg={theme.muted}>{selected}</span>

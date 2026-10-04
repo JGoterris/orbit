@@ -43,6 +43,10 @@ Built with TypeScript, [Bun](https://bun.sh) and [OpenTUI](https://github.com/an
 - Kills **entire process trees** (its own process group): no orphaned
   `vite`/`esbuild` processes hogging ports.
 - Command palette with fuzzy search, service groups, open in browser.
+- **Git, built in** (`4`): for every repo your services live in, changes, branches, commits and stashes in
+  stacked panels with a diff next to them. Stage files or single **hunks**, commit, amend, discard (always asks), switch/create/delete
+  branches, stash, fetch/pull/push. Side-by-side diffs with `s`. Branch and change count show in the
+  header from any view. Conflicts, rebase and the like stay in lazygit (`L`).
 - **Several projects, one orbit**: press `P` to switch to another project (pinned and recent ones, or
   type a folder path and `tab` to complete it). Services of the project you leave can be stopped or left
   running; opening it again re-attaches. Starting `orbit` in a folder that is not a project opens the picker.
@@ -109,11 +113,36 @@ recent unpinned ones are kept; pinned ones are never dropped).
 | `o` | open `http://localhost:<port>` (or `url`) in the browser |
 | `e` | environment variables of the selected service (secrets masked, `v` reveals) |
 | `L` | open the selected service's git repo in [lazygit](https://github.com/jesseduffield/lazygit) (if installed) |
+| `4` | Git view, see [Git](#git) |
 | `P` | open another project: `enter` opens, `tab` completes a typed path, `ctrl+f` pins, `ctrl+x` forgets |
 | `T` | change color theme (live preview, `enter` saves, `esc` cancels) |
 | `:` / `ctrl+p` | command palette |
 | `?` | help |
 | `q` | quit: `s` stops everything, `d` leaves services running (reopen `orbit` to resume them) |
+
+## Git
+
+The Git view (`4`) works on the repositories your services live in: each service's working directory
+is looked up, the project folder's own repo is included if it has one, and every repo appears once. With
+more than one, a **Repos** panel at the top lists them (branch, ahead/behind, changed files, and which
+services live there) and the one you pick drives all the other panels; the view opens on the repo of the
+service you had selected, and the header sums up all of them. `tab` moves between Repos, Changes, Branches,
+Commits, Stash and the Diff; the diff follows whatever is selected (a file, a branch against `HEAD`, a
+commit, a stash). It refreshes every few seconds and after each action; git's own error message is
+shown when something fails. Pull is fast-forward only, and network operations never ask for a
+password (they fail instead; use an agent or a credential helper).
+
+| Panel | Keys |
+| --- | --- |
+| everywhere | `f` fetch · `p` pull · `u` push (of the selected repo) · `F` fetch every repo · `j k` move · `g G` first / last · `z` zoom |
+| Repos | `j k` pick the repo · `enter` go to its changes |
+| Changes | `space` stage / unstage the file · `a` stage / unstage all · `c` commit · `A` amend (editing the subject keeps the body) · `d` discard (asks) · `s` stash · `v` staged ⇄ unstaged side · `enter` open the diff |
+| Branches | `enter` switch · `n` new branch · `d` delete (asks; unmerged work is refused) |
+| Commits | `enter` browse the files the commit changed: `j k` pick one (the diff follows), `enter` focus its diff, `esc` back to the commit list. Merge commits are compared with their first parent |
+| Stash | `enter` browse its files, same as commits · `space` apply · `o` pop · `d` drop (asks) |
+| Diff | `esc` back to the panel (or file list) you came from · `j k` `ctrl+u/d` `g G` scroll · `[` `]` previous / next hunk · `space` stage hunk (unstage on the staged side) · `d` discard hunk (asks) · `s` side-by-side (read only, mouse wheel scrolls) |
+
+Commit messages are one line for now; amending keeps the existing body.
 
 ## Themes
 
@@ -206,12 +235,15 @@ src/
     userConfig.ts      ~/.config/orbit: saved theme, custom themes
     projects.ts        project registry (projects.json), status, path completion
     session.ts         switching the open project
+    git/               status, diff + hunk parsing, operations, GitRepo (cached state + change events),
+                       repos.ts (the repos a project's services live in)
     health.ts metrics.ts logs.ts exec.ts
   ui/
     App.tsx            layout, keyboard, views, overlays
     graphLayout.ts     graph layout by layers (pure, testable)
     ProjectHost.tsx    keeps the open project; remounts App when it changes
-    views/             view registry (Dashboard, Graph, Logs): label, panes, render
+    views/             view registry (Dashboard, Graph, Logs, Git): label, panes, render, hints, own keys
+    DiffPane.tsx ListPanel.tsx diffRows.ts   diff and list panels of the Git view
     GraphView.tsx ServiceList.tsx ServiceDetail.tsx LogView.tsx Overlays.tsx theme.ts themes.ts hooks.ts
 test/                  bun test (config, graph, supervisor with real processes, TUI with test renderer)
 ```

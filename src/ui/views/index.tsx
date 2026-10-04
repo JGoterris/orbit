@@ -1,6 +1,7 @@
 import { GraphView } from "../GraphView.tsx"
 import { LogView } from "../LogView.tsx"
 import { ServiceDetail } from "../ServiceDetail.tsx"
+import { GitView, gitHints } from "./Git.tsx"
 import { theme } from "../theme.ts"
 import type { ViewContext, ViewDef } from "./types.ts"
 
@@ -79,6 +80,15 @@ export const VIEWS: ViewDef[] = [
   { id: "dashboard", label: "Dashboard", panes: ["services", "detail", "logs"], defaultPane: "services", render: Dashboard },
   { id: "graph", label: "Graph", panes: ["services", "graph"], defaultPane: "graph", compactSidebar: true, render: Graph },
   { id: "logs", label: "Logs", panes: ["services", "logs"], defaultPane: "logs", render: Logs },
+  {
+    id: "git",
+    label: "Git",
+    panes: ["repos", "changes", "branches", "commits", "stash", "gitdiff"],
+    defaultPane: "changes",
+    visiblePanes: (c) => (c.repos.length > 1 ? ["repos", "changes", "branches", "commits", "stash", "gitdiff"] : ["changes", "branches", "commits", "stash", "gitdiff"]),
+    render: (c) => <GitView ctx={c} />,
+    hints: (c) => gitHints(c.focus),
+  },
 ]
 
 export const viewById = (id: string): ViewDef => VIEWS.find((v) => v.id === id) ?? VIEWS[0]!
