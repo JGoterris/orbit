@@ -265,6 +265,7 @@ export function App({ sup, onQuit, onOpenProject, startWithPicker = false, git, 
           { id: `start-${n}`, label: `Start ${n}`, hint: svc.dependsOn.length ? `+ ${svc.dependsOn.join(",")}` : "", run: () => run(n, sup.start(n)) },
           { id: `stop-${n}`, label: `Stop ${n}`, run: () => run(n, sup.stop(n)) },
           { id: `restart-${n}`, label: `Restart ${n}`, run: () => run(n, sup.restart(n)) },
+          ...(svc.watch ? [{ id: `watch-${n}`, label: `Pause/resume watching ${n}`, hint: "W", run: () => toggleWatch(n) }] : []),
           {
             id: `logs-${n}`,
             label: `Logs of ${n}`,
@@ -559,6 +560,7 @@ export function App({ sup, onQuit, onOpenProject, startWithPicker = false, git, 
     if (ch === "r") return run(selected, sup.restart(selected))
     if (ch === "S") return run("start all", sup.startAll())
     if (ch === "X") return run("stop all", sup.stopAll())
+    if (ch === "W") return toggleWatch(selected)
     if (ch === "R") return commands.find((c) => c.id === "restart-all")!.run()
     if (ch === "e") return openEnv()
     if (ch === "o") return openService(selected)
@@ -585,6 +587,12 @@ export function App({ sup, onQuit, onOpenProject, startWithPicker = false, git, 
     if (key.name === "pageup") return setScrollBack((v) => v + page)
     if (key.name === "pagedown") return setScrollBack((v) => Math.max(0, v - page))
   })
+
+  function toggleWatch(name: string) {
+    const res = sup.toggleWatch(name)
+    if (!res) return notify(`${name} has no watch in orbit.yaml`, theme.yellow)
+    notify(`watch ${res === "paused" ? "paused" : "resumed"}: ${name}`, res === "paused" ? theme.yellow : theme.accent)
+  }
 
   function openEnv() {
     if (!selected) return

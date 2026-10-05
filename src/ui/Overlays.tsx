@@ -165,6 +165,7 @@ const HELP: Array<[string, string]> = [
   ["space", "start / stop selected (with dependencies)"],
   ["s · x · r", "start · stop · restart selected"],
   ["S · X · R", "start · stop · restart everything"],
+  ["W", "pause / resume file watching of the selected service"],
   ["1 2 3 4", "dashboard · graph · logs · git"],
   ["tab / shift+tab", "move focus between panels"],
   ["z · esc", "zoom the focused panel · back"],

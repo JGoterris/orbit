@@ -19,6 +19,7 @@ import {
   type RestartPolicy,
   type ServiceConfig,
   type ServiceType,
+  type WatchConfig,
 } from "./schema.ts"
 import { validateGraph } from "../core/graph.ts"
 
@@ -67,6 +68,21 @@ function parseHealth(raw: unknown, path: string, port?: number): HealthCheck | u
     throw new ConfigError("health needs one of http, tcp, cmd or container", path)
   }
   return health
+}
+
+/** `watch: ["src/**"]` or `watch: { paths, ignore, debounce, cooldown }` */
+function parseWatch(raw: unknown, path: string): WatchConfig | undefined {
+  if (raw === undefined || raw === null || raw === false) return undefined
+  const isMapping = typeof raw === "object" && !Array.isArray(raw)
+  const rec = isMapping ? asRecord(raw, path) : { paths: raw }
+  const paths = asStringList(rec.paths, `${path}.paths`)
+  if (!paths.length) throw new ConfigError("watch needs at least one path pattern", path)
+  return {
+    paths,
+    ignore: asStringList(rec.ignore, `${path}.ignore`),
+    debounce: parseDuration(rec.debounce, `${path}.debounce`, 1000),
+    cooldown: parseDuration(rec.cooldown, `${path}.cooldown`, 10_000),
+  }
 }
 
 const RESTART: RestartPolicy[] = ["no", "on-failure", "always"]
@@ -123,6 +139,7 @@ function parseService(
           ? parseHealth(rec.health, `${path}.health`, port)
           : base.health,
     oneshot: rec.oneshot === true || undefined,
+    watch: rec.watch !== undefined ? parseWatch(rec.watch, `${path}.watch`) : base?.watch,
     restart,
     startTimeout: parseDuration(rec.start_timeout, `${path}.start_timeout`, base?.startTimeout ?? 60_000),
     stopTimeout: parseDuration(rec.stop_timeout, `${path}.stop_timeout`, base?.stopTimeout ?? 8_000),
@@ -193,7 +210,10 @@ export function loadConfig(opts: LoadOptions = {}): OrbitConfig {
   try {
     parsed = YAML.parse(readFileSync(file, "utf8"))
   } catch (err) {
-    throw new ConfigError(`invalid YAML: ${(err as Error).message}`, file)
+    const message = (err as Error).message
+    // an unquoted glob like **/*.py starts with `*`, which YAML reads as an alias
+    const hint = /alias/i.test(message) ? ` (quote glob patterns that start with *, e.g. "**/*.py")` : ""
+    throw new ConfigError(`invalid YAML: ${message}${hint}`, file)
   }
   const doc = interpolate(asRecord(parsed, file), vars)
   const globalEnv = asEnv(doc.env, "env")

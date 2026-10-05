@@ -16,6 +16,16 @@ export interface HealthCheck {
   timeout: number
 }
 
+export interface WatchConfig {
+  /** globs relative to the service's cwd; a change to a matching file restarts the service */
+  paths: string[]
+  ignore: string[]
+  /** ms of quiet needed after the last change before restarting */
+  debounce: number
+  /** minimum ms between two automatic restarts; changes in between are batched */
+  cooldown: number
+}
+
 export interface ServiceConfig {
   name: string
   type: ServiceType
@@ -31,6 +41,8 @@ export interface ServiceConfig {
   port?: number
   url?: string
   health?: HealthCheck
+  /** restart the service automatically when matching files change */
+  watch?: WatchConfig
   restart: RestartPolicy
   /** ms to wait for a service to become ready before giving up */
   startTimeout: number

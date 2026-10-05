@@ -8,6 +8,7 @@ import { checkHealth, describeHealth } from "./health.ts"
 import { LogStore } from "./logs.ts"
 import { ProcessSampler, sampleContainers } from "./metrics.ts"
 import { createRunner, type Runner } from "./runners.ts"
+import { FileWatcher } from "./watch.ts"
 import { procFiles, readState, stateDir, writeState, type SavedService } from "./state.ts"
 
 export type Status =
@@ -39,6 +40,8 @@ export interface ServiceState {
   restarts: number
   error?: string
   health?: string
+  /** file watching: undefined when the service has no `watch` */
+  watch?: "active" | "paused" | "pending"
   waitingOn?: string[]
   cpu: number[]
   mem: number[]
@@ -50,6 +53,7 @@ interface Runtime {
   waiters: Array<(ready: boolean) => void>
   healthTimer?: ReturnType<typeof setTimeout>
   restartTimer?: ReturnType<typeof setTimeout>
+  watcher?: FileWatcher
   stopPromise?: Promise<void>
   userStopping: boolean
   /** attached to a container that was already running: quitting orbit leaves it running */
@@ -170,6 +174,7 @@ export class Supervisor extends EventEmitter {
       }),
     )
     this.persist()
+    this.startWatchers()
   }
 
   /** Starts a service (and its dependencies first). Resolves true once it is ready. */
@@ -331,6 +336,7 @@ export class Supervisor extends EventEmitter {
   async dispose() {
     this.disposed = true
     clearInterval(this.metricsTimer)
+    this.closeWatchers()
     await Promise.all(this.names.map((n) => this.stop(n, { keepAdopted: true })))
     for (const rt of this.rt.values()) {
       clearTimeout(rt.healthTimer)
@@ -346,6 +352,7 @@ export class Supervisor extends EventEmitter {
   detach() {
     this.disposed = true
     clearInterval(this.metricsTimer)
+    this.closeWatchers()
     this.persist()
     for (const rt of this.rt.values()) {
       clearTimeout(rt.healthTimer)
@@ -362,12 +369,56 @@ export class Supervisor extends EventEmitter {
     for (const rt of this.rt.values()) rt.runner?.killSync()
   }
 
+  /** Pauses / resumes file watching of a service. Undefined if it has no `watch`. */
+  toggleWatch(name: string): "paused" | "active" | undefined {
+    const watcher = this.rt.get(name)!.watcher
+    if (!watcher) return undefined
+    watcher.paused = !watcher.paused
+    this.log(name, watcher.paused ? "watch paused" : "watch resumed")
+    this.update(name, { watch: watcher.paused ? "paused" : "active" })
+    return watcher.paused ? "paused" : "active"
+  }
+
   clearLogs(name?: string) {
     this.logs.clear(name)
     this.emit("change", name)
   }
 
   // ---------------------------------------------------------------- internals
+
+  private startWatchers() {
+    for (const name of this.names) {
+      const cfg = this.service(name).watch
+      const rt = this.rt.get(name)!
+      if (!cfg || rt.watcher || this.disposed) continue
+      rt.watcher = new FileWatcher(this.service(name).cwd, cfg, {
+        onTrigger: (files) => this.onWatchTrigger(name, files),
+        onError: (msg) => this.log(name, msg),
+        onPending: (pending) => {
+          if (!rt.watcher?.paused) this.update(name, { watch: pending ? "pending" : "active" })
+        },
+      })
+      rt.watcher.start()
+      this.update(name, { watch: "active" })
+    }
+  }
+
+  private closeWatchers() {
+    for (const rt of this.rt.values()) {
+      rt.watcher?.close()
+      rt.watcher = undefined
+    }
+  }
+
+  private onWatchTrigger(name: string, files: string[]) {
+    const status = this.state(name).status
+    // a change never starts a service the user stopped, nor interrupts one still waiting for its dependencies
+    if (status === "stopped" || status === "stopping" || status === "waiting" || this.disposed) return
+    const shown = files.slice(0, 2).join(", ") + (files.length > 2 ? ` (+${files.length - 2} more)` : "")
+    this.log(name, `↻ ${shown} changed — restarting`)
+    this.rt.get(name)!.backoff = 1000
+    void this.restart(name)
+  }
 
   /** Writes what this session owns and has running, for a later session to re-attach to. */
   private persist() {

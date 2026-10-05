@@ -51,7 +51,8 @@ export function ServiceList({ sup, names, selected, onSelect, tick, width, focus
             <text>
               <span fg={isSel ? theme.accent : theme.panel}>{isSel ? "▌" : " "}</span>
               <span fg={style.color}>{statusIcon(st.status, tick, svc.oneshot)} </span>
-              {isSel ? <strong fg={theme.text}>{fit(name, nameW)}</strong> : <span fg={theme.text}>{fit(name, nameW)}</span>}
+              {isSel ? <strong fg={theme.text}>{fit(name, nameW - 2)}</strong> : <span fg={theme.text}>{fit(name, nameW - 2)}</span>}
+              <span fg={st.watch === "pending" ? theme.yellow : st.watch === "active" ? theme.accent : theme.dim}>{st.watch ? " ↻" : "  "}</span>
               {compact ? null : <span fg={badge.color}> {badge.label}</span>}
               <span fg={theme.muted}>{fit(svc.port ? ` :${svc.port}` : "", 7)}</span>
               {compact ? null : (

@@ -25,6 +25,10 @@ Built with TypeScript, [Bun](https://bun.sh) and [OpenTUI](https://github.com/an
 - **Healthchecks**: HTTP, TCP, command, or Docker's `HEALTHCHECK`. If you set `port` without
   `health`, a TCP check to that port is used.
 - **Restart policy** `no | on-failure | always` with exponential backoff (1s → 30s).
+- **Watch mode**: `watch:` globs restart a service when its files change (for stacks without
+  hot-reload: Go, Rust, plain backends). Changes are debounced and rate-limited (`cooldown`), so
+  editing never causes a restart storm; `W` pauses it. Never starts a service you stopped.
+  On WSL2, edits made from Windows tools to files under `/mnt/c` don't trigger inotify: keep the project in the Linux filesystem.
 - **Long log lines wrap** (`w` toggles), the view stays put while you scroll up, and copy mode
   (`v`) selects across scrolling and copies whole lines via OSC 52 (or `wl-copy`/`xclip`/`pbcopy`/`clip.exe`).
 - **Live logs** per service or combined with color prefix, regex filter, scroll
@@ -98,6 +102,7 @@ recent unpinned ones are kept; pinned ones are never dropped).
 | `space` | start / stop the selected one (with dependencies) |
 | `s` `x` `r` | start / stop / restart the selected one |
 | `S` `X` `R` | start / stop / restart everything |
+| `W` | pause / resume file watching of the selected service |
 | `1` `2` `3` | Dashboard / Graph / Logs |
 | `tab` / `shift+tab` | move focus between panels |
 | `z` · `esc` | zoom the focused panel to full screen · back |
@@ -182,6 +187,13 @@ services:
     depends_on: [postgres, redis]
     health: { http: "http://localhost:3000/health", interval: 2s, timeout: 2s }
     restart: on-failure         # no | on-failure | always
+    watch: ["src/**", "package.json"]   # restart on change; globs relative to `cwd`
+    # long form:
+    # watch:
+    #   paths: ["**/*.go", "go.mod"]
+    #   ignore: ["**/*_test.go"]   # .git, node_modules and editor swap files are always ignored
+    #   debounce: 1s               # quiet time needed after the last change (default 1s)
+    #   cooldown: 10s              # at most one restart per cooldown; changes in between are batched (default 10s)
     start_timeout: 60s
     stop_timeout: 8s
 
@@ -231,6 +243,7 @@ src/
   core/
     graph.ts           DAG: cycles, topological order, levels
     supervisor.ts      states, dependencies, healthchecks, restarts, metrics
+    watch.ts           file watcher with debounce + cooldown (watch mode)
     runners.ts         process / docker / compose
     userConfig.ts      ~/.config/orbit: saved theme, custom themes
     projects.ts        project registry (projects.json), status, path completion

@@ -147,6 +147,17 @@ export function ServiceDetail({ sup, name, width, focused, expanded, height, row
         {st.pid ? <Field label="pid" value={String(st.pid)} /> : null}
         {st.containerId ? <Field label="container" value={st.containerId.slice(0, 12)} /> : null}
         <Field label="restart" value={svc.restart} />
+        {svc.watch ? (
+          <Field
+            label="watch"
+            value={
+              st.watch === "paused"
+                ? "paused"
+                : `${svc.watch.paths.join(", ")} · ${svc.watch.debounce / 1000}s/${svc.watch.cooldown / 1000}s${st.watch === "pending" ? " · changes queued" : ""}`
+            }
+            color={st.watch === "pending" ? theme.yellow : theme.muted}
+          />
+        ) : null}
         {svc.envFiles.length ? (
           <Field
             label="env_file"
