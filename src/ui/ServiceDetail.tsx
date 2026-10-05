@@ -95,6 +95,9 @@ export function ServiceDetail({ sup, name, width, focused, expanded, height, row
   items.push({ label: "start_timeout", value: formatDuration(svc.startTimeout) }, { label: "stop_timeout", value: formatDuration(svc.stopTimeout) })
   items.push({ label: "autostart", value: svc.autostart ? "yes" : "no" })
   if (svc.oneshot) items.push({ label: "oneshot", value: "yes" })
+  for (const [label, hooks] of [["pre_start", svc.hooks?.preStart], ["post_start", svc.hooks?.postStart], ["post_stop", svc.hooks?.postStop]] as const) {
+    if (hooks?.length) items.push({ label, value: hooks.map((h) => h.cmd).join(" · ") })
+  }
   if (svc.url) items.push({ label: "url", value: svc.url })
   if (svc.ports.length) items.push({ label: "ports", value: svc.ports.join(", ") })
   if (svc.volumes.length) items.push({ label: "volumes", value: svc.volumes.join(", ") })

@@ -1,13 +1,15 @@
 import { EventEmitter } from "node:events"
+import type { Subprocess } from "bun"
 import { relative } from "node:path"
 import { readEnvFiles } from "../config/envFiles.ts"
-import type { OrbitConfig, ServiceConfig } from "../config/schema.ts"
+import type { Hook, OrbitConfig, ServiceConfig } from "../config/schema.ts"
 import { isPortOpen, whoListens } from "./exec.ts"
 import { dependentsMap, depMapOf, topoOrder, type DepMap } from "./graph.ts"
 import { checkHealth, describeHealth } from "./health.ts"
+import { runHooks, type HookPhase } from "./hooks.ts"
 import { LogStore } from "./logs.ts"
 import { ProcessSampler, sampleContainers } from "./metrics.ts"
-import { createRunner, type Runner } from "./runners.ts"
+import { createRunner, killGroup, type Runner } from "./runners.ts"
 import { FileWatcher } from "./watch.ts"
 import { procFiles, readState, stateDir, writeState, type SavedService } from "./state.ts"
 
@@ -60,6 +62,12 @@ interface Runtime {
   adopted: boolean
   backoff: number
   healthFailures: number
+  /** environment the service was last started with (env files included), also given to its hooks */
+  env: Record<string, string>
+  /** the pre_start / post_start hook process running right now */
+  hook?: Subprocess
+  /** post_stop of the previous run: a new start waits for it */
+  postStop?: Promise<void>
 }
 
 export class Supervisor extends EventEmitter {
@@ -88,7 +96,7 @@ export class Supervisor extends EventEmitter {
     this.order = topoOrder(this.deps)
     for (const name of Object.keys(config.services)) {
       this.states.set(name, { name, status: "stopped", restarts: 0, cpu: [], mem: [] })
-      this.rt.set(name, { gen: 0, waiters: [], userStopping: false, adopted: false, backoff: 1000, healthFailures: 0 })
+      this.rt.set(name, { gen: 0, waiters: [], userStopping: false, adopted: false, backoff: 1000, healthFailures: 0, env: {} })
     }
   }
 
@@ -188,6 +196,9 @@ export class Supervisor extends EventEmitter {
     clearTimeout(rt.restartTimer)
     const gen = ++rt.gen
     const svc = this.service(name)
+    // the previous run's post_stop must be over before this one begins
+    if (rt.postStop) await rt.postStop
+    if (gen !== rt.gen) return false
 
     if (svc.dependsOn.length) {
       this.update(name, { status: "waiting", waitingOn: svc.dependsOn, error: undefined })
@@ -222,6 +233,17 @@ export class Supervisor extends EventEmitter {
     } catch (err) {
       this.fail(name, (err as Error).message)
       return false
+    }
+
+    rt.env = env
+
+    if (svc.hooks?.preStart.length) {
+      const res = await this.runHook(name, "pre_start", svc.hooks.preStart)
+      if (gen !== rt.gen) return false
+      if (!res.ok) {
+        this.fail(name, res.error!, false) // runHooks already logged it
+        return false
+      }
     }
 
     const runner = this.makeRunner(name, env)
@@ -260,6 +282,7 @@ export class Supervisor extends EventEmitter {
       this.flushWaiters(name, false)
       return false
     }
+    if (ready && gen === rt.gen && svc.hooks?.postStart.length) void this.runPostStart(name, gen)
     return ready
   }
 
@@ -282,6 +305,8 @@ export class Supervisor extends EventEmitter {
     if (rt.stopPromise) return rt.stopPromise
     clearTimeout(rt.restartTimer)
     rt.gen++
+    // a pre_start / post_start still running is cut short
+    if (rt.hook) killGroup(rt.hook.pid, "SIGKILL")
     const st = this.state(name)
     const runner = rt.runner
     if (!runner || TERMINAL.has(st.status)) {
@@ -301,6 +326,8 @@ export class Supervisor extends EventEmitter {
       }
       clearTimeout(rt.healthTimer)
       if (rt.runner === runner) rt.runner = undefined
+      const postStop = this.service(name).hooks?.postStop
+      if (postStop?.length) await this.runHook(name, "post_stop", postStop)
       this.update(name, { status: "stopped", pid: undefined, stoppedAt: Date.now() })
       this.persist()
       this.log(name, "stopped")
@@ -366,7 +393,10 @@ export class Supervisor extends EventEmitter {
 
   /** Last resort on process exit: SIGKILL every process group and watcher we own. Synchronous. */
   killAllSync() {
-    for (const rt of this.rt.values()) rt.runner?.killSync()
+    for (const rt of this.rt.values()) {
+      rt.runner?.killSync()
+      if (rt.hook) killGroup(rt.hook.pid, "SIGKILL")
+    }
   }
 
   /** Pauses / resumes file watching of a service. Undefined if it has no `watch`. */
@@ -433,6 +463,27 @@ export class Supervisor extends EventEmitter {
     writeState(this.stateDir, { services })
   }
 
+  private runHook(name: string, phase: HookPhase, hooks: Hook[], exitCode?: number | null) {
+    const rt = this.rt.get(name)!
+    return runHooks(phase, hooks, {
+      service: name,
+      cwd: this.service(name).cwd,
+      env: rt.env,
+      exitCode,
+      log: (stream, text) => this.logs.append(name, stream, text),
+      track: (proc) => {
+        rt.hook = proc
+      },
+    })
+  }
+
+  /** post_start never blocks readiness: a failure is reported but the service stays up. */
+  private async runPostStart(name: string, gen: number) {
+    const rt = this.rt.get(name)!
+    const res = await this.runHook(name, "post_start", this.service(name).hooks!.postStart)
+    if (!res.ok && gen === rt.gen) this.update(name, { error: res.error })
+  }
+
   private makeRunner(name: string, env?: Record<string, string>): Runner {
     const svc = this.service(name)
     const runner: Runner = createRunner(env ? { ...svc, env } : svc, this.config.name, {
@@ -467,6 +518,13 @@ export class Supervisor extends EventEmitter {
       error: ok ? undefined : `exited with ${signal ?? `code ${code}`}`,
     })
     this.flushWaiters(name, false)
+
+    // post_stop also runs when the service went down on its own; a restart waits for it (see start())
+    if (svc.hooks?.postStop.length) {
+      rt.postStop = this.runHook(name, "post_stop", svc.hooks.postStop, code)
+        .then(() => {})
+        .finally(() => (rt.postStop = undefined))
+    }
 
     // a oneshot that succeeded is finished, whatever the restart policy says
     if ((svc.restart === "always" && !(svc.oneshot && ok)) || (svc.restart === "on-failure" && !ok)) {
@@ -528,8 +586,8 @@ export class Supervisor extends EventEmitter {
     waiters.forEach((w) => w(ready))
   }
 
-  private fail(name: string, error: string) {
-    this.log(name, `✖ ${error}`)
+  private fail(name: string, error: string, log = true) {
+    if (log) this.log(name, `✖ ${error}`)
     this.update(name, { status: "failed", error, waitingOn: undefined })
     this.flushWaiters(name, false)
   }

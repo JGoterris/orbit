@@ -33,6 +33,37 @@ describe("config", () => {
     expect(hostPortOf("3000")).toBe(3000)
   })
 
+  test("lifecycle hooks: string, list and long form", () => {
+    const dir = project({
+      "orbit.yaml": `services:
+  api:
+    cmd: sleep 1
+    pre_start: rm -rf tmp/*
+    post_start:
+      - ./check.sh
+      - { cmd: curl localhost, timeout: 10s }
+    post_stop: { cmd: echo bye }
+  plain:
+    cmd: sleep 1
+`,
+    })
+    const cfg = loadConfig({ dir })
+    expect(cfg.services.api!.hooks).toEqual({
+      preStart: [{ cmd: "rm -rf tmp/*", timeout: 60_000 }],
+      postStart: [{ cmd: "./check.sh", timeout: 60_000 }, { cmd: "curl localhost", timeout: 10_000 }],
+      postStop: [{ cmd: "echo bye", timeout: 60_000 }],
+    })
+    expect(cfg.services.plain!.hooks).toBeUndefined()
+  })
+
+  test("lifecycle hooks: invalid ones are rejected", () => {
+    const load = (body: string) => loadConfig({ dir: project({ "orbit.yaml": `services:\n  a:\n    cmd: sleep 1\n${body}` }) })
+    expect(() => load("    pre_start: ''\n")).toThrow("non-empty `cmd`")
+    expect(() => load("    pre_start: { timeout: 1s }\n")).toThrow("non-empty `cmd`")
+    expect(() => load("    oneshot: true\n    post_start: echo hi\n")).toThrow("oneshot")
+    expect(load("    oneshot: true\n    post_stop: echo hi\n").services.a!.hooks!.postStop).toHaveLength(1)
+  })
+
   test("env interpolation and .env", () => {
     expect(parseDotEnv("A=1\n# c\nexport B='two'\nC=3 # note")).toEqual({ A: "1", B: "two", C: "3" })
     expect(interpolate({ a: "${X}-${Y:-def}" }, { X: "x" })).toEqual({ a: "x-def" })

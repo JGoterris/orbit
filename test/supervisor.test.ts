@@ -126,6 +126,79 @@ describe("supervisor", () => {
     await sup.dispose()
   })
 
+  describe("lifecycle hooks", () => {
+    const hook = (cmd: string, timeout = 5000) => ({ cmd, timeout })
+    const marker = () => `${__mk(`${__tmp()}/orbit-hook-`)}/m`
+
+    test("pre_start runs before cmd and its output reaches the log", async () => {
+      const m = marker()
+      const sup = new Supervisor(config(
+        svc("a", `cat ${m}; sleep 30`, { hooks: { preStart: [hook(`echo prepared | tee ${m}`)], postStart: [], postStop: [] } }),
+      ))
+      expect(await sup.start("a")).toBe(true)
+      await Bun.sleep(150)
+      const lines = sup.logs.lines("a").map((l) => l.text)
+      expect(lines.filter((t) => t === "prepared")).toHaveLength(2) // from the hook, then from cmd
+      expect(lines.some((t) => t.startsWith("✓ pre_start"))).toBe(true)
+      await sup.dispose()
+    })
+
+    test("a failing pre_start fails the service and its dependents without running cmd", async () => {
+      const m = marker()
+      const sup = new Supervisor(config(
+        svc("a", `touch ${m}; sleep 30`, { hooks: { preStart: [hook("exit 1")], postStart: [], postStop: [] } }),
+        svc("b", "sleep 30", { dependsOn: ["a"] }),
+      ))
+      expect(await sup.start("b")).toBe(false)
+      expect(sup.state("a").status).toBe("failed")
+      expect(sup.state("a").error).toContain("pre_start failed")
+      expect(sup.state("b").status).toBe("failed")
+      expect(await Bun.file(m).exists()).toBe(false)
+      await sup.dispose()
+    })
+
+    test("a failing post_start is reported but the service stays up", async () => {
+      const sup = new Supervisor(config(
+        svc("a", "sleep 30", { hooks: { preStart: [], postStart: [hook("exit 4")], postStop: [] } }),
+      ))
+      expect(await sup.start("a")).toBe(true)
+      await Bun.sleep(300)
+      expect(sup.state("a").status).toBe("running")
+      expect(sup.state("a").error).toContain("post_start failed")
+      await sup.dispose()
+    })
+
+    test("post_stop runs on stop and after a crash, with ORBIT_EXIT_CODE", async () => {
+      const m = marker()
+      const sup = new Supervisor(config(
+        svc("stopped", "sleep 30", { hooks: { preStart: [], postStart: [], postStop: [hook(`echo $ORBIT_SERVICE > ${m}`)] } }),
+        svc("crashy", "sleep 0.2; exit 3", { hooks: { preStart: [], postStart: [], postStop: [hook(`echo code=$ORBIT_EXIT_CODE`)] } }),
+      ))
+      await sup.start("stopped")
+      await sup.stop("stopped")
+      expect((await Bun.file(m).text()).trim()).toBe("stopped")
+      expect(sup.state("stopped").status).toBe("stopped")
+
+      await sup.start("crashy")
+      await Bun.sleep(800)
+      expect(sup.state("crashy").status).toBe("crashed")
+      expect(sup.logs.lines("crashy").some((l) => l.text === "code=3")).toBe(true)
+      await sup.dispose()
+    })
+
+    test("stopping during a long pre_start kills it", async () => {
+      const sup = new Supervisor(config(
+        svc("a", "sleep 30", { hooks: { preStart: [hook("sleep 30", 60_000)], postStart: [], postStop: [] } }),
+      ))
+      const started = sup.start("a")
+      await Bun.sleep(300)
+      await sup.stop("a")
+      expect(await started).toBe(false)
+      expect(sup.state("a").status).toBe("stopped")
+      await sup.dispose()
+    })
+  })
+
   test("detach leaves processes running and a new session re-attaches to them", async () => {
     const stateDir = __mk(`${__tmp()}/orbit-detach-`)
     const cfg = () => config(svc("keep", "echo hi; echo oops >&2; sleep 30"))

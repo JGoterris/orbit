@@ -15,6 +15,8 @@ import {
   hostPortOf,
   parseDuration,
   type HealthCheck,
+  type Hook,
+  type Hooks,
   type OrbitConfig,
   type RestartPolicy,
   type ServiceConfig,
@@ -85,6 +87,32 @@ function parseWatch(raw: unknown, path: string): WatchConfig | undefined {
   }
 }
 
+/** `"cmd"`, `{ cmd, timeout }`, or a list of either */
+function parseHookList(raw: unknown, path: string): Hook[] {
+  if (raw === undefined || raw === null || raw === false) return []
+  const items = Array.isArray(raw) ? raw : [raw]
+  return items.map((item, i) => {
+    const at = Array.isArray(raw) ? `${path}[${i}]` : path
+    const isMapping = typeof item === "object" && item !== null && !Array.isArray(item)
+    const rec: Record<string, unknown> = isMapping ? asRecord(item, at) : { cmd: item }
+    const cmd = asString(rec.cmd, `${at}.cmd`)?.trim()
+    if (!cmd) throw new ConfigError("a hook needs a non-empty `cmd`", at)
+    return { cmd, timeout: parseDuration(rec.timeout, `${at}.timeout`, 60_000) }
+  })
+}
+
+/** A phase not mentioned in the yaml is inherited from the compose import; none at all gives undefined. */
+function parseHooks(rec: Record<string, unknown>, path: string, base?: Hooks): Hooks | undefined {
+  const phase = (key: string, field: keyof Hooks) =>
+    rec[key] !== undefined ? parseHookList(rec[key], `${path}.${key}`) : (base?.[field] ?? [])
+  const hooks: Hooks = {
+    preStart: phase("pre_start", "preStart"),
+    postStart: phase("post_start", "postStart"),
+    postStop: phase("post_stop", "postStop"),
+  }
+  return hooks.preStart.length || hooks.postStart.length || hooks.postStop.length ? hooks : undefined
+}
+
 const RESTART: RestartPolicy[] = ["no", "on-failure", "always"]
 const TYPES: ServiceType[] = ["process", "docker", "compose"]
 
@@ -119,6 +147,11 @@ function parseService(
     throw new ConfigError(`invalid restart "${restart}" (expected ${RESTART.join(", ")})`, `${path}.restart`)
   }
 
+  const hooks = parseHooks(rec, path, base?.hooks)
+  if (rec.oneshot === true && hooks?.postStart.length) {
+    throw new ConfigError("a oneshot has no running phase: use post_stop instead", `${path}.post_start`)
+  }
+
   const svc: ServiceConfig = {
     name,
     type,
@@ -140,6 +173,7 @@ function parseService(
           : base.health,
     oneshot: rec.oneshot === true || undefined,
     watch: rec.watch !== undefined ? parseWatch(rec.watch, `${path}.watch`) : base?.watch,
+    hooks,
     restart,
     startTimeout: parseDuration(rec.start_timeout, `${path}.start_timeout`, base?.startTimeout ?? 60_000),
     stopTimeout: parseDuration(rec.stop_timeout, `${path}.stop_timeout`, base?.stopTimeout ?? 8_000),

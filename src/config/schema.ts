@@ -26,6 +26,18 @@ export interface WatchConfig {
   cooldown: number
 }
 
+export interface Hook {
+  cmd: string
+  /** ms before the hook is killed and counts as failed */
+  timeout: number
+}
+
+export interface Hooks {
+  preStart: Hook[]
+  postStart: Hook[]
+  postStop: Hook[]
+}
+
 export interface ServiceConfig {
   name: string
   type: ServiceType
@@ -43,6 +55,8 @@ export interface ServiceConfig {
   health?: HealthCheck
   /** restart the service automatically when matching files change */
   watch?: WatchConfig
+  /** host commands run around the service's life; undefined when it has none */
+  hooks?: Hooks
   restart: RestartPolicy
   /** ms to wait for a service to become ready before giving up */
   startTimeout: number

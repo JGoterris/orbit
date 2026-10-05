@@ -214,9 +214,29 @@ services:
     cmd: mvn -q install -pl shared-kernel -am -DskipTests
     oneshot: true               # "ready" when it finishes with exit code 0; its dependents wait
 
+  api:
+    cmd: bun run dev
+    pre_start: "rm -rf tmp/*"   # before launching; if it fails the service is `failed`
+    post_start:                 # once ready; a failure is only reported
+      - ./scripts/check-seed.sh
+      - { cmd: "curl -fsS localhost:3000/warmup", timeout: 10s }
+    post_stop: "echo cleaned"   # after it goes down, however it went down
+
 groups:
   backend: [postgres, redis, api]
 ```
+
+**Lifecycle hooks.** `pre_start`, `post_start` and `post_stop` take a command, a `{ cmd, timeout }` or a
+list of them (run in order, stopping at the first failure; default timeout 60s). They run on the host in the
+service's `cwd`, with its environment plus `ORBIT_SERVICE`, `ORBIT_HOOK` and, in `post_stop` after the
+service exited on its own, `ORBIT_EXIT_CODE`; their output goes to the service's log. They work on
+`process`, `docker` and `compose` services.
+
+- `pre_start` runs before every start (restarts included). If it fails, the service is `failed` and doesn't start.
+- `post_start` runs once the service is ready and never blocks its dependents; if it fails it is logged and
+  shown as the service's error, but the service stays up. Not allowed on `oneshot` tasks.
+- `post_stop` runs whenever the service goes down: stopped, restarted, crashed or a finished `oneshot`. A
+  restart waits for it. It doesn't run when orbit detaches or leaves an adopted container running.
 
 **Environment variables.** A service receives, from lowest to highest priority: your shell's
 environment, the global `env_file`s, the service's `env_file`s (in order: the last one wins), and then the global
