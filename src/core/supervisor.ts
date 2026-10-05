@@ -29,6 +29,11 @@ export const UP_STATUSES: ReadonlySet<Status> = new Set(["starting", "running", 
 const READY: ReadonlySet<Status> = new Set(["running", "healthy"])
 const TERMINAL: ReadonlySet<Status> = new Set(["stopped", "exited", "crashed", "failed"])
 
+/** Ready to be depended on: up (and healthy if checked), or a oneshot task that finished OK. */
+export function isReadyStatus(status: Status, oneshot?: boolean): boolean {
+  return READY.has(status) || (status === "exited" && !!oneshot)
+}
+
 export const HISTORY = 60
 
 export interface ServiceState {
@@ -45,8 +50,49 @@ export interface ServiceState {
   /** file watching: undefined when the service has no `watch` */
   watch?: "active" | "paused" | "pending"
   waitingOn?: string[]
+  /** attached to a container that was already running: quitting orbit leaves it running */
+  adopted?: boolean
   cpu: number[]
   mem: number[]
+}
+
+/**
+ * What the UI and the socket server need from a supervisor: implemented by `Supervisor` (services run in this
+ * process) and by `RemoteSupervisor` (they run in an `orbit daemon` and this one mirrors it over the socket).
+ */
+export interface SupervisorLike extends Pick<EventEmitter, "on" | "off"> {
+  readonly config: OrbitConfig
+  readonly logs: LogStore
+  readonly deps: DepMap
+  readonly dependents: Record<string, string[]>
+  readonly order: string[]
+  readonly stateDir: string
+  readonly names: string[]
+  service(name: string): ServiceConfig
+  state(name: string): ServiceState
+  snapshot(): ServiceState[]
+  isReady(name: string): boolean
+  isUp(name: string): boolean
+  isAdopted(name: string): boolean
+  runningCount(): number
+  /** Running services this session started itself (the ones quitting will stop). */
+  ownedRunningCount(): number
+  init(): Promise<void>
+  start(name: string): Promise<boolean>
+  stop(name: string): Promise<void>
+  restart(name: string): Promise<boolean>
+  toggle(name: string): Promise<void>
+  startMany(names: string[]): Promise<void>
+  startAll(): Promise<void>
+  stopAll(): Promise<void>
+  toggleWatch(name: string): "paused" | "active" | undefined
+  clearLogs(name?: string): void
+  /** Stops everything this session owns and lets go (a remote one asks its daemon to quit). */
+  dispose(): Promise<void>
+  /** Quits without stopping anything. */
+  detach(): void
+  /** Last resort on process exit; a remote supervisor must not touch the daemon's processes. */
+  killAllSync(): void
 }
 
 interface Runtime {
@@ -70,7 +116,7 @@ interface Runtime {
   postStop?: Promise<void>
 }
 
-export class Supervisor extends EventEmitter {
+export class Supervisor extends EventEmitter implements SupervisorLike {
   readonly logs = new LogStore()
   readonly deps: DepMap
   readonly dependents: Record<string, string[]>
@@ -122,7 +168,7 @@ export class Supervisor extends EventEmitter {
 
   /** Ready to be depended on: up (and healthy if checked), or a oneshot task that finished OK. */
   isReady(name: string, status: Status = this.state(name).status) {
-    return READY.has(status) || (status === "exited" && !!this.service(name).oneshot)
+    return isReadyStatus(status, this.service(name).oneshot)
   }
 
   isUp(name: string) {
@@ -177,6 +223,7 @@ export class Supervisor extends EventEmitter {
           pid: runner.pid,
           containerId: runner.containerId,
           startedAt: entry?.startedAt ?? Date.now(),
+          adopted: rt.adopted,
         })
         if (!svc.oneshot) this.scheduleHealth(name, gen, 0)
       }),
@@ -267,6 +314,7 @@ export class Supervisor extends EventEmitter {
       containerId: runner.containerId,
       startedAt: Date.now(),
       stoppedAt: undefined,
+      adopted: false,
     })
     this.persist()
     if (!svc.oneshot) this.scheduleHealth(name, gen, 300)

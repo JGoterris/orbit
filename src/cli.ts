@@ -9,8 +9,13 @@ import { cleanLine, FileTail, matcher, pipeLines, readTail, type LogLine } from 
 import { levels, depMapOf } from "./core/graph.ts"
 import { containerName, ProcessRunner } from "./core/runners.ts"
 import { projectStatus, readProjects, sortProjects } from "./core/projects.ts"
+import { IpcClient } from "./core/ipc/client.ts"
+import { socketPath } from "./core/ipc/endpoint.ts"
+import { isServed } from "./core/ipc/daemon.ts"
+import { IpcServer } from "./core/ipc/server.ts"
+import type { Notification } from "./core/ipc/protocol.ts"
 import { procFiles, readLock, readState, stateDir, writeState } from "./core/state.ts"
-import { Supervisor, type Status } from "./core/supervisor.ts"
+import { Supervisor, type ServiceState, type Status } from "./core/supervisor.ts"
 import { gridToString, layoutGraph, paintGraph } from "./ui/graphLayout.ts"
 
 const useColor = process.stdout.isTTY && !process.env.NO_COLOR
@@ -88,6 +93,95 @@ export function runProjects(): number {
   return 0
 }
 
+// ------------------------------------------------------------------ status / ctl (talk to a running orbit)
+
+/** Connects to the orbit that has this project open (TUI, `orbit up` or daemon), if any. */
+async function connectIpc(config: OrbitConfig): Promise<IpcClient | undefined> {
+  try {
+    return await IpcClient.connect(socketPath(stateDir(config)), 500)
+  } catch {
+    return undefined
+  }
+}
+
+const NOT_RUNNING = "orbit is not running for this project (open it with `orbit` or `orbit up`)"
+
+function age(ms: number): string {
+  const s = Math.max(0, Math.round(ms / 1000))
+  if (s < 60) return `${s}s`
+  if (s < 3600) return `${Math.floor(s / 60)}m${String(s % 60).padStart(2, "0")}s`
+  return `${Math.floor(s / 3600)}h${String(Math.floor((s % 3600) / 60)).padStart(2, "0")}m`
+}
+
+export async function runStatus(config: OrbitConfig, json: boolean): Promise<number> {
+  const client = await connectIpc(config)
+  if (!client) {
+    if (json) console.log(JSON.stringify({ running: false, project: config.name, services: [] }))
+    else console.error(c.dim(NOT_RUNNING))
+    return 1
+  }
+  try {
+    const services = await client.request<ServiceState[]>("snapshot")
+    if (json) {
+      console.log(JSON.stringify({ running: true, project: config.name, services }, null, 2))
+      return 0
+    }
+    const now = Date.now()
+    const rows = services.map((s) => [s.name, s.status, s.pid ? String(s.pid) : "", s.startedAt && s.pid ? age(now - s.startedAt) : "", s.error ?? s.health ?? ""])
+    const header = ["SERVICE", "STATUS", "PID", "UP", "DETAIL"]
+    const widths = header.map((h, i) => Math.max(h.length, ...rows.map((r) => r[i]!.length)))
+    console.log(c.bold(header.map((h, i) => h.padEnd(widths[i]!)).join("  ")))
+    for (const [i, r] of rows.entries()) {
+      const paint = STATUS_COLOR[services[i]!.status] ?? ((x: string) => x)
+      console.log(r.map((v, j) => (j === 1 ? paint(v.padEnd(widths[j]!)) : v.padEnd(widths[j]!))).join("  ").trimEnd())
+    }
+    return 0
+  } catch (err) {
+    console.error(c.red((err as Error).message))
+    return 1
+  } finally {
+    client.close()
+  }
+}
+
+const CTL_ACTIONS = ["start", "stop", "restart", "toggle"] as const
+
+export async function runCtl(config: OrbitConfig, args: string[]): Promise<number> {
+  const [action, ...names] = args
+  if (!action || !(CTL_ACTIONS as readonly string[]).includes(action)) {
+    console.error(c.red(`usage: orbit ctl <${CTL_ACTIONS.join("|")}> [service or group…]`))
+    return 1
+  }
+  for (const n of names) {
+    if (!config.services[n] && !config.groups[n]) {
+      console.error(c.red(`unknown service or group "${n}"`))
+      return 1
+    }
+  }
+  if (!names.length && action !== "start" && action !== "stop") {
+    console.error(c.red(`${action} needs at least one service or group`))
+    return 1
+  }
+  const client = await connectIpc(config)
+  if (!client) {
+    console.error(c.red(NOT_RUNNING))
+    return 1
+  }
+  try {
+    const res = names.length
+      ? await client.request<{ ok: boolean }>(action as (typeof CTL_ACTIONS)[number], { services: names })
+      : await client.request<{ ok: boolean }>(action === "start" ? "startAll" : "stopAll")
+    const label = names.length ? names.join(", ") : "all services"
+    console.log(res.ok ? c.green(`${action}: ${label}`) : c.red(`${action}: ${label} did not become ready (see \`orbit logs\`)`))
+    return res.ok ? 0 : 1
+  } catch (err) {
+    console.error(c.red((err as Error).message))
+    return 1
+  } finally {
+    client.close()
+  }
+}
+
 // ------------------------------------------------------------------ up / down
 
 /** `svc │ text` output with a stable color per service, shared by `up` and `logs`. */
@@ -117,6 +211,10 @@ export async function runUp(config: OrbitConfig, names: string[]): Promise<numbe
       return 1
     }
   }
+  if (await isServed(config)) {
+    console.error(c.red("orbit is already running for this project: `orbit ctl start [svc…]` starts services there, `orbit logs -f` follows them"))
+    return 1
+  }
   const sup = new Supervisor(config)
   process.on("exit", () => sup.killAllSync())
   const { width, color, print } = prefixer(sup.names)
@@ -132,10 +230,12 @@ export async function runUp(config: OrbitConfig, names: string[]): Promise<numbe
   })
 
   let stopping = false
+  let ipc: IpcServer | undefined
   const stop = async () => {
     if (stopping) return process.exit(130)
     stopping = true
     process.stdout.write(c.dim("\nstopping… (ctrl+c again to force)\n"))
+    ipc?.close()
     await sup.dispose()
     process.exit(0)
   }
@@ -143,6 +243,11 @@ export async function runUp(config: OrbitConfig, names: string[]): Promise<numbe
   process.on("SIGTERM", stop)
 
   await sup.init()
+  try {
+    const server = new IpcServer(sup, { onShutdown: () => void stop() })
+    if (await server.start()) ipc = server
+    else console.error(c.yellow("another orbit started serving this project meanwhile: `orbit status` / `orbit ctl` talk to that one"))
+  } catch {}
   const targets = names.flatMap((n) => config.groups[n] ?? [n])
   if (targets.length) await sup.startMany(targets)
   else await sup.startAll()
@@ -153,9 +258,32 @@ export async function runUp(config: OrbitConfig, names: string[]): Promise<numbe
 export async function runDown(config: OrbitConfig): Promise<number> {
   let code = 0
   const dir = stateDir(config)
+  // an orbit that is running (TUI or `orbit up`) answers on its socket: ask it to stop everything and quit
+  const client = await connectIpc(config)
+  if (client) {
+    try {
+      await client.request("shutdown", { how: "stop" })
+    } finally {
+      client.close()
+    }
+    for (let i = 0; i < 300; i++) {
+      const again = await connectIpc(config)
+      if (!again) break
+      again.close()
+      await Bun.sleep(100)
+    }
+    const left = await connectIpc(config)
+    left?.close()
+    if (left) {
+      console.error(c.red("orbit is taking too long to stop"))
+      return 1
+    }
+    console.log(c.green("orbit stopped"))
+    return 0
+  }
   const holder = readLock(dir)
   if (holder) {
-    console.error(c.red(`orbit is open for this project (pid ${holder}): quit it first, or stop services from there`))
+    console.error(c.red(`orbit is open for this project (pid ${holder}) but does not answer: quit it first, or stop services from there`))
     return 1
   }
   // processes a previous orbit session left running
@@ -318,6 +446,48 @@ export interface LogsOptions {
   since?: string
 }
 
+async function followLive(client: IpcClient, targets: string[], opts: LogsOptions, show: (l: LogLine) => unknown): Promise<number> {
+  if (opts.since) console.error(c.yellow("--since is ignored when following a running orbit"))
+  let last = 0
+  const buffered: LogLine[] = []
+  let replaying = true
+  client.on("notification", (n: Notification) => {
+    if (n.method !== "log") return
+    const line = n.params as LogLine
+    if (replaying) buffered.push(line)
+    else if (line.seq > last) {
+      last = line.seq
+      show(line)
+    }
+  })
+  const done = new Promise<number>((resolve) =>
+    client.on("close", () => {
+      console.error(c.dim("orbit closed"))
+      resolve(0)
+    }),
+  )
+  await client.request("subscribe", { states: false, logs: true, services: targets })
+  const history = (await Promise.all(targets.map((t) => client.request<LogLine[]>("logs", { service: t, limit: opts.lines })))).flat()
+  history.sort((a, b) => a.seq - b.seq)
+  for (const l of history) {
+    last = Math.max(last, l.seq)
+    show(l)
+  }
+  replaying = false
+  for (const l of buffered.splice(0)) {
+    if (l.seq <= last) continue
+    last = l.seq
+    show(l)
+  }
+  const stop = () => {
+    client.close()
+    process.exit(0)
+  }
+  process.on("SIGINT", stop)
+  process.on("SIGTERM", stop)
+  return done
+}
+
 export async function runLogs(config: OrbitConfig, names: string[], opts: LogsOptions): Promise<number> {
   for (const n of names) {
     if (!config.services[n] && !config.groups[n]) {
@@ -328,6 +498,9 @@ export async function runLogs(config: OrbitConfig, names: string[], opts: LogsOp
   const targets = names.length ? [...new Set(names.flatMap((n) => config.groups[n] ?? [n]))] : Object.keys(config.services)
   const { print } = prefixer(Object.keys(config.services))
   const keep = matcher(opts.grep ?? "")
+  // an orbit that is running has everything in memory, system lines and container output included
+  const live = opts.follow ? await connectIpc(config) : undefined
+  if (live) return followLive(live, targets, opts, (l) => keep(l) && print(l.service, l.stream, l.text))
   const emit = (service: string, stream: LogLine["stream"], raw: string) => {
     const text = cleanLine(raw)
     if (keep({ seq: 0, ts: 0, service, stream, text })) print(service, stream, text)

@@ -2,13 +2,13 @@ import type { BoxRenderable, MouseEvent } from "@opentui/core"
 import { useMemo, useRef } from "react"
 import { transitiveDependents, transitiveDeps } from "../core/graph.ts"
 import { formatBytes } from "../core/metrics.ts"
-import type { Supervisor } from "../core/supervisor.ts"
+import type { SupervisorLike } from "../core/supervisor.ts"
 import { useSize } from "./hooks.ts"
 import { layoutGraph, paintGraph, toRuns, type GraphLayout, type NodeBox } from "./graphLayout.ts"
 import { statusIcon, styleFor, theme } from "./theme.ts"
 
 interface Props {
-  sup: Supervisor
+  sup: SupervisorLike
   selected: string
   onSelect: (name: string) => void
   tick: number
@@ -16,7 +16,7 @@ interface Props {
   onFocus?: () => void
 }
 
-export function useGraphLayout(sup: Supervisor): GraphLayout {
+export function useGraphLayout(sup: SupervisorLike): GraphLayout {
   return useMemo(() => layoutGraph(sup.deps, sup.names), [sup])
 }
 

@@ -114,7 +114,17 @@ export class LogStore {
   }
 
   append(service: string, stream: LogStream, text: string) {
-    const line: LogLine = { seq: ++this.seq, ts: Date.now(), service, stream, text: cleanLine(text) }
+    this.add({ seq: 0, ts: Date.now(), service, stream, text: cleanLine(text) })
+  }
+
+  /** Adds a line produced elsewhere (a remote supervisor), keeping its time and text; the sequence number is ours. */
+  ingest(line: LogLine) {
+    this.add({ ...line })
+  }
+
+  private add(line: LogLine) {
+    line.seq = ++this.seq
+    const service = line.service
     this.all.push(line)
     let ring = this.perService.get(service)
     if (!ring) this.perService.set(service, (ring = new Ring(this.perServiceCapacity)))

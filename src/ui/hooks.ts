@@ -1,9 +1,9 @@
 import type { Renderable } from "@opentui/core"
 import { useCallback, useEffect, useRef, useState } from "react"
-import type { Supervisor } from "../core/supervisor.ts"
+import type { SupervisorLike } from "../core/supervisor.ts"
 
 /** Re-renders when the supervisor or its logs change, throttled to ~20 fps. */
-export function useSupervisorVersion(sup: Supervisor): number {
+export function useSupervisorVersion(sup: SupervisorLike): number {
   const [version, setVersion] = useState(0)
   useEffect(() => {
     let timer: ReturnType<typeof setTimeout> | undefined

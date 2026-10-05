@@ -2,7 +2,7 @@ import type { KeyEvent } from "@opentui/core"
 import type { ComponentProps, MutableRefObject, ReactNode } from "react"
 import type { LogLine } from "../../core/logs.ts"
 import type { RepoEntry } from "../../core/git/repos.ts"
-import type { Supervisor } from "../../core/supervisor.ts"
+import type { SupervisorLike } from "../../core/supervisor.ts"
 import type { LogView } from "../LogView.tsx"
 
 /** Every focusable panel any view can show. Views list the ones they use in `ViewDef.panes`. */
@@ -13,7 +13,7 @@ export type KeyHandler = (key: KeyEvent) => boolean
 
 /** What the shell hands to a view so it can render its body. */
 export interface ViewContext {
-  sup: Supervisor
+  sup: SupervisorLike
   names: string[]
   selected: string
   setSelected: (name: string) => void

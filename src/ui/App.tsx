@@ -7,7 +7,7 @@ import { resolveEnv } from "../config/envFiles.ts"
 import { openUrl } from "../core/exec.ts"
 import { findGitRoot } from "../core/git.ts"
 import { filterLines, formatLines, matcher } from "../core/logs.ts"
-import type { Supervisor } from "../core/supervisor.ts"
+import type { SupervisorLike } from "../core/supervisor.ts"
 import { GraphView, neighbourInDirection, useGraphLayout } from "./GraphView.tsx"
 import { useSupervisorVersion, useTick } from "./hooks.ts"
 import { clipboard } from "./clipboard.ts"
@@ -30,7 +30,7 @@ const DEFAULT_DETAIL = 9
 const noSidebarDelta = (): Record<string, number> => Object.fromEntries(VIEWS.map((v) => [v.id, 0]))
 
 interface Props {
-  sup: Supervisor
+  sup: SupervisorLike
   onQuit: (how: "stop" | "detach") => Promise<void> | void
   /** switches to another project; resolves to an error message if it could not (nothing changed then) */
   onOpenProject?: (dir: string, how: "stop" | "detach") => Promise<string | undefined>

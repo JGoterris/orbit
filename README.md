@@ -38,9 +38,14 @@ Built with TypeScript, [Bun](https://bun.sh) and [OpenTUI](https://github.com/an
 - **Docker / compose**: automatically imports `docker-compose.yml` (with `depends_on`, ports,
   healthchecks and `${VAR:-def}` interpolation), and re-attaches to containers that were
   already running. Those containers **are not stopped when exiting orbit** (only with explicit `x`/`X`).
-- **Detach / resume**: on `q` choose *stop all* or *leave running*. Left-running processes keep
-  their own process group and write their output to `~/.local/state/orbit/<project>/logs/`; the next
-  `orbit` re-attaches (status, logs, metrics, stop/restart). `orbit down` stops them from outside.
+- **Daemon**: the TUI is only a client. The services of a project run in an `orbit daemon` that the
+  first `orbit` starts by itself (one per project, in its own session), so you can close the terminal, open
+  another one (or tmux, or two at once) and find everything as it was, logs included. Health checks, restart
+  policies, watchers and hooks keep working with no UI open. Closing the terminal never stops anything:
+  on `q` choose *stop all* (the daemon quits too) or *leave running* (it keeps supervising).
+  `orbit down` stops everything from outside. `orbit --no-daemon` runs the services inside the TUI instead:
+  then *leave running* keeps the processes (own process group, output in
+  `~/.local/state/orbit/<project>/logs/`) but nobody supervises them until the next `orbit` re-attaches.
 - **`oneshot` tasks** (builds, migrations, provisioning): count as ready once they finish with
   exit code 0, are shown as `✓ done`, and aren't re-run when another dependent starts.
 - Detects **occupied ports** before starting (and tells you which process is using them).
@@ -79,8 +84,12 @@ orbit [dir]          # TUI using the orbit.yaml from dir (or a parent directory)
 orbit open <project> # TUI for a remembered project, by name (or unique fragment) or path
 orbit projects       # lists remembered projects (pinned first) and what is running in them
 orbit --up           # TUI starting all autostart services
+orbit --no-daemon    # TUI that runs the services itself (nothing keeps supervising after you quit)
+orbit daemon [dir]   # the background supervisor on its own (the TUI starts it when needed; --idle <min> to auto-quit)
 orbit up [svc|group] # without TUI: starts and shows logs (ctrl+c to stop)
-orbit down           # stops whatever orbit left running (processes, containers)
+orbit down           # stops whatever orbit left running; also quits an orbit that is open (TUI or `up`)
+orbit status [--json]          # state of the services of a running orbit (TUI or `orbit up`)
+orbit ctl start|stop|restart|toggle [svc|group…]   # drives a running orbit from another terminal
 orbit graph          # prints the dependency graph
 orbit ls             # lists services
 orbit logs [svc|group…] [-f] [-n 200] [--grep re] [--since 10m]
@@ -124,6 +133,25 @@ recent unpinned ones are kept; pinned ones are never dropped).
 | `:` / `ctrl+p` | command palette |
 | `?` | help |
 | `q` | quit: `s` stops everything, `d` leaves services running (reopen `orbit` to resume them) |
+
+## Scripting & editors (socket)
+
+While a project is running (its daemon, a TUI with `--no-daemon`, or `orbit up`) it listens on a local socket, so scripts and editor extensions can query
+and drive it from outside: `~/.local/state/orbit/<project>/orbit.sock` (a shorter path under `$XDG_RUNTIME_DIR` or
+`$TMPDIR` when that one would exceed the kernel's socket-path limit). The socket is `0600` inside a `0700` directory.
+`orbit status --json`, `orbit ctl` and `orbit logs -f` are clients of it, and so is the TUI. The daemon writes
+its own messages to `daemon.log` next to the socket.
+
+Protocol: JSON-RPC 2.0, one JSON message per line (see `src/core/ipc/protocol.ts`).
+
+```bash
+echo '{"jsonrpc":"2.0","id":1,"method":"snapshot"}' | socat - UNIX-CONNECT:$SOCK
+```
+
+Requests: `hello`, `snapshot`, `logs`, `start` / `stop` / `restart` / `toggle` (`{"services": [...]}`, groups expand),
+`startAll`, `stopAll`, `toggleWatch`, `clearLogs`, `subscribe` (`{"logs": true}` to receive `state` and `log`
+notifications) and `shutdown`. Linux, macOS and WSL2 use Unix sockets; the Windows endpoint (a named pipe) exists in
+the code but orbit itself does not run on native Windows yet.
 
 ## Git
 
@@ -258,7 +286,7 @@ put it in `env_file`.
 ```
 src/
   index.tsx            CLI + renderer startup
-  cli.ts               up / down / graph / ls / init
+  cli.ts               up / down / status / ctl / graph / ls / init (daemon: core/ipc/daemon.ts)
   config/              schema, orbit.yaml loading, compose import
   core/
     graph.ts           DAG: cycles, topological order, levels
@@ -268,6 +296,8 @@ src/
     userConfig.ts      ~/.config/orbit: saved theme, custom themes
     projects.ts        project registry (projects.json), status, path completion
     session.ts         switching the open project
+    ipc/               local socket: server (wraps a supervisor), client, JSON-RPC protocol, endpoint path,
+                       remote.ts (RemoteSupervisor: the TUI's mirror of a daemon), daemon.ts (orbit daemon + auto-start)
     git/               status, diff + hunk parsing, operations, GitRepo (cached state + change events),
                        repos.ts (the repos a project's services live in)
     health.ts metrics.ts logs.ts exec.ts

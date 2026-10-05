@@ -1,9 +1,9 @@
-import type { Supervisor } from "../core/supervisor.ts"
+import type { SupervisorLike } from "../core/supervisor.ts"
 import { formatBytes, formatDuration } from "../core/metrics.ts"
 import { fit, statusIcon, styleFor, theme, typeBadge } from "./theme.ts"
 
 interface Props {
-  sup: Supervisor
+  sup: SupervisorLike
   names: string[]
   selected: string
   onSelect: (name: string) => void

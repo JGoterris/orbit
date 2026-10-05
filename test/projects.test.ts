@@ -17,7 +17,7 @@ import {
 } from "../src/core/projects.ts"
 import { Session } from "../src/core/session.ts"
 import { acquireLock, readState, releaseLock } from "../src/core/state.ts"
-import { Supervisor } from "../src/core/supervisor.ts"
+import { Supervisor, type SupervisorLike } from "../src/core/supervisor.ts"
 import { projectRows } from "../src/ui/Overlays.tsx"
 
 process.env.XDG_STATE_HOME = mkdtempSync(`${tmpdir()}/orbit-state-`) // tests must not touch the real ~/.local/state
@@ -178,7 +178,7 @@ describe("Session.switchTo", () => {
     expect(await first.start("s")).toBe(true)
     const pid = first.state("s").pid!
 
-    let seen: Supervisor | undefined
+    let seen: SupervisorLike | undefined
     expect(await session.switchTo(b, "stop", (s) => (seen = s))).toBeUndefined()
     expect(session.sup).not.toBe(first)
     expect(seen).toBe(session.sup)

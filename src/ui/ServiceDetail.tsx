@@ -1,11 +1,11 @@
 import { relative } from "node:path"
-import type { Supervisor } from "../core/supervisor.ts"
+import type { SupervisorLike } from "../core/supervisor.ts"
 import { describeHealth } from "../core/health.ts"
 import { formatBytes, formatDuration } from "../core/metrics.ts"
 import { areaChart, fit, sparkline, styleFor, theme, typeBadge } from "./theme.ts"
 
 interface Props {
-  sup: Supervisor
+  sup: SupervisorLike
   name: string
   width: number
   focused?: boolean
