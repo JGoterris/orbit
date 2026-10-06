@@ -157,6 +157,7 @@ function parseService(
     type,
     description: asString(rec.description, `${path}.description`) ?? base?.description,
     cmd: asString(rec.cmd ?? rec.command, `${path}.cmd`) ?? base?.cmd,
+    console: asString(rec.console, `${path}.console`) ?? base?.console,
     cwd,
     env: { ...base?.env, ...asEnv(rec.env ?? rec.environment, `${path}.env`) },
     envFiles: parseEnvFileRefs(rec.env_file, `${path}.env_file`, root),

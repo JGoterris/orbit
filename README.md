@@ -25,6 +25,8 @@ Built with TypeScript, [Bun](https://bun.sh) and [OpenTUI](https://github.com/an
 - **Healthchecks**: HTTP, TCP, command, or Docker's `HEALTHCHECK`. If you set `port` without
   `health`, a TCP check to that port is used.
 - **Restart policy** `no | on-failure | always` with exponential backoff (1s → 30s).
+- **Embedded console**: `i` opens `psql`, `rails console` or a container shell in a floating
+  terminal (PTY + terminal emulator) without leaving orbit; it survives hiding the modal.
 - **Watch mode**: `watch:` globs restart a service when its files change (for stacks without
   hot-reload: Go, Rust, plain backends). Changes are debounced and rate-limited (`cooldown`), so
   editing never causes a restart storm; `W` pauses it. Never starts a service you stopped.
@@ -125,6 +127,7 @@ recent unpinned ones are kept; pinned ones are never dropped).
 | `v` (logs focused) | copy mode: `j k` `ctrl+u/d` `g G` move, `v` start/clear selection, `y` copy, `esc` cancel |
 | `Y` · `E` | copy all visible logs · export them to `~/.local/state/orbit/<project>/exports/` (the path is copied) |
 | `o` | open `http://localhost:<port>` (or `url`) in the browser |
+| `i` | interactive console of the selected service in a floating terminal (`console:` command, or `$SHELL` / the container's shell). `ctrl+]` hides it and keeps it running; `i` brings it back |
 | `e` | environment variables of the selected service (secrets masked, `v` reveals) |
 | `L` | open the selected service's git repo in [lazygit](https://github.com/jesseduffield/lazygit) (if installed) |
 | `4` | Git view, see [Git](#git) |
@@ -222,6 +225,7 @@ services:
     #   ignore: ["**/*_test.go"]   # .git, node_modules and editor swap files are always ignored
     #   debounce: 1s               # quiet time needed after the last change (default 1s)
     #   cooldown: 10s              # at most one restart per cooldown; changes in between are batched (default 10s)
+    console: bin/rails console  # `i` opens it in a terminal (process: in cwd/env; docker: inside the container)
     start_timeout: 60s
     stop_timeout: 8s
 
@@ -230,6 +234,7 @@ services:
     ports: ["6379:6379"]
     volumes: ["./data:/data"]
     cmd: redis-server --appendonly yes
+    console: redis-cli          # `docker exec -it`; without `console:` you get bash/sh
 
   postgres:                     # defined in docker-compose.yml: only fields overridden here
     restart: always

@@ -606,4 +606,41 @@ describe("tui", () => {
     expect(readUserConfig()).toEqual({ theme: "catppuccin-macchiato" })
     expect(t.captureCharFrame()).toContain("theme: catppuccin-macchiato")
   })
+  test("i opens an interactive console, ctrl+] hides it and i brings it back", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "orbit-console-"))
+    writeFileSync(join(dir, "orbit.yaml"), "name: c\nservices:\n  box:\n    cmd: sleep 60\n    console: cat\n    autostart: false\n")
+    const sup = new Supervisor(loadConfig({ dir }))
+    const t = await testRender(<App sup={sup} onQuit={() => {}} />, { width: 120, height: 36 })
+    cleanup = () => t.renderer.destroy()
+    noActEnvironment()
+    await t.renderOnce()
+    const frame = () => t.captureCharFrame()
+    const settle = async () => {
+      await Bun.sleep(150)
+      await t.renderOnce()
+    }
+
+    await press(t, "i")
+    await settle()
+    expect(frame()).toContain("› box · cat")
+    await t.mockInput.typeText("hello")
+    await settle()
+    expect(frame()).toContain("hello")
+
+    await act(async () => t.mockInput.pressKey("]", { ctrl: true }))
+    await settle()
+    expect(frame()).not.toContain("› box")
+
+    await press(t, "i")
+    await settle()
+    expect(frame()).toContain("› box · cat")
+    expect(frame()).toContain("hello")
+
+    // ctrl+d ends cat (the first one only flushes the pending "hello"): the modal closes on its own
+    await act(async () => t.mockInput.pressKey("d", { ctrl: true }))
+    await act(async () => t.mockInput.pressKey("d", { ctrl: true }))
+    await Bun.sleep(300)
+    await t.renderOnce()
+    expect(frame()).not.toContain("› box")
+  })
 })

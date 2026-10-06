@@ -4,10 +4,12 @@ import { mkdirSync, writeFileSync } from "node:fs"
 import { join } from "node:path"
 import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { resolveEnv } from "../config/envFiles.ts"
+import { consoleCommand, ConsoleManager, type ConsoleSession } from "../core/console.ts"
 import { openUrl } from "../core/exec.ts"
 import { findGitRoot } from "../core/git.ts"
 import { filterLines, formatLines, matcher } from "../core/logs.ts"
 import type { SupervisorLike } from "../core/supervisor.ts"
+import { ConsoleOverlay, consoleSize } from "./ConsoleOverlay.tsx"
 import { GraphView, neighbourInDirection, useGraphLayout } from "./GraphView.tsx"
 import { useSupervisorVersion, useTick } from "./hooks.ts"
 import { clipboard } from "./clipboard.ts"
@@ -22,7 +24,7 @@ import { DEFAULT_THEME, THEMES, type Palette } from "./themes.ts"
 import { writeUserConfig } from "../core/userConfig.ts"
 import { completePath, forgetProject, looksLikePath, projectStatus, readProjects, setPinned, type ProjectEntry, type ProjectStatus } from "../core/projects.ts"
 
-type Mode = "normal" | "palette" | "filter" | "help" | "env" | "quit" | "stopping" | "external" | "copy" | "theme" | "projects" | "switch"
+type Mode = "normal" | "palette" | "filter" | "help" | "env" | "quit" | "stopping" | "external" | "copy" | "theme" | "projects" | "switch" | "console"
 
 const MIN_SIDEBAR = 16
 const MIN_DETAIL = 3
@@ -94,6 +96,9 @@ export function App({ sup, onQuit, onOpenProject, startWithPicker = false, git, 
   const [projIndex, setProjIndex] = useState(0)
   const [projInputKey, setProjInputKey] = useState(0)
   const [pendingDir, setPendingDir] = useState<string | undefined>()
+  // one live console per service; closing the modal keeps it
+  const consoles = useRef(new ConsoleManager())
+  const [consoleOf, setConsoleOf] = useState<{ name: string; session: ConsoleSession } | undefined>()
   const [toast, setToast] = useState<{ text: string; color: string } | undefined>()
   const toastTimer = useRef<ReturnType<typeof setTimeout>>(undefined)
 
@@ -214,6 +219,44 @@ export function App({ sup, onQuit, onOpenProject, startWithPicker = false, git, 
     [onOpenProject, notify],
   )
 
+  useEffect(() => () => consoles.current.closeAll(), [])
+
+  const openConsole = useCallback(
+    (name: string) => {
+      const spec = consoleCommand(sup.service(name), sup.state(name))
+      if ("error" in spec) return notify(spec.error, theme.yellow)
+      try {
+        const { cols, rows } = consoleSize(width, height)
+        setConsoleOf({ name, session: consoles.current.open(name, spec, cols, rows) })
+        setMode("console")
+      } catch (err) {
+        notify(`console: ${(err as Error).message}`, theme.red)
+      }
+    },
+    [sup, notify, width, height],
+  )
+
+  const closeConsole = useCallback(() => {
+    if (consoleOf) consoles.current.discard(consoleOf.name)
+    setConsoleOf(undefined)
+    setMode("normal")
+  }, [consoleOf])
+
+  // the program ended (exit, ctrl+d, crash): the modal goes away with it
+  useEffect(() => {
+    if (!consoleOf) return
+    const { name, session } = consoleOf
+    const onExit = (code: number | null) => {
+      closeConsole()
+      if (code) notify(`console of ${name} exited (code ${code})`, theme.yellow)
+    }
+    if (!session.alive) onExit(session.exitCode ?? null)
+    else session.on("exit", onExit)
+    return () => {
+      session.off("exit", onExit)
+    }
+  }, [consoleOf, closeConsole, notify])
+
   const requestQuit = useCallback(() => {
     if (sup.ownedRunningCount() === 0) return void onQuit("stop")
     setMode("quit")
@@ -265,6 +308,7 @@ export function App({ sup, onQuit, onOpenProject, startWithPicker = false, git, 
           { id: `start-${n}`, label: `Start ${n}`, hint: svc.dependsOn.length ? `+ ${svc.dependsOn.join(",")}` : "", run: () => run(n, sup.start(n)) },
           { id: `stop-${n}`, label: `Stop ${n}`, run: () => run(n, sup.stop(n)) },
           { id: `restart-${n}`, label: `Restart ${n}`, run: () => run(n, sup.restart(n)) },
+          { id: `console-${n}`, label: `Console in ${n}`, hint: "i", run: () => openConsole(n) },
           ...(svc.watch ? [{ id: `watch-${n}`, label: `Pause/resume watching ${n}`, hint: "W", run: () => toggleWatch(n) }] : []),
           {
             id: `logs-${n}`,
@@ -299,7 +343,7 @@ export function App({ sup, onQuit, onOpenProject, startWithPicker = false, git, 
       },
     ]
     return list
-  }, [sup, names, selected, run, openService, openLazygit, requestQuit, doQuit, onQuit])
+  }, [sup, names, selected, run, openService, openLazygit, openConsole, requestQuit, doQuit, onQuit])
 
   const matches = useMemo(() => filterCommands(commands, query), [commands, query])
   const projRows = useMemo(
@@ -379,6 +423,15 @@ export function App({ sup, onQuit, onOpenProject, startWithPicker = false, git, 
     const page = Math.max(5, height - (zoomed ? 4 : view === "dashboard" ? detailRows + 3 : 5))
     const logPage = page
     if (mode === "stopping" || mode === "external") return
+    if (mode === "console") {
+      // everything goes to the program in the console (its terminal is focused); only the way out is ours
+      if (!consoleOf) return setMode("normal")
+      if (key.ctrl && key.name === "]") {
+        key.preventDefault()
+        closeConsole()
+      }
+      return
+    }
     if (mode === "help") return setMode("normal")
     if (mode === "env") {
       const n = selected ? resolveEnv(sup.service(selected), sup.config.root).entries.length : 0
@@ -563,6 +616,7 @@ export function App({ sup, onQuit, onOpenProject, startWithPicker = false, git, 
     if (ch === "W") return toggleWatch(selected)
     if (ch === "R") return commands.find((c) => c.id === "restart-all")!.run()
     if (ch === "e") return openEnv()
+    if (ch === "i") return openConsole(selected)
     if (ch === "o") return openService(selected)
     if (ch === "L") return void openLazygit(selected)
     if (key.name === "return" || ch === "l") {
@@ -755,6 +809,7 @@ export function App({ sup, onQuit, onOpenProject, startWithPicker = false, git, 
           ["tab", "focus"],
           ["z", "zoom"],
           ["/", "filter"],
+          ["i", "console"],
           ["o", "open"],
           [":", "commands"],
           ["?", "help"],
@@ -876,6 +931,7 @@ export function App({ sup, onQuit, onOpenProject, startWithPicker = false, git, 
       {mode === "projects" ? (
         <ProjectPicker rows={projRows} selected={projIndex} value={projQuery} inputKey={projInputKey} onQuery={setProjQuery} width={width} height={height} />
       ) : null}
+      {mode === "console" && consoleOf ? <ConsoleOverlay service={consoleOf.name} session={consoleOf.session} width={width} height={height} /> : null}
       {mode === "help" ? <HelpOverlay width={width} height={height} /> : null}
       {mode === "env" && selected ? (
         <EnvOverlay service={selected} {...resolveEnv(sup.service(selected), sup.config.root)} scroll={envScroll} reveal={envReveal} width={width} height={height} />

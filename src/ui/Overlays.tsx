@@ -189,6 +189,7 @@ const HELP: Array<[string, string]> = [
   ["P", "open another project (recent, pinned, or a folder path)"],
   ["T", "change color theme (live preview, enter saves)"],
   ["e", "environment variables of the selected service"],
+  ["i", "interactive console: psql, rails console, container shell (ctrl+] hides it)"],
   ["o", "open service URL in the browser"],
   ["L", "open the service's git repo in lazygit"],
   [": / ctrl+p", "command palette"],

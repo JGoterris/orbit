@@ -43,6 +43,8 @@ export interface ServiceConfig {
   type: ServiceType
   description?: string
   cmd?: string
+  /** interactive command for the `i` console (psql, rails console...): process → runs in the service's cwd/env, docker/compose → inside the container */
+  console?: string
   cwd: string
   /** inline variables; they override the ones read from envFiles */
   env: Record<string, string>
