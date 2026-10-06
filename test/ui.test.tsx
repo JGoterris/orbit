@@ -590,11 +590,20 @@ describe("tui", () => {
 
   test("T opens the theme picker: arrows preview, esc reverts, enter saves", async () => {
     const t = await setup()
+    const until = async (cond: () => boolean) => {
+      for (let i = 0; i < 40 && !cond(); i++) {
+        await Bun.sleep(25)
+        await t.renderOnce()
+      }
+    }
     await press(t, "T")
+    await until(() => t.captureCharFrame().includes("catppuccin-mocha"))
     expect(t.captureCharFrame()).toContain("catppuccin-mocha")
     await press(t, "j")
+    await until(() => theme.bg === THEMES["catppuccin-mocha"]!.bg)
     expect(theme.bg).toBe(THEMES["catppuccin-mocha"]!.bg)
     await press(t, "ESCAPE")
+    await until(() => theme.bg === THEMES.orbit!.bg)
     expect(theme.bg).toBe(THEMES.orbit!.bg)
     expect(readUserConfig()).toEqual({})
 
@@ -602,6 +611,7 @@ describe("tui", () => {
     await press(t, "j")
     await press(t, "j")
     await press(t, "RETURN")
+    await until(() => theme.bg === THEMES["catppuccin-macchiato"]!.bg)
     expect(theme.bg).toBe(THEMES["catppuccin-macchiato"]!.bg)
     expect(readUserConfig()).toEqual({ theme: "catppuccin-macchiato" })
     expect(t.captureCharFrame()).toContain("theme: catppuccin-macchiato")
