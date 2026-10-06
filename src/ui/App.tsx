@@ -16,7 +16,7 @@ import { clipboard } from "./clipboard.ts"
 import { CommandPalette, ConfirmOverlay, EnvOverlay, envPageSize, filterCommands, HelpOverlay, ProjectPicker, projectRows, ThemePicker, type Command } from "./Overlays.tsx"
 import { ServiceList } from "./ServiceList.tsx"
 import type { GitRepo } from "../core/git/repo.ts"
-import { discoverRepos, repoEntries, repoOfService, summarize } from "../core/git/repos.ts"
+import { discoverRepos, repoEntries, repoOfService } from "../core/git/repos.ts"
 import { viewById, VIEWS, type Pane, type ViewContext } from "./views/index.tsx"
 import type { KeyHandler } from "./views/types.ts"
 import { applyTheme, statusStyle, theme } from "./theme.ts"
@@ -199,10 +199,8 @@ export function App({ sup, onQuit, onOpenProject, startWithPicker = false, git, 
   )
 
   const openLazygit = useCallback(
-    async (name: string) => {
+    async (root: string) => {
       if (!Bun.which("lazygit")) return notify("lazygit is not installed", theme.yellow)
-      const root = findGitRoot(sup.service(name).cwd)
-      if (!root) return notify(`${name} is not in a git repository`, theme.yellow)
       setMode("external")
       renderer.suspend()
       try {
@@ -213,9 +211,20 @@ export function App({ sup, onQuit, onOpenProject, startWithPicker = false, git, 
       } finally {
         renderer.resume()
         setMode("normal")
+        // whatever happened in there (commits, rebases, branch switches) shows up right away
+        repos.forEach((e) => void e.repo.refresh("all"))
       }
     },
-    [sup, renderer, notify],
+    [renderer, notify, repos],
+  )
+
+  /** `L` and the palette: lazygit on the repo a service lives in. */
+  const openServiceLazygit = useCallback(
+    (name: string) => {
+      const root = findGitRoot(sup.service(name).cwd)
+      return root ? openLazygit(root) : notify(`${name} is not in a git repository`, theme.yellow)
+    },
+    [sup, notify, openLazygit],
   )
 
   const openProject = useCallback(
@@ -336,7 +345,7 @@ export function App({ sup, onQuit, onOpenProject, startWithPicker = false, git, 
           },
         ]
         if (svc.port || svc.url) items.push({ id: `open-${n}`, label: `Open ${n} in browser`, hint: svc.url ?? `:${svc.port}`, run: () => openService(n) })
-        if (findGitRoot(svc.cwd)) items.push({ id: `git-${n}`, label: `Open ${n} in lazygit`, hint: "L", run: () => void openLazygit(n) })
+        if (findGitRoot(svc.cwd)) items.push({ id: `git-${n}`, label: `Open ${n} in lazygit`, hint: "L", run: () => void openServiceLazygit(n) })
         return items
       }),
       { id: "clear-logs", label: "Clear all logs", run: () => sup.clearLogs() },
@@ -367,7 +376,7 @@ export function App({ sup, onQuit, onOpenProject, startWithPicker = false, git, 
       },
     ]
     return list
-  }, [sup, names, selected, run, openService, openLazygit, openConsole, requestQuit, doQuit, onQuit])
+  }, [sup, names, selected, run, openService, openServiceLazygit, openConsole, requestQuit, doQuit, onQuit])
 
   const matches = useMemo(() => filterCommands(commands, query), [commands, query])
   const projRows = useMemo(
@@ -653,7 +662,7 @@ export function App({ sup, onQuit, onOpenProject, startWithPicker = false, git, 
     if (ch === "e") return openEnv()
     if (ch === "i") return openConsole(selected)
     if (ch === "o") return openService(selected)
-    if (ch === "L") return void openLazygit(selected)
+    if (ch === "L") return void openServiceLazygit(selected)
     if (key.name === "return" || ch === "l") {
       setLogScope("selected")
       setScrollBack(0)
@@ -749,17 +758,6 @@ export function App({ sup, onQuit, onOpenProject, startWithPicker = false, git, 
     setMode("palette")
   }
 
-  // branch and change count for the header: a cheap `git status` every few seconds (App re-renders on its own tick)
-  useEffect(() => {
-    if (!repos.length) return
-    const refresh = () => repos.forEach((e) => void e.repo.refresh())
-    refresh()
-    const timer = setInterval(refresh, 5000)
-    return () => clearInterval(timer)
-  }, [repos])
-  const gitSummary = summarize(repos)
-  const onlyRepo = repos.length === 1 ? repos[0]!.repo.status : undefined
-
   useEffect(() => setPaletteIndex(0), [query])
   useEffect(() => setProjIndex(0), [projQuery])
   useEffect(() => setScrollBack(0), [selected, logScope, view])
@@ -815,6 +813,7 @@ export function App({ sup, onQuit, onOpenProject, startWithPicker = false, git, 
     repos,
     repoIndex,
     setRepoIndex,
+    lazygit: (root) => void openLazygit(root),
     keys: viewKeys,
     setHints: setViewHints,
     capture: viewCapture,
@@ -879,17 +878,6 @@ export function App({ sup, onQuit, onOpenProject, startWithPicker = false, git, 
         ))}
         {zoomed ? <text fg={theme.accent}>{"  ⛶ zoom"}</text> : null}
         <box flexGrow={1} />
-        {repos.length ? (
-          <text>
-            <span fg={theme.accent2}>
-              {onlyRepo ? ` ⎇ ${onlyRepo.branch ?? `detached ${onlyRepo.oid ?? ""}`}` : repos.length > 1 ? ` ⎇ ${repos.length} repos` : " ⎇ …"}
-            </span>
-            {gitSummary.ahead ? <span fg={theme.yellow}>{` ↑${gitSummary.ahead}`}</span> : null}
-            {gitSummary.behind ? <span fg={theme.yellow}>{` ↓${gitSummary.behind}`}</span> : null}
-            {gitSummary.changes ? <span fg={theme.orange}>{` ✎${gitSummary.changes}${repos.length > 1 ? ` in ${gitSummary.dirty}` : ""}`}</span> : null}
-            <span fg={theme.dim}>{"   "}</span>
-          </text>
-        ) : null}
         <text>
           <span fg={theme.green}>● {counts.up} up</span>
           {counts.busy ? <span fg={theme.yellow}>{`  ◐ ${counts.busy}`}</span> : null}

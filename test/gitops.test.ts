@@ -2,7 +2,7 @@ import { afterAll, describe, expect, test } from "bun:test"
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
-import { commitDiff, fileDiff, hunkPatch, parseDiff, parseNameStatus, revFileDiff, revFiles } from "../src/core/git/diff.ts"
+import { commitDiff, fileDiff, parseDiff } from "../src/core/git/diff.ts"
 import * as ops from "../src/core/git/ops.ts"
 import { GitRepo } from "../src/core/git/repo.ts"
 import { hasStaged, hasUnstaged, parseStatus, readStatus } from "../src/core/git/status.ts"
@@ -102,9 +102,6 @@ describe("diff parsing", () => {
       ["img.png", 0, true],
     ])
     expect(files[0]!.hunks[1]).toMatchObject({ oldStart: 10, newStart: 10, lines: ["-a", "\\ No newline at end of file", "+b"] })
-    expect(hunkPatch(files[0]!, 0)).toBe(
-      "diff --git a/x.ts b/x.ts\nindex 1..2 100644\n--- a/x.ts\n+++ b/x.ts\n@@ -1,2 +1,2 @@ fn\n-old\n+new\n same\n",
-    )
   })
 
   test("deleted files take their path from the old side", () => {
@@ -114,7 +111,7 @@ describe("diff parsing", () => {
 })
 
 describe("staging", () => {
-  test("stage, unstage and discard files, tracked and untracked", async () => {
+  test("stage and unstage files, tracked and untracked", async () => {
     const dir = repo()
     edit(dir, "a.txt", (s) => s + "more\n")
     writeFileSync(join(dir, "new.txt"), "n\n")
@@ -127,10 +124,9 @@ describe("staging", () => {
     expect((await ops.unstage(dir, ["new.txt"], true)).ok).toBe(true)
     expect((await readStatus(dir))!.files.find((f) => f.path === "new.txt")!.kind).toBe("untracked")
 
-    expect((await ops.discard(dir, "new.txt", true)).ok).toBe(true)
-    expect(Bun.file(join(dir, "new.txt")).size).toBe(0) // gone
     expect((await ops.unstageAll(dir, true)).ok).toBe(true)
-    expect((await ops.discard(dir, "a.txt", false)).ok).toBe(true)
+    sh(dir, "clean", "-fdq")
+    sh(dir, "restore", "a.txt")
     expect((await readStatus(dir))!.files).toEqual([])
   })
 
@@ -146,30 +142,6 @@ describe("staging", () => {
     expect((await readStatus(dir))!.files[0]!.kind).toBe("untracked")
   })
 
-  test("stage, unstage and discard single hunks", async () => {
-    const dir = repo()
-    // two far-apart changes -> two hunks
-    edit(dir, "a.txt", (s) => s.replace("line 2\n", "TWO\n").replace("line 29\n", "TWENTY-NINE\n"))
-    const f = (await readStatus(dir))!.files[0]!
-    const unstaged = parseDiff(await fileDiff(dir, f, "unstaged"))[0]!
-    expect(unstaged.hunks).toHaveLength(2)
-
-    expect((await ops.applyHunk(dir, unstaged, 1, "stage")).ok).toBe(true)
-    const staged = parseDiff(await fileDiff(dir, f, "staged"))[0]!
-    expect(staged.hunks).toHaveLength(1)
-    expect(staged.hunks[0]!.lines).toContain("+TWENTY-NINE")
-    expect(parseDiff(await fileDiff(dir, f, "unstaged"))[0]!.hunks).toHaveLength(1)
-
-    expect((await ops.applyHunk(dir, staged, 0, "unstage")).ok).toBe(true)
-    expect(parseDiff(await fileDiff(dir, f, "staged"))).toHaveLength(0)
-
-    const again = parseDiff(await fileDiff(dir, f, "unstaged"))[0]!
-    expect((await ops.applyHunk(dir, again, 0, "discard")).ok).toBe(true)
-    const text = readFileSync(join(dir, "a.txt"), "utf8")
-    expect(text).toContain("line 2\n") // first hunk reverted in the worktree
-    expect(text).toContain("TWENTY-NINE") // second one untouched
-  })
-
   test("untracked files diff as all-added", async () => {
     const dir = repo()
     writeFileSync(join(dir, "new.txt"), "one\ntwo\n")
@@ -181,23 +153,16 @@ describe("staging", () => {
 })
 
 describe("commits", () => {
-  test("commit, amend keeping the body, reword only the subject, log and commit diff", async () => {
+  test("commit, log and commit diff", async () => {
     const dir = repo()
     edit(dir, "b.txt", () => "b2\n")
     await ops.stageAll(dir)
     const res = await ops.commit(dir, "second\n\nwith body")
     expect(res.ok).toBe(true)
-    expect(await ops.lastMessage(dir)).toBe("second\n\nwith body")
-
-    edit(dir, "b.txt", () => "b3\n")
-    await ops.stageAll(dir)
-    expect((await ops.amend(dir)).ok).toBe(true) // --no-edit
-    expect(await ops.lastMessage(dir)).toBe("second\n\nwith body")
-    expect((await ops.amend(dir, "reworded")).ok).toBe(true)
-    expect(await ops.lastMessage(dir)).toBe("reworded\n\nwith body")
+    expect(sh(dir, "log", "-1", "--format=%B").trim()).toBe("second\n\nwith body")
 
     const commits = await ops.log(dir)
-    expect(commits.map((c) => c.subject)).toEqual(["reworded", "first"])
+    expect(commits.map((c) => c.subject)).toEqual(["second", "first"])
     expect(commits[0]).toMatchObject({ author: "Test" })
     expect(commits[0]!.refs).toContain("main")
     const files = parseDiff(await commitDiff(dir, commits[0]!.hash))
@@ -222,7 +187,7 @@ describe("commits", () => {
 })
 
 describe("branches and stash", () => {
-  test("create, list, switch and delete branches; unmerged needs force", async () => {
+  test("create, list and switch branches", async () => {
     const dir = repo()
     expect((await ops.createBranch(dir, "feature")).ok).toBe(true)
     edit(dir, "b.txt", () => "feature\n")
@@ -231,31 +196,19 @@ describe("branches and stash", () => {
     expect((await ops.checkout(dir, "main")).ok).toBe(true)
     const list = await ops.branches(dir)
     expect(list.map((b) => [b.name, b.current])).toEqual(expect.arrayContaining([["main", true], ["feature", false]]))
-    const del = await ops.deleteBranch(dir, "feature")
-    expect(del.ok).toBe(false)
-    expect(del.message).toContain("not fully merged")
-    expect((await ops.deleteBranch(dir, "feature", true)).ok).toBe(true)
+    expect(list.find((b) => b.name === "feature")!.when).toBeTruthy()
     expect((await ops.checkout(dir, "ghost")).ok).toBe(false)
   })
 
-  test("stash push (with untracked), list, apply, pop, drop", async () => {
+  test("stashes are listed with a stable hash", async () => {
     const dir = repo()
     edit(dir, "b.txt", () => "changed\n")
     writeFileSync(join(dir, "u.txt"), "u\n")
-    expect((await ops.stashPush(dir, "my stash")).ok).toBe(true)
-    expect((await readStatus(dir))!.files).toEqual([])
-    const [s] = await ops.stashes(dir)
-    expect(s).toMatchObject({ ref: "stash@{0}" })
-    expect(s!.message).toContain("my stash")
-    expect((await ops.stashApply(dir, s!.ref)).ok).toBe(true)
-    expect((await readStatus(dir))!.files).toHaveLength(2)
-    await ops.discard(dir, "b.txt", false)
-    await ops.discard(dir, "u.txt", true)
-    expect((await ops.stashPop(dir, s!.ref)).ok).toBe(true)
-    expect(await ops.stashes(dir)).toEqual([])
-    await ops.stashPush(dir)
-    expect((await ops.stashDrop(dir, "stash@{0}")).ok).toBe(true)
-    expect(await ops.stashes(dir)).toEqual([])
+    sh(dir, "stash", "push", "--include-untracked", "-m", "my stash")
+    const [st] = await ops.stashes(dir)
+    expect(st).toMatchObject({ ref: "stash@{0}" })
+    expect(st!.message).toContain("my stash")
+    expect(st!.hash).toMatch(/^[0-9a-f]{40}$/)
   })
 })
 
@@ -325,101 +278,5 @@ describe("GitRepo", () => {
     expect(gr.commits).toHaveLength(1) // the "all" request was honoured
     expect(GitRepo.find(dir)?.root).toBe(dir)
     expect(GitRepo.find(mkdtempSync(join(tmpdir(), "orbit-plain-")))).toBeUndefined()
-  })
-})
-
-describe("files of a commit or stash", () => {
-  test("parseNameStatus handles plain entries and renames/copies", () => {
-    expect(parseNameStatus("M\0a.txt\0A\0new file.txt\0R100\0old.txt\0new.txt\0D\0gone.txt\0")).toEqual([
-      { status: "M", path: "a.txt" },
-      { status: "A", path: "new file.txt" },
-      { status: "R", orig: "old.txt", path: "new.txt" },
-      { status: "D", path: "gone.txt" },
-    ])
-    expect(parseNameStatus("")).toEqual([])
-  })
-
-  test("lists what a commit changed and diffs one file at a time", async () => {
-    const dir = repo()
-    edit(dir, "a.txt", (t) => t.replace("line 1\n", "ONE\n"))
-    writeFileSync(join(dir, "added.txt"), "new\n")
-    sh(dir, "mv", "b.txt", "renamed.txt")
-    sh(dir, "add", "-A")
-    sh(dir, "commit", "-q", "-m", "mixed")
-    const [head] = await ops.log(dir)
-    const files = await revFiles(dir, head!.hash)
-    expect(files.map((f) => `${f.status} ${f.orig ? f.orig + " -> " : ""}${f.path}`).sort()).toEqual(["A added.txt", "M a.txt", "R b.txt -> renamed.txt"])
-
-    const a = files.find((f) => f.path === "a.txt")!
-    const only = parseDiff(await revFileDiff(dir, head!.hash, a))
-    expect(only.map((f) => f.path)).toEqual(["a.txt"])
-    expect(only[0]!.hunks[0]!.lines).toContain("+ONE")
-
-    const added = parseDiff(await revFileDiff(dir, head!.hash, files.find((f) => f.path === "added.txt")!))
-    expect(added[0]!.hunks[0]!.lines).toEqual(["+new"])
-    const renamed = files.find((f) => f.status === "R")!
-    expect(parseDiff(await revFileDiff(dir, head!.hash, renamed))).toHaveLength(1)
-  })
-
-  test("a root commit lists all its files, and deletions show up", async () => {
-    const dir = repo()
-    const [first] = await ops.log(dir)
-    expect((await revFiles(dir, first!.hash)).map((f) => `${f.status} ${f.path}`).sort()).toEqual(["A a.txt", "A b.txt"])
-    sh(dir, "rm", "-q", "b.txt")
-    sh(dir, "commit", "-q", "-m", "drop b")
-    const [head] = await ops.log(dir)
-    const [gone] = await revFiles(dir, head!.hash)
-    expect(gone).toEqual({ status: "D", path: "b.txt" })
-    expect(parseDiff(await revFileDiff(dir, head!.hash, gone!))[0]!.hunks[0]!.lines).toEqual(["-b"])
-  })
-
-  test("restoreFile brings a commit's or stash's version into the working tree without touching the index", async () => {
-    const dir = repo()
-    const [first] = await ops.log(dir)
-    edit(dir, "a.txt", () => "second version\n")
-    sh(dir, "commit", "-qam", "rewrite a")
-    edit(dir, "a.txt", () => "local edit\n")
-
-    expect((await ops.restoreFile(dir, first!.hash, "a.txt")).ok).toBe(true)
-    expect(readFileSync(join(dir, "a.txt"), "utf8")).toContain("line 1\n") // the original 30 lines
-    const st = (await readStatus(dir))!
-    expect(st.files[0]).toMatchObject({ path: "a.txt", x: ".", y: "M" }) // changed against HEAD, nothing staged
-
-    edit(dir, "b.txt", () => "for the stash\n")
-    await ops.stashPush(dir, "s")
-    const [stash] = await ops.stashes(dir)
-    expect(readFileSync(join(dir, "b.txt"), "utf8")).toBe("b\n")
-    expect((await ops.restoreFile(dir, stash!.hash, "b.txt")).ok).toBe(true)
-    expect(readFileSync(join(dir, "b.txt"), "utf8")).toBe("for the stash\n")
-
-    const missing = await ops.restoreFile(dir, first!.hash, "nope.txt")
-    expect(missing.ok).toBe(false)
-  })
-
-  test("a merge commit is compared with its first parent", async () => {
-    const dir = repo()
-    sh(dir, "switch", "-q", "-c", "side")
-    writeFileSync(join(dir, "side.txt"), "s\n")
-    sh(dir, "add", ".")
-    sh(dir, "commit", "-q", "-m", "side work")
-    sh(dir, "switch", "-q", "main")
-    sh(dir, "merge", "-q", "--no-ff", "-m", "merge side", "side")
-    const [merge] = await ops.log(dir)
-    expect(merge!.subject).toBe("merge side")
-    expect((await revFiles(dir, merge!.hash)).map((f) => f.path)).toEqual(["side.txt"])
-  })
-
-  test("a stash lists its files by hash, even after another stash shifts stash@{n}", async () => {
-    const dir = repo()
-    edit(dir, "b.txt", () => "one\n")
-    await ops.stashPush(dir, "first")
-    edit(dir, "a.txt", (t) => t + "x\n")
-    await ops.stashPush(dir, "second")
-    const list = await ops.stashes(dir)
-    expect(list.map((s) => s.message.includes("first"))).toEqual([false, true]) // newest first
-    const first = list[1]!
-    expect(first.hash).toMatch(/^[0-9a-f]{40}$/)
-    expect((await revFiles(dir, first.hash)).map((f) => f.path)).toEqual(["b.txt"])
-    expect((await revFiles(dir, list[0]!.hash)).map((f) => f.path)).toEqual(["a.txt"])
   })
 })

@@ -6,7 +6,7 @@ import type { SupervisorLike } from "../../core/supervisor.ts"
 import type { LogView } from "../LogView.tsx"
 
 /** Every focusable panel any view can show. Views list the ones they use in `ViewDef.panes`. */
-export type Pane = "services" | "detail" | "logs" | "graph" | "repos" | "changes" | "branches" | "commits" | "stash" | "gitdiff"
+export type Pane = "services" | "detail" | "logs" | "graph" | "repos" | "changes" | "branches" | "commits" | "stash" | "gitdiff" | "gitlog"
 
 /** Returns true when it used the key (the shell then does not). */
 export type KeyHandler = (key: KeyEvent) => boolean
@@ -31,6 +31,8 @@ export interface ViewContext {
   /** which of `repos` the Git view is working on */
   repoIndex: number
   setRepoIndex: (index: number) => void
+  /** opens lazygit full screen on the repo at `root` (orbit resumes when it quits) */
+  lazygit: (root: string) => void
   /**
    * A view that wants keys sets `keys.current` while it renders. The shell offers it every key that no
    * global shortcut (quit, views, tab, palette…) took, before the service shortcuts.

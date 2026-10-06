@@ -22,11 +22,13 @@ interface Props {
   empty: string
   /** side-by-side, read only, rendered by OpenTUI's own diff component from the raw patch */
   split?: { patch: string }
+  /** share of the column it takes, like ListPanel's */
+  grow?: number
 }
 
 const tabs = (s: string) => s.replace(/\t/g, "    ")
 
-export function DiffPane({ rows, scroll, current, onScroll, pageRef, title, status, focused, onFocus, empty, split }: Props) {
+export function DiffPane({ rows, scroll, current, onScroll, pageRef, title, status, focused, onFocus, empty, split, grow = 1 }: Props) {
   const { ref, size, onSizeChange } = useSize<BoxRenderable>()
   const height = Math.max(1, size.height - 2)
   const width = Math.max(20, size.width - 4)
@@ -47,9 +49,10 @@ export function DiffPane({ rows, scroll, current, onScroll, pageRef, title, stat
     <box
       ref={ref}
       onSizeChange={onSizeChange}
-      flexGrow={1}
+      flexGrow={grow}
       flexBasis={0}
       flexDirection="column"
+      overflow="hidden"
       border
       borderStyle="rounded"
       borderColor={focused ? theme.borderFocus : theme.border}
@@ -87,19 +90,19 @@ export function DiffPane({ rows, scroll, current, onScroll, pageRef, title, stat
           const key = `${top + i}`
           if (r.kind === "file")
             return (
-              <text key={key} selectable={false}>
+              <text key={key} selectable={false} flexShrink={0}>
                 <strong fg={theme.accent} bg={theme.panelAlt}>{fit(` ${r.text}`, width)}</strong>
               </text>
             )
           if (r.kind === "note")
             return (
-              <text key={key} fg={theme.dim} selectable={false}>
+              <text key={key} fg={theme.dim} selectable={false} flexShrink={0}>
                 {`  ${r.text}`}
               </text>
             )
           if (r.kind === "hunk")
             return (
-              <text key={key} selectable={false}>
+              <text key={key} selectable={false} flexShrink={0}>
                 <span fg={theme.accent}>{mark}</span>
                 <span fg={theme.accent2}>{fit(` ${r.text}`, width - 1)}</span>
               </text>
@@ -109,7 +112,7 @@ export function DiffPane({ rows, scroll, current, onScroll, pageRef, title, stat
           const sign = r.kind === "add" ? "+" : r.kind === "del" ? "-" : " "
           const num = (n?: number) => (n === undefined ? "" : String(n)).padStart(gutter)
           return (
-            <text key={key} selectable={false}>
+            <text key={key} selectable={false} flexShrink={0}>
               <span fg={theme.accent}>{mark}</span>
               <span fg={theme.dim}>{`${num(r.oldNo)} ${num(r.newNo)} `}</span>
               <span fg={fg} bg={bg}>{fit(r.kind === "marker" ? r.text : `${sign}${tabs(r.text)}`, textW)}</span>

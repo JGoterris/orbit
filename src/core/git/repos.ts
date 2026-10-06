@@ -43,28 +43,5 @@ export function repoEntries(repos: GitRepo[]): RepoEntry[] {
   return nameRepos(repos.map((repo) => ({ repo, name: basename(repo.root), services: [] })))
 }
 
-export interface RepoSummary {
-  repos: number
-  /** repos with uncommitted changes */
-  dirty: number
-  /** changed paths across all repos */
-  changes: number
-  ahead: number
-  behind: number
-}
-
-export function summarize(entries: RepoEntry[]): RepoSummary {
-  const s: RepoSummary = { repos: entries.length, dirty: 0, changes: 0, ahead: 0, behind: 0 }
-  for (const { repo } of entries) {
-    const st = repo.status
-    if (!st) continue
-    if (st.files.length) s.dirty++
-    s.changes += st.files.length
-    s.ahead += st.ahead
-    s.behind += st.behind
-  }
-  return s
-}
-
 /** Index of the repo holding `service`, or -1. */
 export const repoOfService = (entries: RepoEntry[], service: string) => entries.findIndex((e) => e.services.includes(service))

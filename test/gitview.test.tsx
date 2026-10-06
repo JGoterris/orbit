@@ -73,27 +73,30 @@ async function openGit(t: T) {
   await press(t, "4")
   await settle(t)
 }
+const toChanges = (t: T) => press(t, "TAB") // the view opens on Repos; Changes is next
 
 describe("git view", () => {
-  test("4 opens it: branch in the header, changes, commits, and the diff of the selected file", async () => {
+  test("4 opens it: the repo table, changes, graph, and the diff of the selected file", async () => {
     const dir = project()
     writeFileSync(join(dir, "a.txt"), readFileSync(join(dir, "a.txt"), "utf8").replace("line 2\n", "TWO\n"))
     writeFileSync(join(dir, "new.txt"), "n\n")
     const t = await setup(dir)
     await settle(t)
-    expect(frame(t)).toContain("⎇ main") // header, before even opening the view
-    expect(frame(t)).toContain("✎2")
+    expect(frame(t)).not.toContain("⎇") // the header only has the services' counters
+    expect(frame(t)).not.toContain("✎2")
 
     await openGit(t)
     const f = frame(t)
+    expect(f).toContain("Repos · 1 · main ×1")
+    expect(f).toMatch(/● \S+\s+main\s+no upstream\s+✎2/)
     expect(f).toContain("Changes · main")
     expect(f).toContain("a.txt")
     expect(f).toContain("new.txt")
-    expect(f).toContain("first commit")
+    expect(f).toContain("Graph")
+    expect(f).toContain("first commit") // in the table (last commit) and in the graph
     expect(f).toContain("Diff · a.txt · unstaged")
     expect(f).toContain("+TWO")
     expect(f).toContain("-line 2")
-    expect(f).toContain("hunk 1/1")
   })
 
   test("not a repository", async () => {
@@ -104,11 +107,24 @@ describe("git view", () => {
     expect(frame(t)).not.toContain("⎇")
   })
 
+  test("enter on the Repos table works like tab: focus goes to Changes, nothing else opens", async () => {
+    const dir = project()
+    writeFileSync(join(dir, "b.txt"), "changed\n")
+    const t = await setup(dir)
+    await openGit(t)
+    expect(frame(t)).toContain("pick repo") // Repos is focused
+    await press(t, "RETURN")
+    expect(frame(t)).toContain("stage") // Changes' hints
+    expect(frame(t)).not.toContain("pick repo")
+    expect(frame(t)).toContain("Changes ·") // orbit is still on screen (no lazygit took the terminal)
+  })
+
   test("space stages and unstages the selected file", async () => {
     const dir = project()
     writeFileSync(join(dir, "b.txt"), "changed\n")
     const t = await setup(dir)
     await openGit(t)
+    await toChanges(t)
     await press(t, " ")
     await settle(t)
     expect((await readStatus(dir))!.files[0]).toMatchObject({ path: "b.txt", x: "M", y: "." })
@@ -124,9 +140,10 @@ describe("git view", () => {
     writeFileSync(join(dir, "b.txt"), "changed\n")
     const t = await setup(dir)
     await openGit(t)
+    await toChanges(t)
     await press(t, "c")
     expect(frame(t)).toContain("nothing is staged")
-    expect(frame(t)).not.toContain("Commit ")
+    expect(frame(t)).not.toContain("enter commit")
 
     await press(t, "a") // stage all
     await settle(t)
@@ -147,6 +164,7 @@ describe("git view", () => {
     writeFileSync(join(dir, "b.txt"), "changed\n")
     const t = await setup(dir)
     await openGit(t)
+    await toChanges(t)
     await press(t, "a")
     await settle(t)
     await press(t, "c")
@@ -156,90 +174,44 @@ describe("git view", () => {
     expect(git(dir, "log", "--format=%s").trim()).toBe("first commit")
   })
 
-  test("stage one hunk from the diff: enter focuses it, ] moves, space stages", async () => {
-    const dir = project()
-    writeFileSync(join(dir, "a.txt"), readFileSync(join(dir, "a.txt"), "utf8").replace("line 2\n", "TWO\n").replace("line 29\n", "TWENTY-NINE\n"))
-    const t = await setup(dir)
-    await openGit(t)
-    expect(frame(t)).toContain("hunk 1/2")
-    await press(t, "RETURN") // focus the diff
-    await press(t, "]")
-    expect(frame(t)).toContain("hunk 2/2")
-    await press(t, " ")
-    await settle(t)
-    const staged = git(dir, "diff", "--cached")
-    expect(staged).toContain("+TWENTY-NINE")
-    expect(staged).not.toContain("+TWO")
-    expect(git(dir, "diff")).toContain("+TWO")
-    expect(frame(t)).toContain("staged hunk")
-
-    // v flips to the staged side of the same file, where space unstages
-    await press(t, "v")
-    await settle(t)
-    expect(frame(t)).toContain("a.txt · staged")
-    await press(t, " ")
-    await settle(t)
-    expect(git(dir, "diff", "--cached")).toBe("")
-  })
-
-  test("discarding asks first: n keeps the file, y removes the change", async () => {
+  test("what moved to lazygit is gone: d does not discard, s does not stash", async () => {
     const dir = project()
     writeFileSync(join(dir, "b.txt"), "changed\n")
     const t = await setup(dir)
     await openGit(t)
+    await toChanges(t)
     await press(t, "d")
-    expect(frame(t)).toContain("Throw away the changes in b.txt")
-    await press(t, "n")
+    await press(t, "s")
+    expect(frame(t)).not.toContain("Throw away")
+    expect(frame(t)).not.toContain("Stash changes")
     expect(readFileSync(join(dir, "b.txt"), "utf8")).toBe("changed\n")
-    await press(t, "d")
-    await press(t, "y")
-    await settle(t)
-    expect(readFileSync(join(dir, "b.txt"), "utf8")).toBe("b\n")
   })
 
-  test("branches: n creates and switches, enter switches back, the current one cannot be deleted", async () => {
+  test("branches: n creates and switches, enter switches back", async () => {
     const dir = project()
     const t = await setup(dir)
     await openGit(t)
+    await press(t, "TAB")
     await press(t, "TAB") // branches
     await press(t, "n")
     await type(t, "feature-x")
     await press(t, "RETURN")
     await settle(t)
     expect(git(dir, "branch", "--show-current").trim()).toBe("feature-x")
-    expect(frame(t)).toContain("on new branch feature-x")
+    expect(frame(t)).toContain("on feature-x")
+    expect(frame(t)).toMatch(/Repos · 1 · feature-x ×1/)
 
-    await press(t, "d")
-    expect(frame(t)).toContain("cannot delete the branch you are on")
     await press(t, "j")
     await press(t, "RETURN")
     await settle(t)
-    expect(git(dir, "branch", "--show-current").trim()).toBe(frame(t).includes("on main") ? "main" : "feature-x")
-  })
-
-  test("stash: s stashes, o pops", async () => {
-    const dir = project()
-    writeFileSync(join(dir, "b.txt"), "changed\n")
-    const t = await setup(dir)
-    await openGit(t)
-    await press(t, "s")
-    await type(t, "wip")
-    await press(t, "RETURN")
-    await settle(t)
-    expect(readFileSync(join(dir, "b.txt"), "utf8")).toBe("b\n")
-    expect(frame(t)).toContain("wip")
-    await press(t, "TAB")
-    await press(t, "TAB")
-    await press(t, "TAB") // stash pane
-    await press(t, "o")
-    await settle(t)
-    expect(readFileSync(join(dir, "b.txt"), "utf8")).toBe("changed\n")
+    expect(git(dir, "branch", "--show-current").trim()).toBe("main")
   })
 
   test("leaving the view hands the keyboard back to the service shortcuts", async () => {
     const dir = project()
     const t = await setup(dir)
     await openGit(t)
+    await toChanges(t)
     await press(t, "1")
     // `c` is "clear logs" in the service views; the git view's `c` (commit) must be gone
     await press(t, "c")
@@ -253,7 +225,8 @@ describe("git view", () => {
     await openGit(t)
     await press(t, "p") // no upstream to pull from
     await settle(t, 600)
-    expect(frame(t)).toContain("pull failed")
+    expect(frame(t)).toContain("pulled 0/1")
+    expect(frame(t)).toMatch(/✗ .*(tracking|upstream|remote)/i) // also in the repo's row
   })
 
   test("s toggles a side-by-side diff and back", async () => {
@@ -261,6 +234,7 @@ describe("git view", () => {
     writeFileSync(join(dir, "b.txt"), "changed\n")
     const t = await setup(dir)
     await openGit(t)
+    await toChanges(t)
     await press(t, "RETURN")
     await press(t, "s")
     await settle(t, 300)
@@ -273,295 +247,148 @@ describe("git view", () => {
     expect(f).toContain("+changed")
   })
 
-  test("the commits panel shows the diff of the selected commit", async () => {
+  test("[ ] move between hunks and { } between files, read only", async () => {
+    const dir = project()
+    writeFileSync(join(dir, "a.txt"), readFileSync(join(dir, "a.txt"), "utf8").replace("line 2\n", "TWO\n").replace("line 29\n", "TWENTY-NINE\n"))
+    writeFileSync(join(dir, "b.txt"), "changed\n")
+    const t = await setup(dir)
+    await openGit(t)
+    await toChanges(t)
+    await press(t, "RETURN")
+    expect(frame(t)).toContain("hunk 1/2")
+    await press(t, "]")
+    expect(frame(t)).toContain("hunk 2/2")
+    await press(t, " ") // there is no staging from the diff any more
+    await settle(t)
+    expect(git(dir, "diff", "--cached")).toBe("")
+    await press(t, "}")
+    expect(frame(t)).toContain("Diff · b.txt")
+  })
+
+  test("the graph shows the diff of the selected commit", async () => {
     const dir = project()
     writeFileSync(join(dir, "b.txt"), "second\n")
     git(dir, "commit", "-qam", "touch b")
     const t = await setup(dir)
     await openGit(t)
-    await press(t, "TAB") // branches
-    await press(t, "TAB") // commits
+    for (let i = 0; i < 3; i++) await press(t, "TAB") // changes, branches, graph
     await settle(t, 300)
     expect(frame(t)).toContain("touch b")
     expect(frame(t)).toContain("+second")
     await press(t, "j")
     await settle(t, 300)
+    await t.renderOnce()
     expect(frame(t)).toContain("+line 1") // the first commit added a.txt
     expect(frame(t)).toContain("a.txt (new)")
   })
 
-  /** the repo with a second commit that modifies a.txt, adds added.txt and deletes b.txt */
-  function mixedCommit() {
+  test("the diff follows the selected branch", async () => {
     const dir = project()
-    writeFileSync(join(dir, "a.txt"), readFileSync(join(dir, "a.txt"), "utf8").replace("line 2\n", "TWO\n"))
-    writeFileSync(join(dir, "added.txt"), "fresh\n")
-    git(dir, "rm", "-q", "b.txt")
-    git(dir, "add", "-A")
-    git(dir, "commit", "-q", "-m", "mixed changes")
-    return dir
-  }
-  const toCommits = async (t: T) => {
-    await press(t, "TAB") // branches
-    await press(t, "TAB") // commits
-    await settle(t, 300)
-  }
-
-  test("enter on a commit lists the files it changed and the diff follows the selected file", async () => {
-    const dir = mixedCommit()
+    git(dir, "switch", "-q", "-c", "other")
+    writeFileSync(join(dir, "o.txt"), "o\n")
+    git(dir, "add", ".")
+    git(dir, "commit", "-q", "-m", "on other")
+    git(dir, "switch", "-q", "main")
     const t = await setup(dir)
     await openGit(t)
-    await toCommits(t)
-    expect(frame(t)).toContain("mixed changes")
-
-    await press(t, "RETURN")
+    await press(t, "TAB")
+    await press(t, "TAB") // branches
     await settle(t, 300)
-    let f = frame(t)
-    const hash = git(dir, "rev-parse", "--short", "HEAD").trim()
-    expect(f).toContain(`Files · ${hash}`)
-    expect(f).toMatch(/M a\.txt/)
-    expect(f).toMatch(/A added\.txt/)
-    expect(f).toMatch(/D b\.txt/)
-    expect(f).not.toContain("mixed changes") // the commit list is replaced while browsing
-    expect(f).toContain(`${hash} · a.txt`)
-    expect(f).toContain("+TWO")
-    expect(f).not.toContain("+fresh") // only the selected file
-
+    expect(frame(t)).toContain("other")
     await press(t, "j")
     await settle(t, 300)
+    expect(frame(t)).toContain("HEAD...other")
+    expect(frame(t)).toContain("+o")
+  })
+
+  test("Changes is a tree: folders fold with enter, space on a folder stages all of it, { } skip folders", async () => {
+    const dir = project()
+    mkdirSync(join(dir, "src", "ui"), { recursive: true })
+    writeFileSync(join(dir, "src", "ui", "one.ts"), "1\n")
+    writeFileSync(join(dir, "src", "ui", "two.ts"), "2\n")
+    writeFileSync(join(dir, "b.txt"), "changed\n")
+    const t = await setup(dir)
+    await openGit(t)
+    await toChanges(t)
+    let f = frame(t)
+    expect(f).toMatch(/▾ src\/ui\/\s+2/) // single-child folders merged, with their change count
+    expect(f).toMatch(/\?\s+one\.ts/)
+    expect(f).toContain("b.txt")
+    expect(f).not.toContain("src/ui/one.ts") // shown by name under the folder, not as a path
+
+    await press(t, "RETURN") // on the folder: fold it
+    await settle(t, 200)
     f = frame(t)
-    expect(f).toContain(`${hash} · added.txt`)
-    expect(f).toContain("+fresh")
-    expect(f).not.toContain("+TWO")
+    expect(f).toMatch(/▸ src\/ui\/\s+2/)
+    expect(f).not.toContain("one.ts")
+    await press(t, "RETURN") // unfold
+    await settle(t, 200)
+    expect(frame(t)).toContain("one.ts")
 
-    await press(t, "j")
-    await settle(t, 300)
-    expect(frame(t)).toContain("-b")
-    expect(frame(t)).toContain("b.txt (deleted)")
-
-    await press(t, "G") // already last: stays
-    await press(t, "g")
-    await settle(t, 300)
-    expect(frame(t)).toContain("+TWO")
-  })
-
-  test("esc steps back one level at a time: diff -> file list -> commit list", async () => {
-    const dir = mixedCommit()
-    const t = await setup(dir)
-    await openGit(t)
-    await toCommits(t)
-    await press(t, "ESCAPE") // nothing to leave in the commit list itself
-    expect(frame(t)).toContain("Commits")
-
-    await press(t, "RETURN") // files
-    await settle(t, 300)
-    await press(t, "RETURN") // diff
-    expect(frame(t)).toContain("j/k scroll") // the diff has the focus
-    await press(t, "ESCAPE")
-    expect(frame(t)).not.toContain("j/k scroll")
-    expect(frame(t)).toContain("Files ·") // back on the file list, still browsing
-    await press(t, "j")
-    await settle(t, 300)
-    expect(frame(t)).toContain("added.txt")
-
-    await press(t, "ESCAPE")
-    expect(frame(t)).not.toContain("Files ·")
-    expect(frame(t)).toContain("mixed changes") // the commit list is back
-  })
-
-  test("esc from the diff goes back to the panel it was opened from", async () => {
-    const dir = project()
-    writeFileSync(join(dir, "b.txt"), "changed\n")
-    const t = await setup(dir)
-    await openGit(t)
-    await press(t, "RETURN") // from Changes
-    expect(frame(t)).toContain("j/k scroll")
-    await press(t, "ESCAPE")
-    expect(frame(t)).not.toContain("j/k scroll")
-    expect(frame(t)).toContain("c commit") // Changes has the focus again
-    await press(t, "d") // and its keys work: this asks to discard
-    expect(frame(t)).toContain("Throw away the changes in b.txt")
-  })
-
-  test("esc returns to branches when the diff came from there", async () => {
-    const dir = project()
-    git(dir, "branch", "other")
-    const t = await setup(dir)
-    await openGit(t)
-    await press(t, "TAB") // branches
-    await press(t, "TAB") // commits
-    await press(t, "TAB") // stash
-    await press(t, "TAB") // diff
-    expect(frame(t)).toContain("j/k scroll")
-    await press(t, "ESCAPE")
-    expect(frame(t)).toContain("space apply") // the stash panel, the last list the diff followed
-  })
-
-  test("stashes open to their files too; space applies", async () => {
-    const dir = project()
-    writeFileSync(join(dir, "b.txt"), "stashed\n")
-    writeFileSync(join(dir, "extra.txt"), "x\n")
-    git(dir, "add", "extra.txt")
-    git(dir, "stash", "push", "-q", "-m", "wip two files")
-    const t = await setup(dir)
-    await openGit(t)
-    for (let i = 0; i < 3; i++) await press(t, "TAB") // stash
-    await settle(t, 300)
-    await press(t, "RETURN")
-    await settle(t, 300)
-    let f = frame(t)
-    expect(f).toContain("Files · stash@{0}")
-    expect(f).toMatch(/M b\.txt/)
-    expect(f).toMatch(/A extra\.txt/)
-    await press(t, "j")
-    await settle(t, 300)
-    expect(frame(t)).toContain("stash@{0} · extra.txt")
-    await press(t, "ESCAPE")
-    await press(t, " ") // apply
+    await press(t, " ") // stage the whole folder
     await settle(t)
-    expect(readFileSync(join(dir, "b.txt"), "utf8")).toBe("stashed\n")
-  })
-
-  /** the repo after mixedCommit(), with the commits panel focused on the older commit */
-  const toFirstCommit = async (t: T) => {
-    await toCommits(t)
-    await press(t, "j") // "first commit"
-    await settle(t, 300)
-  }
-  const copying = async (fn: (copied: string[]) => Promise<void>) => {
-    const copied: string[] = []
-    const real = clipboard.copy
-    clipboard.copy = async (_r, text) => (copied.push(text), { ok: true, via: "test" })
-    try {
-      await fn(copied)
-    } finally {
-      clipboard.copy = real
-    }
-  }
-
-  test("c on a file of a commit brings its version into the working tree, after asking", async () => {
-    const dir = mixedCommit()
-    const t = await setup(dir)
-    await openGit(t)
-    await toFirstCommit(t)
-    await press(t, "RETURN") // its files: a.txt and b.txt
-    await settle(t, 300)
-    expect(frame(t)).toContain("checkout file") // the hint for this mode
-
-    await press(t, "c")
-    const hash = git(dir, "rev-parse", "--short", "HEAD~1").trim()
-    expect(frame(t)).toContain(`Overwrite a.txt in the working tree with its version from ${hash}`)
-    await press(t, "n")
-    expect(readFileSync(join(dir, "a.txt"), "utf8")).toContain("TWO") // untouched
-
-    await press(t, "c")
-    await press(t, "y")
+    const st = (await readStatus(dir))!.files
+    expect(st.filter((c) => c.path.startsWith("src/ui/")).every((c) => c.x === "A")).toBe(true)
+    expect(st.find((c) => c.path === "b.txt")).toMatchObject({ x: ".", y: "M" })
+    expect(frame(t)).toContain("staged src/ui/")
+    await press(t, " ") // all staged: unstage again
     await settle(t)
-    expect(readFileSync(join(dir, "a.txt"), "utf8")).toContain("line 2\n")
-    expect(readFileSync(join(dir, "a.txt"), "utf8")).not.toContain("TWO")
-    expect(git(dir, "diff", "--name-only").trim()).toBe("a.txt") // unstaged, so Changes shows it
-    expect(git(dir, "diff", "--cached", "--name-only").trim()).toBe("")
-    expect(frame(t)).toContain(`a.txt restored from ${hash}`)
-  })
+    expect((await readStatus(dir))!.files.find((c) => c.path === "src/ui/one.ts")!.kind).toBe("untracked")
 
-  test("a file deleted by the commit has no version to check out", async () => {
-    const dir = mixedCommit()
-    const t = await setup(dir)
-    await openGit(t)
-    await toCommits(t)
+    // the folder row has no diff; { } from a file's diff jump over it
+    await press(t, "j") // one.ts
     await press(t, "RETURN")
-    await settle(t, 300)
-    await press(t, "G") // b.txt, deleted
-    await settle(t, 300)
-    await press(t, "c")
-    expect(frame(t)).toContain("deleted in this commit")
-    expect(frame(t)).not.toContain("Overwrite")
-  })
-
-  test("y copies the path of the file (Y the absolute one), from the file list, the diff and Changes", async () => {
-    const dir = mixedCommit()
-    writeFileSync(join(dir, "b.txt"), "x\n")
-    await copying(async (copied) => {
-      const t = await setup(dir)
-      await openGit(t)
-      await press(t, "y") // Changes: b.txt is the only change
-      await toCommits(t)
-      await press(t, "RETURN")
-      await settle(t, 300)
-      await press(t, "j") // added.txt
-      await press(t, "Y")
-      await press(t, "RETURN") // diff
-      await press(t, "y")
-      await Bun.sleep(30)
-      expect(copied).toEqual(["b.txt", join(dir, "added.txt"), "added.txt"])
-      expect(frame(t)).toContain("copied added.txt via test")
-    })
-  })
-
-  test("{ and } step through the files from inside the diff, in a commit and in Changes", async () => {
-    const dir = mixedCommit()
-    const t = await setup(dir)
-    await openGit(t)
-    await toCommits(t)
-    await press(t, "RETURN")
-    await settle(t, 300)
-    await press(t, "RETURN") // focus the diff of a.txt
-    expect(frame(t)).toContain("file 1/3")
-    expect(frame(t)).toContain("{ } file") // hint, because there are several files
-    expect(frame(t)).toContain("checkout file")
+    expect(frame(t)).toContain("Diff · src/ui/one.ts")
     await press(t, "}")
-    await settle(t, 300)
-    expect(frame(t)).toContain("file 2/3")
-    expect(frame(t)).toContain("+fresh")
-    expect(frame(t)).toContain("j/k scroll") // still in the diff
+    expect(frame(t)).toContain("Diff · src/ui/two.ts")
     await press(t, "}")
-    await settle(t, 300)
-    expect(frame(t)).toContain("file 3/3")
-    await press(t, "}") // last one: stays
-    await settle(t, 300)
-    expect(frame(t)).toContain("file 3/3")
-    await press(t, "{")
-    await press(t, "{")
-    await settle(t, 300)
-    expect(frame(t)).toContain("file 1/3")
-    expect(frame(t)).toContain("+TWO")
-
-    // c works from the diff as well
-    await press(t, "c")
-    expect(frame(t)).toContain("Overwrite a.txt")
-    await press(t, "ESCAPE") // closes the confirmation
-    expect(frame(t)).not.toContain("Overwrite")
-  })
-
-  test("{ } in the diff of Changes walks the changed files; hints only offer what applies", async () => {
-    const dir = project()
-    writeFileSync(join(dir, "a.txt"), "changed a\n")
-    writeFileSync(join(dir, "b.txt"), "changed b\n")
-    const t = await setup(dir)
-    await openGit(t)
-    expect(frame(t)).toContain("Diff · a.txt")
-    await press(t, "RETURN")
-    expect(frame(t)).toContain("file 1/2")
-    expect(frame(t)).toContain("stage hunk") // Changes diff: hunk actions are offered…
-    expect(frame(t)).not.toContain("checkout file") // …and checkout is not (that is for commits)
-    await press(t, "}")
-    await settle(t, 300)
     expect(frame(t)).toContain("Diff · b.txt")
-    expect(frame(t)).toContain("file 2/2")
-    await press(t, "{")
-    await settle(t, 300)
-    expect(frame(t)).toContain("Diff · a.txt")
   })
 
-  test("with a single file there is nothing to step through, and no hint for it", async () => {
+  test("layout: Graph under Branches on the left, the big Diff over Commands on the right", async () => {
     const dir = project()
     writeFileSync(join(dir, "b.txt"), "changed\n")
     const t = await setup(dir)
     await openGit(t)
+    const lines = frame(t).split("\n")
+    const row = (re: RegExp) => lines.findIndex((l) => re.test(l))
+    const col = (re: RegExp) => lines[row(re)]!.search(re)
+    const [branches, graph, stash] = [row(/╭─ Branches/), row(/╭─ Graph/), row(/╭─ Stash/)]
+    expect(branches).toBeGreaterThan(0)
+    expect(branches).toBeLessThan(graph)
+    expect(graph).toBeLessThan(stash)
+    expect(col(/╭─ Graph/)).toBe(col(/╭─ Branches/)) // same column
+    const [diff, cmds] = [row(/╭─ Diff/), row(/╭─ Commands/)]
+    expect(col(/╭─ Diff/)).toBeGreaterThan(col(/╭─ Graph/)) // right of the left column
+    expect(col(/╭─ Commands/)).toBe(col(/╭─ Diff/))
+    expect(diff).toBeLessThan(cmds)
+    expect(cmds - diff).toBeGreaterThan(10) // the diff is the biggest panel on the right
+  })
+
+  test("Commands lists the git commands orbit ran, with their outcome", async () => {
+    const dir = project()
+    writeFileSync(join(dir, "b.txt"), "changed\n")
+    const t = await setup(dir)
+    await openGit(t)
+    expect(frame(t)).toContain("no git command run yet")
+    await toChanges(t)
+    await press(t, " ") // stage b.txt
+    await settle(t)
+    await press(t, "c")
+    await type(t, "log me")
     await press(t, "RETURN")
-    expect(frame(t)).not.toContain("{ } file")
-    expect(frame(t)).not.toContain("file 1/1")
-    await press(t, "}")
-    expect(frame(t)).toContain("Diff · b.txt") // no-op, no crash
+    await settle(t)
+    await press(t, "p") // fails: no upstream
+    await settle(t, 600)
+    const f = frame(t)
+    expect(f).toContain("git add -- b.txt")
+    expect(f).toContain('git commit -F -')
+    expect(f).toContain("git pull --ff-only")
+    expect(f).toMatch(/✗ \S+\s+git pull --ff-only/)
+    expect(f).toMatch(/✓ \S+\s+git add -- b\.txt/)
+    // polling reads (status, log…) are not listed
+    expect(f).not.toContain("git status")
+    expect(f).not.toContain("git log")
   })
 
   test("zoom shows only the focused panel", async () => {
@@ -569,12 +396,15 @@ describe("git view", () => {
     writeFileSync(join(dir, "b.txt"), "changed\n")
     const t = await setup(dir)
     await openGit(t)
+    await toChanges(t)
     await press(t, "z")
     expect(frame(t)).toContain("Changes")
     expect(frame(t)).not.toContain("Branches")
+    expect(frame(t)).not.toContain("Repos ·")
     expect(frame(t)).not.toContain("Diff ·")
     await press(t, "ESCAPE")
     expect(frame(t)).toContain("Branches")
+    expect(frame(t)).toContain("Repos ·")
   })
 })
 
@@ -608,46 +438,39 @@ async function setupWorkspace(ws: string) {
   return { ...t, dir: ws, quits }
 }
 
+const branchOf = (ws: string, name: string) => git(join(ws, name), "branch", "--show-current").trim()
+
 describe("git view with services in different repos", () => {
-  test("the header sums up every repo and the view lists them with branch, changes and services", async () => {
+  test("the table shows every repo: branch, changes, last commit and services at a glance", async () => {
     const ws = workspace()
     writeFileSync(join(ws, "api", "a1.txt"), "1\n")
     writeFileSync(join(ws, "api", "a2.txt"), "2\n")
     writeFileSync(join(ws, "web", "w1.txt"), "1\n")
     const t = await setupWorkspace(ws)
     await settle(t, 600)
-    expect(frame(t)).toContain("⎇ 2 repos")
-    expect(frame(t)).toContain("✎3 in 2")
+    expect(frame(t)).not.toContain("⎇ 2 repos")
 
     await openGit(t)
     const f = frame(t)
-    expect(f).toContain("Repos · 2")
-    expect(f).toMatch(/● api\s+main\s+✎2/)
-    expect(f).toMatch(/● web\s+develop\s+✎1/)
-    expect(f).toContain("api") // services of the selected repo in the panel footer
+    expect(f).toContain("Repos · 2 · develop ×1 · main ×1")
+    expect(f).toMatch(/● api\s+main\s.*✎2\s+\S+ api first/)
+    expect(f).toMatch(/● web\s+develop\s.*✎1\s+\S+ web first/)
   })
 
-  test("picking another repo switches every panel to it, and actions only touch that repo", async () => {
+  test("picking another repo switches every panel to it, and single-repo actions only touch that repo", async () => {
     const ws = workspace()
     writeFileSync(join(ws, "api", "a1.txt"), "1\n")
     writeFileSync(join(ws, "web", "w1.txt"), "1\n")
     const t = await setupWorkspace(ws)
     await openGit(t)
+    expect(frame(t)).toContain("pick repo") // opens on the Repos table
     expect(frame(t)).toContain("Diff · a1.txt")
-    expect(frame(t)).toContain("api first")
-
-    t.mockInput.pressKey("TAB", { shift: true }) // repos sits right before changes in the tab order
-    await Bun.sleep(40)
-    await t.renderOnce()
-    expect(frame(t)).toContain("pick repo") // the repos panel has the focus
     await press(t, "j")
     await settle(t, 300)
     expect(frame(t)).toContain("Diff · w1.txt")
-    expect(frame(t)).toContain("web first")
     expect(frame(t)).toContain("Changes · develop")
-    expect(frame(t)).not.toContain("api first")
 
-    await press(t, "RETURN") // back to the changes of web
+    await press(t, "TAB") // changes of web
     await press(t, " ")
     await settle(t)
     expect(git(join(ws, "web"), "diff", "--cached", "--name-only").trim()).toBe("w1.txt")
@@ -666,24 +489,120 @@ describe("git view with services in different repos", () => {
     expect(frame(t)).toContain("Changes · develop")
   })
 
-  test("F fetches all of them", async () => {
+  test("space marks repos; the marks show in the table and a to mark all / none", async () => {
     const ws = workspace()
     const t = await setupWorkspace(ws)
     await openGit(t)
-    await press(t, "F")
+    expect(frame(t)).toContain("none marked: all")
+    await press(t, " ")
+    expect(frame(t)).toMatch(/✓ ● api/)
+    expect(frame(t)).toContain("1 marked")
+    await press(t, "a")
+    expect(frame(t)).toContain("2 marked")
+    await press(t, "a")
+    expect(frame(t)).toContain("none marked: all")
+  })
+
+  test("m f fetches all of them", async () => {
+    const ws = workspace()
+    const t = await setupWorkspace(ws)
+    await openGit(t)
+    await press(t, "m")
+    expect(frame(t)).toContain("new branch") // the footer offers the multi-repo keys
+    await press(t, "f")
     await settle(t, 600)
     expect(frame(t)).toContain("fetched 2 repos")
   })
 
-  test("with a single repo there is no Repos panel and tab never lands on a hidden one", async () => {
+  test("m b: a new branch in every repo, asking first; marked repos only when there are marks", async () => {
+    const ws = workspace()
+    const t = await setupWorkspace(ws)
+    await openGit(t)
+    await press(t, "m")
+    await press(t, "b")
+    await type(t, "feat/x")
+    await press(t, "RETURN")
+    expect(frame(t)).toContain("New branch feat/x in 2 repos")
+    expect(frame(t)).toContain("api, web")
+    await press(t, "n") // declined: nothing happens
+    expect([branchOf(ws, "api"), branchOf(ws, "web")]).toEqual(["main", "develop"])
+
+    await press(t, "m")
+    await press(t, "b")
+    await type(t, "feat/x")
+    await press(t, "RETURN")
+    await press(t, "y")
+    await settle(t, 600)
+    expect([branchOf(ws, "api"), branchOf(ws, "web")]).toEqual(["feat/x", "feat/x"])
+    expect(frame(t)).toContain("new branch 2 repos")
+    expect(frame(t)).toContain("Repos · 2 · feat/x ×2")
+
+    // only the marked one
+    await press(t, "j") // web
+    await press(t, " ")
+    await press(t, "m")
+    await press(t, "b")
+    await type(t, "only-web")
+    await press(t, "RETURN")
+    expect(frame(t)).toContain("New branch only-web in 1 repo")
+    await press(t, "y")
+    await settle(t, 600)
+    expect([branchOf(ws, "api"), branchOf(ws, "web")]).toEqual(["feat/x", "only-web"])
+  })
+
+  test("m s: a repo that cannot switch fails on its own row, the rest still switch", async () => {
+    const ws = workspace()
+    const t = await setupWorkspace(ws)
+    await openGit(t)
+    await press(t, "m")
+    await press(t, "s")
+    await type(t, "develop") // web is on it, api has no such branch
+    await press(t, "RETURN")
+    await press(t, "y")
+    await settle(t, 600)
+    expect(frame(t)).toContain("switched 1/2 · api")
+    expect(frame(t)).toMatch(/● api .*✗ /)
+    expect(frame(t)).toMatch(/● web .*✓ on develop/)
+    expect(branchOf(ws, "web")).toBe("develop")
+  })
+
+  test("m p pulls every repo after asking; one without upstream fails on its row", async () => {
+    const ws = workspace()
+    const bare = join(ws, "origin.git")
+    git(ws, "init", "-q", "--bare", "-b", "main", bare)
+    git(join(ws, "api"), "remote", "add", "origin", bare)
+    git(join(ws, "api"), "push", "-q", "-u", "origin", "main")
+    const other = join(ws, "other")
+    git(ws, "clone", "-q", bare, other)
+    git(other, "config", "user.name", "Test")
+    git(other, "config", "user.email", "t@example.com")
+    writeFileSync(join(other, "new.txt"), "n\n")
+    git(other, "add", ".")
+    git(other, "commit", "-q", "-m", "from elsewhere")
+    git(other, "push", "-q")
+
+    const t = await setupWorkspace(ws)
+    await openGit(t)
+    await press(t, "m")
+    await press(t, "p")
+    expect(frame(t)).toContain("Pull 2 repos")
+    await press(t, "y")
+    await settle(t, 800)
+    expect(git(join(ws, "api"), "log", "-1", "--format=%s").trim()).toBe("from elsewhere")
+    expect(frame(t)).toContain("pulled 1/2 · web")
+    expect(frame(t)).toMatch(/● api .*✓ pulled/)
+    expect(frame(t)).toMatch(/● web .*✗ /)
+  })
+
+  test("a single repo still gets the table, and shift+tab from Repos lands on the Commands panel", async () => {
     const dir = project()
     const t = await setup(dir)
     await openGit(t)
-    expect(frame(t)).not.toContain("Repos")
-    t.mockInput.pressKey("TAB", { shift: true }) // backwards from the first panel: must be the diff, not a hidden repos panel
+    expect(frame(t)).toContain("Repos · 1")
+    t.mockInput.pressKey("TAB", { shift: true })
     await Bun.sleep(40)
     await t.renderOnce()
-    expect(frame(t)).toContain("stage hunk")
+    expect(frame(t)).toContain("copy command") // the Commands panel's hints
   })
 
   test("services outside any repo: the view says so", async () => {

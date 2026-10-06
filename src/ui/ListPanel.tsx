@@ -54,7 +54,7 @@ export function ListPanel({ title, rows, selected, focused, onSelect, onFocus, e
         const idx = start + i
         const isSel = idx === selected
         return (
-          <box key={r.key} height={1} flexDirection="row" backgroundColor={isSel && focused ? theme.selection : undefined} onMouseDown={() => onSelect(idx)}>
+          <box key={r.key} height={1} flexShrink={0} flexDirection="row" backgroundColor={isSel && focused ? theme.selection : undefined} onMouseDown={() => onSelect(idx)}>
             <text>
               <span fg={isSel ? theme.accent : theme.panel}>{isSel ? "▌" : " "}</span>
             </text>

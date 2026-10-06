@@ -1,5 +1,5 @@
 import { exec, type ExecResult } from "../exec.ts"
-import { hunkPatch, type DiffFile } from "./diff.ts"
+import { cmdLog } from "./cmdlog.ts"
 import { GIT_ENV } from "./status.ts"
 
 export interface OpResult {
@@ -18,8 +18,13 @@ function toResult(r: ExecResult): OpResult {
   return { ok: r.code === 0, message: first(r) }
 }
 
-const git = (root: string, args: string[], opts: { input?: string; detached?: boolean } = {}) =>
-  exec(["git", ...args], { cwd: root, env: GIT_ENV, ...opts }).then(toResult)
+/** Every operation goes through here, so each one lands in the command log. */
+async function git(root: string, args: string[], opts: { input?: string; detached?: boolean } = {}): Promise<OpResult> {
+  const at = new Date()
+  const res = toResult(await exec(["git", ...args], { cwd: root, env: GIT_ENV, ...opts }))
+  cmdLog.add({ root, args, ok: res.ok, message: res.message, at, ms: Date.now() - at.getTime() })
+  return res
+}
 
 // ---------------------------------------------------------------- staging
 
@@ -35,35 +40,10 @@ export async function unstageAll(root: string, hasCommits: boolean) {
   return hasCommits ? git(root, ["reset", "-q"]) : git(root, ["rm", "--cached", "-r", "-q", "."])
 }
 
-/** Throws the worktree changes of a path away (tracked: back to the index; untracked: deleted). */
-export function discard(root: string, path: string, untracked: boolean) {
-  return untracked ? git(root, ["clean", "-fdq", "--", path]) : git(root, ["restore", "--", path])
-}
-
-/** Applies one hunk: to the index (stage), reversed to the index (unstage) or reversed to the worktree (discard). */
-export function applyHunk(root: string, file: DiffFile, index: number, mode: "stage" | "unstage" | "discard") {
-  const args = ["apply", "--recount", "--whitespace=nowarn"]
-  if (mode !== "discard") args.push("--cached")
-  if (mode !== "stage") args.push("--reverse")
-  return git(root, [...args, "-"], { input: hunkPatch(file, index) })
-}
-
 // ---------------------------------------------------------------- commits
-
-export async function lastMessage(root: string): Promise<string> {
-  const r = await exec(["git", "log", "-1", "--format=%B"], { cwd: root, env: GIT_ENV })
-  return r.code === 0 ? r.stdout.replace(/\s+$/, "") : ""
-}
 
 export function commit(root: string, message: string) {
   return git(root, ["commit", "-F", "-"], { input: message + "\n" })
-}
-
-/** Amends HEAD. With a `subject` only the first line of the message changes (the body is kept). */
-export async function amend(root: string, subject?: string) {
-  if (subject === undefined) return git(root, ["commit", "--amend", "--no-edit"])
-  const body = (await lastMessage(root)).split("\n").slice(1).join("\n")
-  return git(root, ["commit", "--amend", "-F", "-"], { input: subject + (body ? `\n${body}` : "") + "\n" })
 }
 
 export interface CommitInfo {
@@ -106,6 +86,8 @@ export interface BranchInfo {
   upstream?: string
   /** "ahead 1", "behind 2", "gone"… as git prints it */
   track: string
+  /** relative date of the last commit */
+  when: string
 }
 
 export function parseBranches(out: string): BranchInfo[] {
@@ -113,14 +95,14 @@ export function parseBranches(out: string): BranchInfo[] {
     .split("\n")
     .filter(Boolean)
     .map((l) => {
-      const [head, name, upstream, track] = l.split(SEP)
-      return { name: name!, current: head === "*", upstream: upstream || undefined, track: (track ?? "").replace(/[[\]]/g, "") }
+      const [head, name, upstream, track, when] = l.split(SEP)
+      return { name: name!, current: head === "*", upstream: upstream || undefined, track: (track ?? "").replace(/[[\]]/g, ""), when: when ?? "" }
     })
 }
 
 export async function branches(root: string): Promise<BranchInfo[]> {
   const r = await exec(
-    ["git", "for-each-ref", "--sort=-committerdate", `--format=%(HEAD)${SEP}%(refname:short)${SEP}%(upstream:short)${SEP}%(upstream:track)`, "refs/heads"],
+    ["git", "for-each-ref", "--sort=-committerdate", `--format=%(HEAD)${SEP}%(refname:short)${SEP}%(upstream:short)${SEP}%(upstream:track)${SEP}%(committerdate:relative)`, "refs/heads"],
     { cwd: root, env: GIT_ENV },
   )
   return r.code === 0 ? parseBranches(r.stdout) : []
@@ -128,12 +110,6 @@ export async function branches(root: string): Promise<BranchInfo[]> {
 
 export const checkout = (root: string, branch: string) => git(root, ["switch", branch])
 export const createBranch = (root: string, name: string) => git(root, ["switch", "-c", name])
-/** `force` deletes unmerged branches too (`-D`). */
-export const deleteBranch = (root: string, name: string, force = false) => git(root, ["branch", force ? "-D" : "-d", name])
-
-/** Puts the version of `path` that `rev` (a commit or a stash) has into the working tree; the index is left alone. */
-export const restoreFile = (root: string, rev: string, path: string) => git(root, ["restore", `--source=${rev}`, "--worktree", "--", path])
-
 // ---------------------------------------------------------------- remotes
 
 export const fetch = (root: string) => git(root, ["fetch", "--prune"], { detached: true })
@@ -165,9 +141,3 @@ export async function stashes(root: string): Promise<StashInfo[]> {
   const r = await exec(["git", "stash", "list", `--format=%gd${SEP}%H${SEP}%s`], { cwd: root, env: GIT_ENV })
   return r.code === 0 ? parseStashes(r.stdout) : []
 }
-
-export const stashPush = (root: string, message?: string) =>
-  git(root, ["stash", "push", "--include-untracked", ...(message ? ["-m", message] : [])])
-export const stashApply = (root: string, ref: string) => git(root, ["stash", "apply", ref])
-export const stashPop = (root: string, ref: string) => git(root, ["stash", "pop", ref])
-export const stashDrop = (root: string, ref: string) => git(root, ["stash", "drop", ref])

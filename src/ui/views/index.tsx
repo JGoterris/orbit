@@ -83,9 +83,8 @@ export const VIEWS: ViewDef[] = [
   {
     id: "git",
     label: "Git",
-    panes: ["repos", "changes", "branches", "commits", "stash", "gitdiff"],
-    defaultPane: "changes",
-    visiblePanes: (c) => (c.repos.length > 1 ? ["repos", "changes", "branches", "commits", "stash", "gitdiff"] : ["changes", "branches", "commits", "stash", "gitdiff"]),
+    panes: ["repos", "changes", "branches", "commits", "stash", "gitdiff", "gitlog"],
+    defaultPane: "repos",
     render: (c) => <GitView ctx={c} />,
     hints: (c) => gitHints(c.focus),
   },

@@ -4,7 +4,7 @@ import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { loadConfig } from "../src/config/load.ts"
 import { GitRepo } from "../src/core/git/repo.ts"
-import { discoverRepos, repoEntries, repoOfService, summarize } from "../src/core/git/repos.ts"
+import { discoverRepos, repoEntries, repoOfService } from "../src/core/git/repos.ts"
 
 const dirs: string[] = []
 afterAll(() => dirs.forEach((d) => rmSync(d, { recursive: true, force: true })))
@@ -79,19 +79,5 @@ describe("discoverRepos", () => {
     const names = repoEntries([new GitRepo(a), new GitRepo(b)]).map((e) => e.name)
     expect(names[0]).not.toBe(names[1])
     expect(names.every((n) => n.endsWith("/app"))).toBe(true)
-  })
-})
-
-describe("summarize", () => {
-  test("adds up dirty repos, changes and ahead/behind across repos", async () => {
-    const a = repo(join(mkdtempSync(join(tmpdir(), "orbit-s-")), "a"))
-    const b = repo(join(mkdtempSync(join(tmpdir(), "orbit-s-")), "b"))
-    dirs.push(a, b)
-    writeFileSync(join(a, "f.txt"), "changed\n")
-    writeFileSync(join(a, "new.txt"), "n\n")
-    const entries = repoEntries([new GitRepo(a), new GitRepo(b)])
-    expect(summarize(entries)).toEqual({ repos: 2, dirty: 0, changes: 0, ahead: 0, behind: 0 }) // nothing read yet
-    await Promise.all(entries.map((e) => e.repo.refresh()))
-    expect(summarize(entries)).toEqual({ repos: 2, dirty: 1, changes: 2, ahead: 0, behind: 0 })
   })
 })

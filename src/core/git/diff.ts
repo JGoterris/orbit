@@ -57,12 +57,6 @@ export function parseDiff(text: string): DiffFile[] {
   return files
 }
 
-/** A patch holding only hunk `index` of `file`, ready for `git apply`. */
-export function hunkPatch(file: DiffFile, index: number): string {
-  const h = file.hunks[index]!
-  return [...file.header, h.header, ...h.lines].join("\n") + "\n"
-}
-
 export type DiffSide = "unstaged" | "staged"
 
 const BASE = ["diff", "--no-color", "--no-ext-diff"]
@@ -89,52 +83,4 @@ export async function stashDiff(root: string, ref: string): Promise<string> {
 /** Diff between two revisions (`a..b`, a branch name…). */
 export async function rangeDiff(root: string, range: string): Promise<string> {
   return (await exec(["git", ...BASE, range], { cwd: root, env: GIT_ENV })).stdout
-}
-
-/** One file changed by a commit or stash. */
-export interface RevFile {
-  /** A added · M modified · D deleted · R renamed · C copied · T type changed */
-  status: string
-  path: string
-  /** the path before a rename/copy */
-  orig?: string
-}
-
-/** Parses `git diff --name-status -z` output (`M\0path\0`, `R100\0old\0new\0`). */
-export function parseNameStatus(out: string): RevFile[] {
-  const t = out.split("\0")
-  const files: RevFile[] = []
-  for (let i = 0; i < t.length; ) {
-    const code = t[i++]
-    if (!code) continue
-    const status = code[0]!
-    if (status === "R" || status === "C") {
-      const orig = t[i++]!
-      files.push({ status, orig, path: t[i++]! })
-    } else {
-      files.push({ status, path: t[i++]! })
-    }
-  }
-  return files
-}
-
-/** What a commit (or stash) is compared with: its first parent, or the empty tree for a root commit. */
-async function baseOf(root: string, rev: string): Promise<string> {
-  const parent = await exec(["git", "rev-parse", "--verify", "-q", `${rev}^1`], { cwd: root, env: GIT_ENV })
-  if (parent.code === 0) return `${rev}^1`
-  return (await exec(["git", "hash-object", "-t", "tree", "/dev/null"], { cwd: root, env: GIT_ENV })).stdout.trim()
-}
-
-/** The files a commit or stash changes, against its first parent. */
-export async function revFiles(root: string, rev: string): Promise<RevFile[]> {
-  const base = await baseOf(root, rev)
-  const res = await exec(["git", "diff", "--name-status", "-z", "-M", base, rev], { cwd: root, env: GIT_ENV })
-  return res.code === 0 ? parseNameStatus(res.stdout) : []
-}
-
-/** The diff of a single file of a commit or stash. */
-export async function revFileDiff(root: string, rev: string, f: RevFile): Promise<string> {
-  const base = await baseOf(root, rev)
-  const paths = f.orig ? [f.orig, f.path] : [f.path]
-  return (await exec(["git", ...BASE, "-M", base, rev, "--", ...paths], { cwd: root, env: GIT_ENV })).stdout
 }

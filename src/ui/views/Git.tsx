@@ -1,9 +1,11 @@
 import { useRenderer } from "@opentui/react"
 import { join } from "node:path"
 import { useEffect, useMemo, useReducer, useRef, useState } from "react"
-import { commitDiff, fileDiff, parseDiff, rangeDiff, revFileDiff, revFiles, stashDiff, type DiffSide, type RevFile } from "../../core/git/diff.ts"
+import { commitDiff, fileDiff, parseDiff, rangeDiff, stashDiff, type DiffSide } from "../../core/git/diff.ts"
+import { cmdLog, formatArgs } from "../../core/git/cmdlog.ts"
+import { branchSpread, runOnRepos, summarizeResults } from "../../core/git/multi.ts"
 import * as ops from "../../core/git/ops.ts"
-import type { GitRepo } from "../../core/git/repo.ts"
+import { buildTree } from "../../core/git/tree.ts"
 import type { RepoEntry } from "../../core/git/repos.ts"
 import { hasStaged, hasUnstaged, type FileChange } from "../../core/git/status.ts"
 import { clipboard } from "../clipboard.ts"
@@ -18,23 +20,17 @@ const LISTS = ["changes", "branches", "commits", "stash"] as const
 type ListPane = (typeof LISTS)[number]
 const isList = (p: Pane): p is ListPane => (LISTS as readonly string[]).includes(p)
 
+/** What a repo's last action ended in, kept in the Repos table until the next one. */
+interface Outcome {
+  ok: boolean
+  text: string
+}
+
 interface Prompt {
-  kind: "commit" | "amend" | "branch" | "stash"
+  kind: "commit" | "branch" | "multiBranch" | "multiSwitch"
   title: string
   hint: string
   value: string
-  /** amend: the subject as it was, to tell whether it was edited */
-  original?: string
-}
-
-/** Commits and stashes can be opened to browse the files they changed, one diff per file. */
-interface RevView {
-  pane: "commits" | "stash"
-  rev: string
-  /** short name for titles: the commit hash or the stash ref */
-  label: string
-  /** undefined while loading */
-  files: RevFile[] | undefined
 }
 
 interface Confirm {
@@ -44,8 +40,7 @@ interface Confirm {
 }
 
 export function GitView({ ctx }: { ctx: ViewContext }) {
-  // leaving the view must not leave its key handler (or a capture) behind in the shell. This lives here, not
-  // in GitPanels, which remounts when another repo is picked and would wipe the new handler as it unmounts.
+  // leaving the view must not leave its key handler (or a capture) behind in the shell
   useEffect(
     () => () => {
       ctx.keys.current = undefined
@@ -61,21 +56,26 @@ export function GitView({ ctx }: { ctx: ViewContext }) {
       </box>
     )
   }
-  const index = Math.min(ctx.repoIndex, ctx.repos.length - 1)
-  // keyed by repo: picking another one starts with fresh selections, diff and prompts
-  return <GitPanels key={ctx.repos[index]!.repo.root} ctx={ctx} entry={ctx.repos[index]!} index={index} />
+  return <GitPanels ctx={ctx} />
 }
 
-function GitPanels({ ctx, entry, index }: { ctx: ViewContext; entry: RepoEntry; index: number }) {
-  const repo: GitRepo = entry.repo
-  const { focus, setFocus, notify } = ctx
+function GitPanels({ ctx }: { ctx: ViewContext }) {
+  const { focus, setFocus, notify, repos } = ctx
   const renderer = useRenderer()
+  const index = Math.min(ctx.repoIndex, repos.length - 1)
+  const entry = repos[index]!
+  const repo = entry.repo
   const root = repo.root
   const [, rerender] = useReducer((n: number) => n + 1, 0)
   const [diffVersion, bumpDiff] = useReducer((n: number) => n + 1, 0)
   const [sel, setSel] = useState<Record<ListPane, number>>({ changes: 0, branches: 0, commits: 0, stash: 0 })
-  const [revView, setRevView] = useState<RevView | undefined>()
-  const [revSel, setRevSel] = useState(0)
+  /** selected row of the Commands panel; undefined follows the newest */
+  const [logSel, setLogSel] = useState<number | undefined>()
+  /** folded folders of the Changes tree, by path */
+  const [folded, setFolded] = useState<ReadonlySet<string>>(new Set())
+  const [marked, setMarked] = useState<Set<string>>(new Set())
+  const [results, setResults] = useState<Record<string, Outcome>>({})
+  const [multi, setMulti] = useState(false)
   const [sideChoice, setSideChoice] = useState<{ key: string; side: DiffSide } | undefined>()
   const [split, setSplit] = useState(false)
   const [scroll, setScroll] = useState(0)
@@ -87,38 +87,48 @@ function GitPanels({ ctx, entry, index }: { ctx: ViewContext; entry: RepoEntry; 
   const busy = useRef(false)
   const lastList = useRef<ListPane>("changes")
 
-  // live data: repaint on change, and keep everything fresh while the view is open
+  // another repo: its lists start from the top
   useEffect(() => {
-    repo.on("change", rerender)
-    void repo.refresh("all")
+    setSel({ changes: 0, branches: 0, commits: 0, stash: 0 })
+    setSideChoice(undefined)
+  }, [root])
+
+  // live data: every repo is read in full (the table shows last commit and stashes), the selected one more often
+  useEffect(() => {
+    const all = () => repos.forEach((e) => void e.repo.refresh("all"))
+    for (const e of repos) e.repo.on("change", rerender)
+    cmdLog.on("change", rerender)
+    all()
+    const slow = setInterval(all, 10_000)
+    return () => {
+      for (const e of repos) e.repo.off("change", rerender)
+      cmdLog.off("change", rerender)
+      clearInterval(slow)
+    }
+  }, [repos])
+  useEffect(() => {
     const timer = setInterval(() => {
       void repo.refresh("all")
       bumpDiff()
     }, 3000)
-    return () => {
-      repo.off("change", rerender)
-      clearInterval(timer)
-    }
+    return () => clearInterval(timer)
   }, [repo])
 
   const status = repo.status
   const files = status?.files ?? []
-  const lists = { changes: files, branches: repo.branches, commits: repo.commits, stash: repo.stashes }
+  const tree = useMemo(() => buildTree(files, folded), [files, folded])
+  const lists = { changes: tree, branches: repo.branches, commits: repo.commits, stash: repo.stashes }
   const at = (pane: ListPane) => Math.max(0, Math.min(sel[pane], lists[pane].length - 1))
   if (isList(focus)) lastList.current = focus
   const source = lastList.current
 
-  const file: FileChange | undefined = files[at("changes")]
-  const fileKey = file ? `${file.path}:${file.x}${file.y}` : ""
-  const side: DiffSide = !file || file.kind === "untracked" ? "unstaged" : sideChoice?.key === fileKey ? sideChoice.side : hasUnstaged(file) ? "unstaged" : "staged"
+  const treeRow = tree[at("changes")]
+  const file: FileChange | undefined = treeRow?.kind === "file" ? treeRow.file : undefined
+  const dir = treeRow?.kind === "dir" ? treeRow : undefined
+  const side: DiffSide = !file || file.kind === "untracked" ? "unstaged" : sideChoice ? sideChoice.side : hasUnstaged(file) ? "unstaged" : "staged"
   const branch = repo.branches[at("branches")]
   const commit = repo.commits[at("commits")]
   const stash = repo.stashes[at("stash")]
-  const revList = revView?.files ?? []
-  const revAt = Math.max(0, Math.min(revSel, revList.length - 1))
-  const revFile = revView && source === revView.pane ? revList[revAt] : undefined
-  /** the file the diff is showing, when it is one file of a list */
-  const diffPath = revFile?.path ?? (source === "changes" ? file?.path : undefined)
 
   const target = useMemo((): { key: string; title: string; load: () => Promise<string> } | undefined => {
     if (source === "changes" && file) return { key: `c:${file.path}:${side}`, title: `${file.path} · ${side}`, load: () => fileDiff(root, file, side) }
@@ -126,11 +136,9 @@ function GitPanels({ ctx, entry, index }: { ctx: ViewContext; entry: RepoEntry; 
       if (branch.current) return { key: `b:${branch.name}`, title: `${branch.name} (current)`, load: async () => "" }
       return { key: `b:${branch.name}`, title: `HEAD...${branch.name}`, load: () => rangeDiff(root, `HEAD...${branch.name}`) }
     }
-    if (revView && revFile && source === revView.pane)
-      return { key: `r:${revView.rev}:${revFile.path}`, title: `${revView.label} · ${revFile.path}`, load: () => revFileDiff(root, revView.rev, revFile) }
     if (source === "commits" && commit) return { key: `m:${commit.hash}`, title: `${commit.hash} ${commit.subject}`, load: () => commitDiff(root, commit.hash) }
     if (source === "stash" && stash) return { key: `s:${stash.ref}`, title: `${stash.ref} ${stash.message}`, load: () => stashDiff(root, stash.hash) }
-  }, [source, file?.path, file?.x, file?.y, side, branch?.name, branch?.current, commit?.hash, stash?.ref, stash?.hash, revView?.rev, revFile?.path, revFile?.orig, root]) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [source, file?.path, file?.x, file?.y, side, branch?.name, branch?.current, commit?.hash, stash?.ref, stash?.hash, root]) // eslint-disable-line react-hooks/exhaustive-deps
 
   // load the diff of whatever is selected; a slow answer for a previous selection is dropped
   const token = useRef(0)
@@ -150,64 +158,90 @@ function GitPanels({ ctx, entry, index }: { ctx: ViewContext; entry: RepoEntry; 
     shownKey.current = diff.key
   }, [diff.key])
 
-  const files_ = useMemo(() => parseDiff(diff.patch), [diff.patch])
-  const rows = useMemo(() => buildRows(files_), [files_])
+  const parsed = useMemo(() => parseDiff(diff.patch), [diff.patch])
+  const rows = useMemo(() => buildRows(parsed), [parsed])
   const page = pageRef.current
   const top = Math.min(scroll, Math.max(0, rows.rows.length - page))
   const curHunk = currentHunk(rows, hunkIdx, top, page)
 
+  const roots = new Set(repos.map((e) => e.repo.root))
+  const cmdEntries = cmdLog.entries.filter((e) => roots.has(e.root))
+  const logAt = logSel === undefined ? cmdEntries.length - 1 : Math.max(0, Math.min(logSel, cmdEntries.length - 1))
+  const cmdEntry = cmdEntries[logAt]
+
   // ---------------------------------------------------------------- actions
 
-  const report = (label: string, res: ops.OpResult, ok?: string) =>
-    res.ok ? notify(ok ?? label, theme.green) : notify(`${label} failed: ${res.message}`, theme.red)
+  /** The repos a multi-repo action touches: the marked ones, or all of them when none is marked. */
+  const targets = (): RepoEntry[] => (marked.size ? repos.filter((e) => marked.has(e.repo.root)) : repos)
 
-  /** Runs a git operation, one at a time, and reports its outcome. */
-  const act = async (label: string, run: () => Promise<ops.OpResult>, ok?: string) => {
+  const remember = (rs: { entry: RepoEntry; res: ops.OpResult }[], ok: string) =>
+    setResults((prev) => {
+      const next = { ...prev }
+      for (const { entry: e, res } of rs) next[e.repo.root] = { ok: res.ok, text: res.ok ? ok : res.message }
+      return next
+    })
+
+  /** Runs `op` on the given repos at once, one batch at a time; the table shows each outcome, a toast the summary. */
+  const runBatch = async (verb: string, doneText: string, on: RepoEntry[], op: (e: RepoEntry) => Promise<ops.OpResult>) => {
     if (busy.current) return notify("another git operation is still running", theme.yellow)
     busy.current = true
     try {
-      report(label, await repo.run(run), ok)
+      const rs = await runOnRepos(on, op)
+      remember(rs, doneText)
+      const sum = summarizeResults(verb, rs)
+      notify(sum.ok ? sum.message : `${sum.message}`, sum.ok ? theme.green : theme.red)
     } finally {
       busy.current = false
       bumpDiff()
     }
   }
 
-  /** `enter` on a commit or stash: browse the files it changed (the diff follows the selected file). */
-  const openFiles = (pane: "commits" | "stash", rev: string, label: string) => {
-    setRevView({ pane, rev, label, files: undefined })
-    setRevSel(0)
-    void revFiles(root, rev).then((files) => setRevView((v) => (v && v.rev === rev ? { ...v, files } : v)))
+  /** A single-repo git operation on the selected repo (staging, commit, new branch…), reported with git's own message. */
+  const act = async (label: string, run: () => Promise<ops.OpResult>, ok?: string) => {
+    if (busy.current) return notify("another git operation is still running", theme.yellow)
+    busy.current = true
+    try {
+      const res = await repo.run(run)
+      res.ok ? notify(ok ?? label, theme.green) : notify(`${label} failed: ${res.message}`, theme.red)
+    } finally {
+      busy.current = false
+      bumpDiff()
+    }
   }
 
-  const moveRev = (delta: number | "first" | "last") => {
-    const n = revList.length
-    if (!n) return
-    setRevSel(delta === "first" ? 0 : delta === "last" ? n - 1 : Math.max(0, Math.min(n - 1, revAt + delta)))
+  const pushOp = (e: RepoEntry): Promise<ops.OpResult> => {
+    const st = e.repo.status
+    if (!st?.branch) return Promise.resolve({ ok: false, message: "detached HEAD: no branch to push" })
+    return ops.push(e.repo.root, st.branch, !!st.upstream)
   }
 
-  /** `{` `}` in the diff: the previous / next file of whatever list the diff is following. */
-  const stepFile = (delta: 1 | -1) => {
-    if (revView && source === revView.pane) return moveRev(delta)
-    if (source === "changes") return move("changes", delta)
+  const NET = {
+    f: { verb: "fetched", op: (e: RepoEntry) => ops.fetch(e.repo.root) },
+    p: { verb: "pulled", op: (e: RepoEntry) => ops.pull(e.repo.root) },
+    u: { verb: "pushed", op: pushOp },
+  } as const
+
+  const names = (on: RepoEntry[]) => on.map((e) => e.name).join(", ")
+
+  /** f/p/u on one repo (the selected one) or, in multi-repo mode, on every target (pull and push ask first). */
+  const network = (k: keyof typeof NET, many: boolean) => {
+    const { verb, op } = NET[k]
+    const on = many ? targets() : [entry]
+    const go = () => void runBatch(verb, verb, on, op)
+    if (!many || k === "f") return go()
+    setConfirm({ title: `${k === "p" ? "Pull" : "Push"} ${on.length} repos`, message: names(on), run: go })
   }
 
-  const copyPath = (path: string, absolute: boolean) => {
-    const text = absolute ? join(root, path) : path
-    void clipboard.copy(renderer, text).then((r) => (r.ok ? notify(`copied ${text} via ${r.via}`, theme.green) : notify(r.error ?? "copy failed", theme.red)))
+  /** `ask`: the multi-repo flow always confirms (even with one repo marked), the plain `n` in Branches does not. */
+  const newBranch = (name: string, on: RepoEntry[], ask: boolean) => {
+    const go = () => void runBatch("new branch", `on ${name}`, on, (e) => ops.createBranch(e.repo.root, name))
+    if (!ask) return go()
+    setConfirm({ title: `New branch ${name} in ${on.length} repos`, message: names(on), run: go })
   }
 
-  /** `c` on a file of a commit/stash: bring its version into the working tree (asks: it overwrites local edits). */
-  const askRestore = () => {
-    if (!revView || !revFile) return
-    if (revFile.status === "D") return notify("deleted in this commit: there is no version of it to bring back", theme.yellow)
-    const { rev, label } = revView
-    const path = revFile.path
-    setConfirm({
-      title: "Checkout file",
-      message: `Overwrite ${path} in the working tree with its version from ${label}?`,
-      run: () => void act(`checkout ${path}`, () => ops.restoreFile(root, rev, path), `${path} restored from ${label} (it shows in Changes)`),
-    })
+  const switchBranch = (name: string, on: RepoEntry[]) => {
+    const go = () => void runBatch("switched", `on ${name}`, on, (e) => ops.checkout(e.repo.root, name))
+    setConfirm({ title: `Switch ${on.length} repos to ${name}`, message: names(on), run: go })
   }
 
   const move = (pane: ListPane, delta: number | "first" | "last") => {
@@ -217,9 +251,42 @@ function GitPanels({ ctx, entry, index }: { ctx: ViewContext; entry: RepoEntry; 
     setSel((s) => ({ ...s, [pane]: next }))
   }
 
+  const toggleMark = (r: RepoEntry) =>
+    setMarked((m) => {
+      const next = new Set(m)
+      next.has(r.repo.root) ? next.delete(r.repo.root) : next.add(r.repo.root)
+      return next
+    })
+
+  const copyPath = (path: string, absolute: boolean) => copyText(absolute ? join(root, path) : path)
+  const copyText = (text: string) => {
+    void clipboard.copy(renderer, text).then((r) => (r.ok ? notify(`copied ${text} via ${r.via}`, theme.green) : notify(r.error ?? "copy failed", theme.red)))
+  }
+
   const toggleFile = (f: FileChange) => {
     const stageIt = hasUnstaged(f)
     void act(stageIt ? `stage ${f.path}` : `unstage ${f.path}`, () => (stageIt ? ops.stage(root, [f.path]) : ops.unstage(root, [f.path], status?.hasCommits ?? true)), `${stageIt ? "staged" : "unstaged"} ${f.path}`)
+  }
+
+  /** space on a folder: stage everything under it, or unstage it when it is all staged */
+  const toggleDir = (d: NonNullable<typeof dir>) => {
+    const stageIt = d.files.some(hasUnstaged)
+    const paths = d.files.map((f) => f.path)
+    void act(`${stageIt ? "stage" : "unstage"} ${d.path}/`, () => (stageIt ? ops.stage(root, paths) : ops.unstage(root, paths, status?.hasCommits ?? true)), `${stageIt ? "staged" : "unstaged"} ${d.path}/`)
+  }
+
+  const foldDir = (path: string) =>
+    setFolded((f) => {
+      const next = new Set(f)
+      next.has(path) ? next.delete(path) : next.add(path)
+      return next
+    })
+
+  /** `{` `}`: the previous / next changed file, skipping folders */
+  const stepFile = (delta: 1 | -1) => {
+    for (let i = at("changes") + delta; i >= 0 && i < tree.length; i += delta) {
+      if (tree[i]!.kind === "file") return setSel((s) => ({ ...s, changes: i }))
+    }
   }
 
   const toggleAll = () => {
@@ -227,51 +294,30 @@ function GitPanels({ ctx, entry, index }: { ctx: ViewContext; entry: RepoEntry; 
     void act(anyUnstaged ? "stage all" : "unstage all", () => (anyUnstaged ? ops.stageAll(root) : ops.unstageAll(root, status?.hasCommits ?? true)), anyUnstaged ? "staged everything" : "unstaged everything")
   }
 
-  const hunkOp = (mode: "stage" | "unstage" | "discard") => {
-    const ref = rows.hunks[curHunk]
-    if (source !== "changes" || !file || file.kind === "untracked" || !ref) return notify("no hunk to act on here (hunks work on tracked files in Changes)", theme.yellow)
-    if (mode === "stage" && side === "staged") return notify("this hunk is already staged (space unstages it)", theme.yellow)
-    const df = files_[ref.file]!
-    const run = () => act(`${mode} hunk`, () => ops.applyHunk(root, df, ref.index, mode), `${mode === "stage" ? "staged" : mode === "unstage" ? "unstaged" : "discarded"} hunk in ${file.path}`)
-    if (mode === "discard") setConfirm({ title: "Discard hunk", message: `Throw away this hunk of ${file.path}? It cannot be undone.`, run: () => void run() })
-    else void run()
-  }
-
   const openCommit = () => {
     if (!files.some(hasStaged)) return notify("nothing is staged (space stages the selected file, a stages all)", theme.yellow)
-    setPrompt({ kind: "commit", title: "Commit", hint: "enter commit · esc cancel  (amend: A)", value: "" })
-  }
-
-  const openAmend = async () => {
-    if (!status?.hasCommits) return notify("no commit to amend yet", theme.yellow)
-    const subject = (await ops.lastMessage(root)).split("\n")[0] ?? ""
-    setPrompt({ kind: "amend", title: "Amend last commit", hint: "enter amend (staged changes included; unchanged subject keeps the message) · esc cancel", value: subject, original: subject })
+    setPrompt({ kind: "commit", title: `Commit · ${entry.name}`, hint: "enter commit · esc cancel  (amend and the rest: lazygit, L)", value: "" })
   }
 
   const submit = (p: Prompt) => {
     const value = p.value.trim()
     setPrompt(undefined)
-    if (p.kind === "commit") {
-      if (!value) return notify("empty commit message", theme.yellow)
-      return void act("commit", () => ops.commit(root, value), `committed: ${value}`)
-    }
-    if (p.kind === "amend") {
-      if (!value) return notify("empty commit message", theme.yellow)
-      return void act("amend", () => ops.amend(root, value === p.original ? undefined : value), "amended the last commit")
-    }
-    if (p.kind === "branch") {
-      if (!value) return
-      return void act("new branch", () => ops.createBranch(root, value), `on new branch ${value}`)
-    }
-    return void act("stash", () => ops.stashPush(root, value || undefined), "stashed the changes")
+    if (!value) return p.kind === "commit" ? notify("empty commit message", theme.yellow) : undefined
+    if (p.kind === "commit") return void act("commit", () => ops.commit(root, value), `committed: ${value}`)
+    if (p.kind === "branch") return newBranch(value, [entry], false)
+    if (p.kind === "multiBranch") return newBranch(value, targets(), true)
+    return switchBranch(value, targets())
   }
 
-  const askDiscard = (f: FileChange) =>
-    setConfirm({
-      title: "Discard changes",
-      message: f.kind === "untracked" ? `Delete the untracked ${f.path}?` : `Throw away the changes in ${f.path}?`,
-      run: () => void act(`discard ${f.path}`, () => ops.discard(root, f.path, f.kind === "untracked"), `discarded ${f.path}`),
+  const openMultiPrompt = (kind: "multiBranch" | "multiSwitch") => {
+    const on = targets()
+    setPrompt({
+      kind,
+      title: kind === "multiBranch" ? `New branch in ${on.length} repo${on.length > 1 ? "s" : ""}` : `Switch ${on.length} repo${on.length > 1 ? "s" : ""} to branch`,
+      hint: "enter continue · esc cancel",
+      value: "",
     })
+  }
 
   // ---------------------------------------------------------------- keys
 
@@ -291,25 +337,22 @@ function GitPanels({ ctx, entry, index }: { ctx: ViewContext; entry: RepoEntry; 
       else if (enter) submit(prompt)
       return true
     }
+    // multi-repo mode: the next key says what to do on every target
+    if (multi) {
+      setMulti(false)
+      if (ch === "f" || ch === "p" || ch === "u") network(ch, true)
+      else if (ch === "b") openMultiPrompt("multiBranch")
+      else if (ch === "s") openMultiPrompt("multiSwitch")
+      else if (key.name !== "escape" && ch !== "m") notify("multi-repo: f fetch · p pull · u push · b new branch · s switch branch", theme.yellow)
+      return true
+    }
     const down = key.name === "down" || ch === "j"
     const up = key.name === "up" || ch === "k"
 
     // keys that work in every pane
-    if (ch === "f") return void act("fetch", () => ops.fetch(root), "fetched"), true
-    if (ch === "F" && ctx.repos.length > 1) {
-      const all = ctx.repos
-      return void act("fetch all", async () => {
-        const results = await Promise.all(all.map(async (e) => ({ name: e.name, res: await ops.fetch(e.repo.root) })))
-        const bad = results.filter((r) => !r.res.ok)
-        void Promise.all(all.map((e) => e.repo.refresh("all")))
-        return bad.length ? { ok: false, message: `${bad.map((b) => b.name).join(", ")}: ${bad[0]!.res.message}` } : { ok: true, message: "" }
-      }, `fetched ${all.length} repos`), true
-    }
-    if (ch === "p") return void act("pull", () => ops.pull(root), "pulled"), true
-    if (ch === "u") {
-      if (!status?.branch) return notify("detached HEAD: there is no branch to push", theme.yellow), true
-      return void act("push", () => ops.push(root, status.branch!, !!status.upstream), "pushed"), true
-    }
+    if (ch === "m") return setMulti(true), true
+    if (ch === "f" || ch === "p" || ch === "u") return network(ch, false), true
+    if (ch === "L") return ctx.lazygit(root), true
 
     if (focus === "gitdiff") {
       if (key.name === "escape") return setFocus(lastList.current), true
@@ -328,41 +371,34 @@ function GitPanels({ ctx, entry, index }: { ctx: ViewContext; entry: RepoEntry; 
         setScroll(revealHunk(rows, next, top, page))
         return true
       }
-      if (ch === " ") return hunkOp(side === "staged" ? "unstage" : "stage"), true
-      if (ch === "d") return hunkOp("discard"), true
       if (ch === "s") return setSplit((v) => !v), true
-      if (ch === "}") return stepFile(1), true
-      if (ch === "{") return stepFile(-1), true
-      if (ch === "c" && revFile) return askRestore(), true
-      if ((ch === "y" || ch === "Y") && diffPath) return copyPath(diffPath, ch === "Y"), true
-    }
-    if (focus === "gitdiff" || focus === "changes") {
-      if (ch === "v" && file && file.kind === "tracked" && hasStaged(file) && hasUnstaged(file))
-        return setSideChoice({ key: fileKey, side: side === "staged" ? "unstaged" : "staged" }), true
+      if (ch === "}" && source === "changes") return stepFile(1), true
+      if (ch === "{" && source === "changes") return stepFile(-1), true
+      if ((ch === "y" || ch === "Y") && source === "changes" && file) return copyPath(file.path, ch === "Y"), true
+      return false
     }
     if (focus === "repos") {
-      const n = ctx.repos.length
+      const n = repos.length
       if (down) return ctx.setRepoIndex(Math.min(n - 1, index + 1)), true
       if (up) return ctx.setRepoIndex(Math.max(0, index - 1)), true
       if (ch === "g" || key.name === "home") return ctx.setRepoIndex(0), true
       if (ch === "G" || key.name === "end") return ctx.setRepoIndex(n - 1), true
+      if (ch === " ") return toggleMark(entry), true
+      if (ch === "a") return setMarked((m) => (m.size === n ? new Set() : new Set(repos.map((e) => e.repo.root)))), true
       if (enter) return setFocus("changes"), true
       return false
     }
-    if (!isList(focus)) return false
-
-    // a commit or stash opened to browse its files: the panel is a file list until esc
-    if (revView && focus === revView.pane) {
-      if (key.name === "escape") return setRevView(undefined), true
-      if (down) return moveRev(1), true
-      if (up) return moveRev(-1), true
-      if (ch === "g" || key.name === "home") return moveRev("first"), true
-      if (ch === "G" || key.name === "end") return moveRev("last"), true
-      if (enter) return revFile ? setFocus("gitdiff") : undefined, true
-      if (ch === "c" && revFile) return askRestore(), true
-      if ((ch === "y" || ch === "Y") && revFile) return copyPath(revFile.path, ch === "Y"), true
+    if (focus === "gitlog") {
+      const n = cmdEntries.length
+      if (down) return setLogSel(logAt + 1 >= n - 1 ? undefined : logAt + 1), true
+      if (up) return setLogSel(Math.max(0, logAt - 1)), true
+      if (ch === "g" || key.name === "home") return setLogSel(0), true
+      if (ch === "G" || key.name === "end") return setLogSel(undefined), true
+      if (ch === "c") return cmdLog.clear(), setLogSel(undefined), true
+      if ((ch === "y" || ch === "Y") && cmdEntry) return copyText(`git ${formatArgs(cmdEntry.args)}`), true
       return false
     }
+    if (!isList(focus)) return false
 
     if (down) return move(focus, 1), true
     if (up) return move(focus, -1), true
@@ -370,30 +406,18 @@ function GitPanels({ ctx, entry, index }: { ctx: ViewContext; entry: RepoEntry; 
     if (ch === "G" || key.name === "end") return move(focus, "last"), true
 
     if (focus === "changes") {
-      if (ch === " " && file) return toggleFile(file), true
+      if (ch === " ") return file ? toggleFile(file) : dir ? toggleDir(dir) : undefined, true
       if (ch === "a") return toggleAll(), true
-      if (ch === "d" && file) return askDiscard(file), true
       if (ch === "c") return openCommit(), true
-      if ((ch === "y" || ch === "Y") && file) return copyPath(file.path, ch === "Y"), true
-      if (ch === "A") return void openAmend(), true
-      if (ch === "s") return setPrompt({ kind: "stash", title: "Stash changes", hint: "enter stash (message optional, untracked files included) · esc cancel", value: "" }), true
-      if (enter) return setFocus("gitdiff"), true
+      if ((ch === "y" || ch === "Y") && (file || dir)) return copyPath(file?.path ?? dir!.path, ch === "Y"), true
+      if (ch === "v" && file && file.kind === "tracked" && hasStaged(file) && hasUnstaged(file)) return setSideChoice({ key: "", side: side === "staged" ? "unstaged" : "staged" }), true
+      if (enter) return dir ? foldDir(dir.path) : file ? setFocus("gitdiff") : undefined, true
     }
     if (focus === "branches") {
       if (enter && branch) return branch.current ? notify(`already on ${branch.name}`, theme.yellow) : void act(`switch to ${branch.name}`, () => ops.checkout(root, branch.name), `on ${branch.name}`), true
-      if (ch === "n") return setPrompt({ kind: "branch", title: "New branch", hint: "enter create and switch · esc cancel", value: "" }), true
-      if (ch === "d" && branch) {
-        if (branch.current) return notify("cannot delete the branch you are on", theme.yellow), true
-        return setConfirm({ title: "Delete branch", message: `Delete branch ${branch.name}? (unmerged work is refused)`, run: () => void act(`delete ${branch.name}`, () => ops.deleteBranch(root, branch.name), `deleted ${branch.name}`) }), true
-      }
+      if (ch === "n") return setPrompt({ kind: "branch", title: `New branch · ${entry.name}`, hint: "enter create and switch · esc cancel", value: "" }), true
     }
-    if (focus === "commits" && enter && commit) return openFiles("commits", commit.hash, commit.hash), true
-    if (focus === "stash" && stash) {
-      if (enter) return openFiles("stash", stash.hash, stash.ref), true
-      if (ch === " ") return void act("apply stash", () => ops.stashApply(root, stash.ref), `applied ${stash.ref}`), true
-      if (ch === "o") return void act("pop stash", () => ops.stashPop(root, stash.ref), `popped ${stash.ref}`), true
-      if (ch === "d") return setConfirm({ title: "Drop stash", message: `Drop ${stash.ref} (${stash.message})?`, run: () => void act("drop stash", () => ops.stashDrop(root, stash.ref), `dropped ${stash.ref}`) }), true
-    }
+    if ((focus === "commits" || focus === "stash") && enter) return setFocus("gitdiff"), true
     return false
   }
 
@@ -405,36 +429,109 @@ function GitPanels({ ctx, entry, index }: { ctx: ViewContext; entry: RepoEntry; 
   const unstaged = files.filter(hasUnstaged).length
   const colorOf = (c: string) => (c === "?" ? theme.muted : c === "U" || c === "D" ? theme.red : theme.orange)
 
-  const changeRows: ListRow[] = files.map((f) => ({
-    key: `${f.path}:${f.x}${f.y}`,
-    node: (
-      <text>
-        <span fg={f.x === "." ? theme.dim : theme.green}>{f.x === "." ? " " : f.x}</span>
-        <span fg={colorOf(f.y)}>{f.y === "." ? " " : f.y}</span>
-        <span fg={f.kind === "conflict" ? theme.red : theme.text}>{` ${fit(f.path, inner - 4)}`}</span>
-      </text>
-    ),
-  }))
+  const spread = branchSpread(repos)
+  const common = spread[0]?.name
+  const tableInner = ctx.width - 4
+  const nameW = Math.min(18, Math.max(6, ...repos.map((e) => e.name.length)))
+  const branchW = Math.min(22, Math.max(6, ...repos.map((e) => (e.repo.status?.branch ?? "detached").length)))
+  const SYNC_W = 13
+  const DIRTY_W = 8
+  const rest = tableInner - 4 - nameW - 1 - branchW - 1 - SYNC_W - DIRTY_W
+  const resultW = rest > 70 ? 26 : 0
+  const servicesW = rest - resultW > 56 ? 18 : 0
+  const lastW = Math.max(0, rest - resultW - servicesW)
+  const ago = (s: string) => s.replace(" ago", "").replace(/ (second|minute|hour|day|week|month|year)s?/, (_m, u: string) => (u === "month" ? "mo" : u[0]))
+
+  const repoRows: ListRow[] = repos.map((e) => {
+    const st = e.repo.status
+    const last = e.repo.commits[0]
+    const out = results[e.repo.root]
+    const sync = !st ? "" : !st.upstream ? (st.branch ? "no upstream" : "") : [st.ahead ? `↑${st.ahead}` : "", st.behind ? `↓${st.behind}` : ""].filter(Boolean).join(" ") || "="
+    const dirty = !st ? "" : [st.files.length ? `✎${st.files.length}` : "", e.repo.stashes.length ? `⚑${e.repo.stashes.length}` : ""].filter(Boolean).join(" ")
+    const branchName = st ? (st.branch ?? `detached ${st.oid ?? ""}`) : "…"
+    const odd = !!st?.branch && !!common && st.branch !== common
+    return {
+      key: e.repo.root,
+      node: (
+        <text>
+          <span fg={theme.accent}>{marked.has(e.repo.root) ? "✓ " : "  "}</span>
+          <span fg={!st ? theme.dim : st.files.length ? theme.orange : theme.green}>{"● "}</span>
+          <span fg={theme.text}>{fit(e.name, nameW)}</span>
+          <span fg={odd ? theme.yellow : theme.accent2}>{` ${fit(branchName, branchW)}`}</span>
+          <span fg={st?.behind ? theme.yellow : theme.muted}>{` ${fit(sync, SYNC_W - 1)}`}</span>
+          <span fg={theme.orange}>{fit(dirty, DIRTY_W)}</span>
+          {lastW > 8 ? (
+            <>
+              <span fg={theme.yellow}>{last ? `${last.hash} ` : ""}</span>
+              <span fg={theme.text}>{fit(last ? `${last.subject}` : "", Math.max(1, lastW - 17))}</span>
+              <span fg={theme.dim}>{fit(last ? ` ${ago(last.when)}` : "", 9)}</span>
+            </>
+          ) : null}
+          {servicesW ? <span fg={theme.muted}>{fit(e.services.join(", "), servicesW)}</span> : null}
+          {resultW ? <span fg={out?.ok ? theme.green : theme.red}>{fit(out ? `${out.ok ? "✓" : "✗"} ${out.text}` : "", resultW)}</span> : null}
+        </text>
+      ),
+    }
+  })
+
+  const changeRows: ListRow[] = tree.map((r) => {
+    const pad = "  ".repeat(r.depth)
+    if (r.kind === "dir") {
+      const label = `${r.collapsed ? "▸" : "▾"} ${r.name}/`
+      const count = ` ${r.files.length}`
+      return {
+        key: `d:${r.path}`,
+        node: (
+          <text>
+            <span fg={theme.dim}>{"   "}</span>
+            <span fg={theme.accent2}>{fit(`${pad}${label}`, Math.max(1, inner - 4 - count.length))}</span>
+            <span fg={theme.dim}>{count}</span>
+          </text>
+        ),
+      }
+    }
+    const f = r.file
+    return {
+      key: `${f.path}:${f.x}${f.y}`,
+      node: (
+        <text>
+          <span fg={f.x === "." ? theme.dim : theme.green}>{f.x === "." ? " " : f.x}</span>
+          <span fg={colorOf(f.y)}>{f.y === "." ? " " : f.y}</span>
+          <span fg={f.kind === "conflict" ? theme.red : theme.text}>{` ${fit(`${pad}${r.name}`, inner - 4)}`}</span>
+        </text>
+      ),
+    }
+  })
   const branchRows: ListRow[] = repo.branches.map((b) => ({
     key: b.name,
     node: (
       <text>
         <span fg={b.current ? theme.green : theme.dim}>{b.current ? "* " : "  "}</span>
-        <span fg={b.current ? theme.text : theme.muted}>{fit(b.name, inner - 2 - 12)}</span>
-        <span fg={theme.yellow}>{fit(b.track, 12)}</span>
+        <span fg={b.current ? theme.text : theme.muted}>{fit(b.name, inner - 2 - 20)}</span>
+        <span fg={theme.yellow}>{fit(b.track, 9)}</span>
+        <span fg={theme.dim}>{fit(` ${ago(b.when)}`, 11)}</span>
       </text>
     ),
   }))
-  const commitRows: ListRow[] = repo.commits.map((c, i) => ({
-    key: `${i}:${c.hash}`,
-    node: (
-      <text>
-        <span fg={theme.accent2}>{c.graph}</span>
-        <span fg={theme.yellow}>{c.hash} </span>
-        <span fg={theme.text}>{fit(c.subject, Math.max(1, inner - c.graph.length - 9))}</span>
-      </text>
-    ),
-  }))
+  const graphW = Math.max(20, (ctx.zoomed ? ctx.width : leftW) - 4)
+  /** author and age only when the panel is wide enough (zoomed, or a wide left column) */
+  const metaW = graphW >= 70 ? 24 : 0
+  const commitRows: ListRow[] = repo.commits.map((c, i) => {
+    const refs = c.refs ? `(${c.refs}) ` : ""
+    const used = c.graph.length + c.hash.length + 1 + refs.length
+    return {
+      key: `${i}:${c.hash}`,
+      node: (
+        <text>
+          <span fg={theme.accent2}>{c.graph}</span>
+          <span fg={theme.yellow}>{c.hash} </span>
+          <span fg={theme.green}>{refs}</span>
+          <span fg={theme.text}>{fit(c.subject, Math.max(1, graphW - used - metaW))}</span>
+          {metaW ? <span fg={theme.dim}>{fit(` ${c.author} · ${ago(c.when)}`, metaW)}</span> : null}
+        </text>
+      ),
+    }
+  })
   const stashRows: ListRow[] = repo.stashes.map((s) => ({
     key: s.ref,
     node: (
@@ -445,109 +542,104 @@ function GitPanels({ ctx, entry, index }: { ctx: ViewContext; entry: RepoEntry; 
     ),
   }))
 
-  const repoRows: ListRow[] = ctx.repos.map((e) => {
-    const st = e.repo.status
-    const tail = st ? [st.ahead ? `↑${st.ahead}` : "", st.behind ? `↓${st.behind}` : "", st.files.length ? `✎${st.files.length}` : ""].filter(Boolean).join(" ") : ""
-    const nameW = Math.min(14, Math.max(6, Math.floor(inner / 2.5)))
-    const branchW = Math.max(1, inner - 2 - nameW - 1 - (tail ? tail.length + 1 : 0))
-    return {
-      key: e.repo.root,
-      node: (
-        <text>
-          <span fg={!st ? theme.dim : st.files.length ? theme.orange : theme.green}>{"● "}</span>
-          <span fg={theme.text}>{fit(e.name, nameW)}</span>
-          <span fg={theme.accent2}>{` ${fit(st ? (st.branch ?? `detached ${st.oid ?? ""}`) : "…", branchW)}`}</span>
-          <span fg={theme.orange}>{tail ? ` ${tail}` : ""}</span>
-        </text>
-      ),
-    }
-  })
-  const statusColor = (c: string) => (c === "A" ? theme.green : c === "D" ? theme.red : c === "R" || c === "C" ? theme.accent2 : c === "M" ? theme.orange : theme.muted)
-  const fileRows: ListRow[] = revList.map((f) => ({
-    key: `${f.status}:${f.orig ?? ""}:${f.path}`,
+  const clock = (d: Date) => d.toTimeString().slice(0, 8)
+  const repoName = (root: string) => repos.find((e) => e.repo.root === root)?.name ?? ""
+  const cmdNameW = Math.min(18, Math.max(4, ...repos.map((e) => e.name.length)))
+  const cmdRows: ListRow[] = cmdEntries.map((c, i) => ({
+    key: `${i}:${c.at.getTime()}`,
     node: (
       <text>
-        <span fg={statusColor(f.status)}>{`${f.status} `}</span>
-        <span fg={theme.text}>{fit(f.orig ? `${f.orig} → ${f.path}` : f.path, inner - 4)}</span>
+        <span fg={theme.dim}>{`${clock(c.at)} `}</span>
+        <span fg={c.ok ? theme.green : theme.red}>{c.ok ? "✓ " : "✗ "}</span>
+        <span fg={theme.accent2}>{fit(repoName(c.root), cmdNameW)}</span>
+        <span fg={theme.text}>{` git ${formatArgs(c.args)}`}</span>
+        <span fg={theme.dim}>{`  ${c.ms}ms`}</span>
+        {!c.ok && c.message ? <span fg={theme.red}>{`  ${c.message}`}</span> : null}
       </text>
     ),
   }))
-  const filesPanel = (pane: "commits" | "stash") =>
-    revView?.pane === pane
-      ? {
-          title: `Files · ${revView.label}`,
-          rows: fileRows,
-          empty: revView.files ? "no files changed" : "loading…",
-          footer: "enter diff · esc back",
-          focused: focus === pane,
-          onFocus: () => setFocus(pane),
-          selected: revAt,
-          onSelect: setRevSel,
-        }
-      : undefined
+
   const sync = status?.upstream ? `${status.ahead ? ` ↑${status.ahead}` : ""}${status.behind ? ` ↓${status.behind}` : ""}` : status?.branch ? " (no upstream)" : ""
   const panel = (pane: ListPane) => ({ focused: focus === pane, onFocus: () => setFocus(pane), selected: at(pane), onSelect: (i: number) => setSel((s) => ({ ...s, [pane]: i })) })
-  const hunkNo = curHunk + 1
-  const [fileNo, fileCount] = revFile ? [revAt + 1, revList.length] : source === "changes" ? [at("changes") + 1, files.length] : [0, 0]
-  const diffStatus = [fileCount > 1 ? `file ${fileNo}/${fileCount}` : "", rows.hunks.length ? `hunk ${hunkNo}/${rows.hunks.length}` : "", split ? "split" : ""].filter(Boolean).join(" · ")
+  const fileRows = tree.flatMap((r, i) => (r.kind === "file" ? [i] : []))
+  const fileCount = source === "changes" ? fileRows.length : 0
+  const diffStatus = [fileCount > 1 ? `file ${fileRows.indexOf(at("changes")) + 1}/${fileCount}` : "", rows.hunks.length ? `hunk ${curHunk + 1}/${rows.hunks.length}` : "", split ? "split" : ""].filter(Boolean).join(" · ")
 
-  const hints = gitHints(focus, {
-    source,
-    browsing: !!revView && focus === revView.pane,
-    canStep: fileCount > 1,
-    inRev: !!revFile,
-  })
+  const hints = multi
+    ? [["f", "fetch"], ["p", "pull"], ["u", "push"], ["b", "new branch"], ["s", "switch branch"], ["esc", `cancel · on ${marked.size ? `${marked.size} marked` : `all ${repos.length}`}`]]
+    : gitHints(focus, { source, canStep: fileCount > 1, marked: marked.size })
   const hintsKey = JSON.stringify(hints)
   useEffect(() => ctx.setHints(hints), [hintsKey]) // eslint-disable-line react-hooks/exhaustive-deps
 
-  const showLists = !ctx.zoomed || isList(focus) || focus === "repos"
-  const showDiff = !ctx.zoomed || focus === "gitdiff"
-  const zoomedList = ctx.zoomed && (isList(focus) || focus === "repos") ? focus : undefined
+  const zoomedPane = ctx.zoomed ? focus : undefined
+  const show = (pane: Pane) => !zoomedPane || zoomedPane === pane
+  const showLeft = !zoomedPane || zoomedPane === "changes" || zoomedPane === "branches" || zoomedPane === "commits" || zoomedPane === "stash"
+  const showRight = !zoomedPane || zoomedPane === "gitdiff" || zoomedPane === "gitlog"
+  const spreadTitle = spread.map((s) => `${s.name} ×${s.count}`).join(" · ")
+  const targetNote = marked.size ? `${marked.size} marked` : "none marked: all"
 
   return (
-    <box flexGrow={1} flexDirection="row">
-      {showLists ? (
-        <box width={ctx.zoomed ? ctx.width : leftW} flexDirection="column">
-          {ctx.repos.length > 1 && (!zoomedList || zoomedList === "repos") && (
-            <ListPanel
-              title={`Repos · ${ctx.repos.length}`}
-              rows={repoRows}
-              empty=""
-              footer={entry.services.length ? entry.services.join(", ") : undefined}
-              height={zoomedList ? undefined : Math.min(ctx.repos.length, 6) + 2}
-              focused={focus === "repos"}
-              onFocus={() => setFocus("repos")}
-              selected={index}
-              onSelect={ctx.setRepoIndex}
-            />
-          )}
-          {(!zoomedList || zoomedList === "changes") && (
-            <ListPanel title={`Changes · ${status?.branch ?? (status?.oid ? `detached ${status.oid}` : "…")}${sync}`} rows={changeRows} empty="working tree clean" footer={files.length ? `${staged} staged · ${unstaged} unstaged` : undefined} grow={3} {...panel("changes")} />
-          )}
-          {(!zoomedList || zoomedList === "branches") && <ListPanel title="Branches" rows={branchRows} empty="no branches" grow={2} {...panel("branches")} />}
-          {(!zoomedList || zoomedList === "commits") && (
-            <ListPanel grow={3} {...(filesPanel("commits") ?? { title: "Commits", rows: commitRows, empty: "no commits yet", ...panel("commits") })} />
-          )}
-          {(!zoomedList || zoomedList === "stash") && (
-            <ListPanel grow={1} {...(filesPanel("stash") ?? { title: "Stash", rows: stashRows, empty: "no stashes", ...panel("stash") })} />
-          )}
-        </box>
-      ) : null}
-      {showDiff ? (
-        <DiffPane
-          rows={rows}
-          scroll={scroll}
-          current={curHunk}
-          onScroll={(d) => setScroll((v) => Math.max(0, v + d))}
-          pageRef={pageRef}
-          title={`Diff · ${target?.title ?? ""}`}
-          status={diffStatus}
-          focused={focus === "gitdiff"}
-          onFocus={() => setFocus("gitdiff")}
-          empty={target ? (source === "branches" && branch?.current ? "this is the branch you are on" : "no changes to show") : "nothing selected"}
-          split={split ? { patch: diff.patch } : undefined}
+    <box flexGrow={1} flexDirection="column">
+      {show("repos") && (
+        <ListPanel
+          title={`Repos · ${repos.length}${spreadTitle ? ` · ${spreadTitle}` : ""}`}
+          rows={repoRows}
+          empty=""
+          footer={`${targetNote} · m multi-repo · L lazygit`}
+          height={zoomedPane ? undefined : Math.min(repos.length, 8) + 2}
+          focused={focus === "repos"}
+          onFocus={() => setFocus("repos")}
+          selected={index}
+          onSelect={ctx.setRepoIndex}
         />
-      ) : null}
+      )}
+      {zoomedPane === "repos" ? null : (
+        <box flexGrow={1} flexDirection="row">
+          {showLeft ? (
+            <box width={ctx.zoomed ? ctx.width : leftW} flexDirection="column">
+              {show("changes") && (
+                <ListPanel title={`Changes · ${status?.branch ?? (status?.oid ? `detached ${status.oid}` : "…")}${sync}`} rows={changeRows} empty="working tree clean" footer={files.length ? `${staged} staged · ${unstaged} unstaged` : undefined} grow={3} {...panel("changes")} />
+              )}
+              {show("branches") && <ListPanel title="Branches" rows={branchRows} empty="no branches" grow={2} {...panel("branches")} />}
+              {show("commits") && <ListPanel title="Graph" rows={commitRows} empty="no commits yet" grow={3} {...panel("commits")} />}
+              {show("stash") && <ListPanel title="Stash" rows={stashRows} empty="no stashes" grow={1} {...panel("stash")} />}
+            </box>
+          ) : null}
+          {showRight ? (
+            <box flexGrow={1} flexDirection="column">
+              {show("gitdiff") && (
+                <DiffPane
+                  rows={rows}
+                  scroll={scroll}
+                  current={curHunk}
+                  onScroll={(d) => setScroll((v) => Math.max(0, v + d))}
+                  pageRef={pageRef}
+                  title={`Diff · ${target?.title ?? ""}`}
+                  status={diffStatus}
+                  focused={focus === "gitdiff"}
+                  onFocus={() => setFocus("gitdiff")}
+                  empty={target ? (source === "branches" && branch?.current ? "this is the branch you are on" : "no changes to show") : source === "changes" && dir ? `${dir.path}/ · ${dir.files.length} changed file${dir.files.length > 1 ? "s" : ""} (enter folds, space stages them all)` : "nothing selected"}
+                  split={split ? { patch: diff.patch } : undefined}
+                  grow={3}
+                />
+              )}
+              {show("gitlog") && (
+                <ListPanel
+                  title="Commands"
+                  rows={cmdRows}
+                  empty="no git command run yet (stage, commit, fetch, pull, push, branches…)"
+                  footer={cmdEntry?.message || undefined}
+                  height={zoomedPane ? undefined : 8}
+                  focused={focus === "gitlog"}
+                  onFocus={() => setFocus("gitlog")}
+                  selected={logAt}
+                  onSelect={(i) => setLogSel(i >= cmdEntries.length - 1 ? undefined : i)}
+                />
+              )}
+            </box>
+          ) : null}
+        </box>
+      )}
       {prompt ? <PromptOverlay title={prompt.title} hint={prompt.hint} value={prompt.value} onInput={(v) => setPrompt((p) => (p ? { ...p, value: v } : p))} width={ctx.width} /> : null}
       {confirm ? <YesNoOverlay title={confirm.title} message={confirm.message} width={ctx.width} /> : null}
     </box>
@@ -558,30 +650,22 @@ function GitPanels({ ctx, entry, index }: { ctx: ViewContext; entry: RepoEntry; 
 export interface HintMode {
   /** the diff follows this list */
   source?: "changes" | "branches" | "commits" | "stash"
-  /** a commit or stash is opened as a file list in the focused panel */
-  browsing?: boolean
   /** the diff follows a list of several files, so `{ }` can step through them */
   canStep?: boolean
-  /** the diff is of one file of a commit/stash */
-  inRev?: boolean
+  /** repos marked for multi-repo actions */
+  marked?: number
 }
 
 /** Footer hints for the focused panel (kept short: they have to fit in 100 columns or so). */
 export function gitHints(focus: Pane, mode: HintMode = {}): string[][] {
   const common = [["?", "help"], ["q", "quit"]]
   const net = ["f/p/u", "fetch/pull/push"]
-  if (focus === "repos") return [["j/k", "pick repo"], ["enter", "changes"], ["F", "fetch all"], net, ...common]
-  if (focus === "changes") return [["space", "stage"], ["a", "all"], ["c", "commit"], ["A", "amend"], ["d", "discard"], ["s", "stash"], ["y", "copy path"], ["enter", "diff"], net, ...common]
-  if (focus === "branches") return [["enter", "switch"], ["n", "new"], ["d", "delete"], net, ...common]
-  if (focus === "commits" || focus === "stash") {
-    if (mode.browsing) return [["enter", "diff"], ["c", "checkout file"], ["y", "copy path"], ["esc", "back"], ...common]
-    return focus === "commits"
-      ? [["enter", "files"], ["esc", "back"], net, ...common]
-      : [["enter", "files"], ["space", "apply"], ["o", "pop"], ["d", "drop"], net, ...common]
-  }
+  const lazy = ["L", "lazygit"]
+  if (focus === "repos") return [["j/k", "pick repo"], ["space", "mark"], ["a", "mark all"], ["m", "multi-repo"], ["enter", "changes"], lazy, net, ...common]
+  if (focus === "changes") return [["space", "stage"], ["a", "all"], ["c", "commit"], ["y", "copy path"], ["enter", "diff/fold"], net, lazy, ["m", "multi"], ...common]
+  if (focus === "branches") return [["enter", "switch"], ["n", "new"], net, lazy, ["m", "multi"], ...common]
+  if (focus === "commits" || focus === "stash") return [["enter", "diff"], net, lazy, ["m", "multi"], ...common]
+  if (focus === "gitlog") return [["j/k", "move"], ["G", "latest"], ["y", "copy command"], ["c", "clear"], lazy, ["m", "multi"], ...common]
   const files = mode.canStep ? [["{ }", "file"]] : []
-  const base = [["esc", "back"], ["j/k", "scroll"], ["[ ]", "hunk"], ...files]
-  if (mode.inRev) return [...base, ["c", "checkout file"], ["s", "split"], ["y", "copy path"], ...common]
-  if (mode.source === "changes") return [...base, ["space", "stage hunk"], ["d", "discard"], ["v", "side"], ["s", "split"], ["y", "copy path"], ...common]
-  return [...base, ["s", "split"], ...common]
+  return [["esc", "back"], ["j/k", "scroll"], ["[ ]", "hunk"], ...files, ["s", "split"], ...(mode.source === "changes" ? [["y", "copy path"]] : []), lazy, ...common]
 }
