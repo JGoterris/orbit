@@ -256,3 +256,62 @@ describe("supervisor", () => {
     await second.dispose()
   })
 })
+
+describe("external services", () => {
+  const external = (name: string, port: number, extra: Partial<ServiceConfig> = {}) =>
+    svc(name, "", { type: "external", cmd: undefined, health: { http: `http://127.0.0.1:${port}/`, interval: 100, timeout: 300 }, startTimeout: 800, ...extra })
+  const freePort = () => 40000 + Math.floor(Math.random() * 20000)
+
+  test("is monitored from init(): healthy while it answers, unhealthy when it stops", async () => {
+    const port = freePort()
+    let server: ReturnType<typeof Bun.serve> | undefined = Bun.serve({ port, fetch: () => new Response("ok") })
+    const sup = new Supervisor(config(external("saas", port)))
+    try {
+      await sup.init()
+      await Bun.sleep(400)
+      expect(sup.state("saas").status).toBe("healthy")
+      expect(sup.ownedRunningCount()).toBe(0) // quitting orbit has nothing to stop
+      await server.stop(true)
+      server = undefined
+      await Bun.sleep(1000)
+      expect(sup.state("saas").status).toBe("unhealthy")
+    } finally {
+      await server?.stop(true)
+      await sup.dispose()
+    }
+  })
+
+  test("a dependent waits for it; unreachable means the dependent fails", async () => {
+    const port = freePort()
+    const sup = new Supervisor(config(external("saas", port), svc("api", "sleep 30", { dependsOn: ["saas"] })))
+    await sup.init()
+    expect(await sup.start("api")).toBe(false)
+    expect(sup.state("api").status).toBe("failed")
+    expect(sup.state("api").error).toContain("dependency not ready: saas")
+    const server = Bun.serve({ port, fetch: () => new Response("ok") })
+    try {
+      expect(await sup.start("api")).toBe(true)
+      expect(sup.state("saas").status).toBe("healthy")
+    } finally {
+      await server.stop(true)
+      await sup.dispose()
+    }
+  })
+
+  test("stop does nothing to it nor to its dependents; start works without init()", async () => {
+    const port = freePort()
+    const server = Bun.serve({ port, fetch: () => new Response("ok") })
+    const sup = new Supervisor(config(external("saas", port), svc("api", "sleep 30", { dependsOn: ["saas"] })))
+    try {
+      expect(await sup.start("api")).toBe(true)
+      await sup.stop("saas")
+      expect(sup.state("saas").status).toBe("healthy")
+      expect(sup.state("api").status).toBe("running")
+      await sup.stop("api")
+      expect(sup.state("api").status).toBe("stopped")
+    } finally {
+      await server.stop(true)
+      await sup.dispose()
+    }
+  })
+})

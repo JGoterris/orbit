@@ -114,7 +114,7 @@ function parseHooks(rec: Record<string, unknown>, path: string, base?: Hooks): H
 }
 
 const RESTART: RestartPolicy[] = ["no", "on-failure", "always"]
-const TYPES: ServiceType[] = ["process", "docker", "compose"]
+const TYPES: ServiceType[] = ["process", "docker", "compose", "external"]
 
 function parseService(
   name: string,
@@ -170,7 +170,7 @@ function parseService(
       rec.oneshot === true
         ? undefined
         : rec.health !== undefined || !base
-          ? parseHealth(rec.health, `${path}.health`, port)
+          ? parseHealth(rec.health, `${path}.health`, type === "external" ? undefined : port)
           : base.health,
     oneshot: rec.oneshot === true || undefined,
     watch: rec.watch !== undefined ? parseWatch(rec.watch, `${path}.watch`) : base?.watch,
@@ -192,6 +192,12 @@ function parseService(
     composeService: asString(rec.service, `${path}.service`) ?? base?.composeService ?? name,
   }
 
+  if (svc.type === "external") {
+    for (const key of ["cmd", "command", "image", "watch", "oneshot", "pre_start", "post_start", "post_stop", "depends_on", "dependsOn"]) {
+      if (rec[key] !== undefined) throw new ConfigError(`an external service is not run by orbit: \`${key}\` has no effect`, `${path}.${key}`)
+    }
+    if (!svc.health) throw new ConfigError("an external service needs `health` (it is only monitored)", `${path}.health`)
+  }
   if (svc.type === "process" && !svc.cmd) throw new ConfigError("a process service needs `cmd`", path)
   if (svc.type === "docker" && !svc.image) throw new ConfigError("a docker service needs `image`", path)
   if (svc.type === "compose" && svc.envFiles.length) {

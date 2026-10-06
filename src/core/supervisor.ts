@@ -212,7 +212,9 @@ export class Supervisor extends EventEmitter implements SupervisorLike {
         const gen = ++rt.gen
         this.log(
           name,
-          svc.type === "process"
+          svc.type === "external"
+            ? `monitoring external service (${describeHealth(svc.health)})`
+            : svc.type === "process"
             ? `re-attached to running process (pid ${runner.pid})`
             : rt.adopted
               ? "attached to already running container (left running when orbit quits)"
@@ -234,6 +236,7 @@ export class Supervisor extends EventEmitter implements SupervisorLike {
 
   /** Starts a service (and its dependencies first). Resolves true once it is ready. */
   async start(name: string): Promise<boolean> {
+    if (this.service(name).type === "external") return this.checkExternal(name)
     const st = this.state(name)
     const rt = this.rt.get(name)!
     if (this.isReady(name)) return true
@@ -334,8 +337,31 @@ export class Supervisor extends EventEmitter implements SupervisorLike {
     return ready
   }
 
+  /** `start` of an external service: check it now. Resolves true once it answers (false after `start_timeout`). */
+  private async checkExternal(name: string): Promise<boolean> {
+    const svc = this.service(name)
+    const rt = this.rt.get(name)!
+    if (!rt.runner) {
+      // not being monitored yet (init() did not run)
+      rt.runner = this.makeRunner(name)
+      rt.adopted = true
+      rt.gen++
+      this.update(name, { status: "starting", startedAt: Date.now(), adopted: true, error: undefined })
+    }
+    this.scheduleHealth(name, rt.gen, 0)
+    const ready = await Promise.race([this.waitReady(name), Bun.sleep(svc.startTimeout).then(() => "timeout" as const)])
+    if (ready !== "timeout") return ready
+    if (this.isReady(name)) return true
+    const detail = this.state(name).health
+    this.log(name, `not reachable after ${Math.round(svc.startTimeout / 1000)}s (${describeHealth(svc.health)}${detail ? `: ${detail}` : ""})`)
+    this.flushWaiters(name, false)
+    return false
+  }
+
   /** Stops a service, stopping everything that depends on it first. */
   async stop(name: string, opts: { dependents?: boolean; keepAdopted?: boolean } = {}): Promise<void> {
+    // orbit does not run an external service, so there is nothing to stop (and its dependents keep running)
+    if (this.service(name).type === "external") return
     const rt = this.rt.get(name)!
     if (opts.dependents !== false) {
       await Promise.all(
@@ -608,6 +634,11 @@ export class Supervisor extends EventEmitter implements SupervisorLike {
         } else if (st.health !== res.detail) this.update(name, { health: res.detail })
       } else {
         rt.healthFailures++
+        if (svc.type === "external" && st.status === "starting") {
+          // nothing else will ever move an external service out of "starting"
+          this.log(name, `unreachable: ${res.detail}`)
+          this.update(name, { status: "unhealthy", health: res.detail })
+        } else
         // a service that was healthy needs a few consecutive failures to be marked unhealthy
         if (st.status === "healthy" && rt.healthFailures >= 3) {
           this.log(name, `health check failing: ${res.detail}`)

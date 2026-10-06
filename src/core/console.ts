@@ -16,14 +16,14 @@ const BACKLOG_BYTES = 2 * 1024 * 1024
 const CONTAINER_SHELL = "command -v bash >/dev/null && exec bash || exec sh"
 
 /**
- * What `i` runs for a service. A process gets its `console:` command (or $SHELL) in its own cwd and env;
+ * What `i` runs for a service. A process (or an external service, on the host) gets its `console:` command (or $SHELL) in its own cwd and env;
  * a container gets `docker exec -it`, so it has to be running.
  */
 export function consoleCommand(
   svc: ServiceConfig,
   state: { status: string; containerId?: string },
 ): ConsoleSpec | { error: string } {
-  if (svc.type === "process") {
+  if (svc.type === "process" || svc.type === "external") {
     let env: Record<string, string>
     try {
       env = { ...readEnvFiles(svc.envFiles), ...svc.env }

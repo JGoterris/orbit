@@ -1,6 +1,7 @@
 import type { EnvFileRef } from "./envFiles.ts"
 
-export type ServiceType = "process" | "docker" | "compose"
+/** `external`: something orbit does not run (a SaaS API, a managed database): it is only health-checked */
+export type ServiceType = "process" | "docker" | "compose" | "external"
 export type RestartPolicy = "no" | "on-failure" | "always"
 
 export interface HealthCheck {

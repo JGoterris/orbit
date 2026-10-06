@@ -7,6 +7,7 @@ import { parseComposeFile } from "./config/compose.ts"
 import { exec } from "./core/exec.ts"
 import { cleanLine, FileTail, matcher, pipeLines, readTail, type LogLine } from "./core/logs.ts"
 import { levels, depMapOf } from "./core/graph.ts"
+import { describeHealth } from "./core/health.ts"
 import { containerName, ProcessRunner } from "./core/runners.ts"
 import { projectStatus, readProjects, sortProjects } from "./core/projects.ts"
 import { IpcClient } from "./core/ipc/client.ts"
@@ -65,7 +66,7 @@ export function runList(config: OrbitConfig): number {
     s.port ? `:${s.port}` : "",
     String(lv[s.name]),
     s.dependsOn.join(", "),
-    s.type === "process" ? s.cmd! : s.type === "docker" ? s.image! : `${relative(config.root, s.composeFile!)}#${s.composeService}`,
+    s.type === "external" ? describeHealth(s.health) : s.type === "process" ? s.cmd! : s.type === "docker" ? s.image! : `${relative(config.root, s.composeFile!)}#${s.composeService}`,
   ])
   const header = ["SERVICE", "TYPE", "PORT", "LEVEL", "DEPENDS ON", "RUNS"]
   const widths = header.map((h, i) => Math.max(h.length, ...rows.map((r) => r[i]!.length)))
@@ -513,6 +514,10 @@ export async function runLogs(config: OrbitConfig, names: string[], opts: LogsOp
 
   for (const name of targets) {
     const svc = config.services[name]!
+    if (svc.type === "external") {
+      emit(name, "system", "no logs (external service)")
+      continue
+    }
     if (svc.type === "process") {
       if (opts.since && !warnedSince) {
         warnedSince = true

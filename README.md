@@ -20,6 +20,9 @@ Built with TypeScript, [Bun](https://bun.sh) and [OpenTUI](https://github.com/an
 - **Dependency graph** by layers (level 0 on the left), colored by status; selecting
   a node highlights its dependencies (cyan) and its dependents (purple).
   Navigable with arrow keys and mouse.
+- **External services** (`type: external`): a SaaS API or managed database you do not run. It only needs a
+  `health`; it shows up in the graph and dashboard as healthy/unhealthy and works as a `depends_on` target
+  (dependents wait until it answers). `start` re-checks it, `stop` does nothing, and `i` still opens its `console:`.
 - **Ordered startup**: `start` brings up dependencies first and waits for them to be *ready*
   (healthcheck OK, or running if they don't have one); `stop` stops dependents first.
 - **Healthchecks**: HTTP, TCP, command, or Docker's `HEALTHCHECK`. If you set `port` without
@@ -238,6 +241,15 @@ services:
     volumes: ["./data:/data"]
     cmd: redis-server --appendonly yes
     console: redis-cli          # `docker exec -it`; without `console:` you get bash/sh
+
+  auth0:                        # type: external — orbit does not run it, only health-checks it
+    type: external
+    health: "https://my-tenant.eu.auth0.com/.well-known/openid-configuration"
+    url: https://manage.auth0.com   # `o` opens it
+  managed-db:
+    type: external
+    health: "tcp:db.example.com:5432"
+    console: psql "$DATABASE_URL"   # `i` opens it on the host (with the service's env / env_file)
 
   postgres:                     # defined in docker-compose.yml: only fields overridden here
     restart: always

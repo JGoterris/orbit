@@ -35,7 +35,20 @@ export function createRunner(svc: ServiceConfig, project: string, cb: RunnerCall
       return new DockerRunner(svc, project, cb)
     case "compose":
       return new ComposeRunner(svc, cb)
+    case "external":
+      return new ExternalRunner()
   }
+}
+
+/** Nothing to run: the supervisor only health-checks an external service. */
+export class ExternalRunner implements Runner {
+  async start() {}
+  async attach() {
+    return true
+  }
+  async stop() {}
+  release() {}
+  killSync() {}
 }
 
 /** Tiny shell-words splitter (quotes and backslashes), for docker commands. */

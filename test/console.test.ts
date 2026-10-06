@@ -13,6 +13,11 @@ describe("consoleCommand", () => {
     expect(shell.argv).toEqual([process.env.SHELL || "/bin/sh"])
   })
 
+  test("external: runs on the host like a process, even though orbit never started it", () => {
+    const c = consoleCommand(svc({ type: "external", console: "psql $DB" }), { status: "healthy" })
+    expect(c).toMatchObject({ argv: ["/bin/sh", "-c", "psql $DB"], cwd: "/tmp", title: "psql $DB" })
+  })
+
   test("containers need to be running", () => {
     const d = svc({ type: "docker", console: "psql" })
     expect(consoleCommand(d, { status: "stopped" })).toEqual({ error: "db is not running" })

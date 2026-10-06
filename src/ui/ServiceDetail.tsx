@@ -75,7 +75,9 @@ export function ServiceDetail({ sup, name, width, focused, expanded, height, row
   const uptime = up ? formatDuration(Date.now() - st.startedAt!) : st.stoppedAt ? `${formatDuration(Date.now() - st.stoppedAt)} ago` : ""
 
   const what =
-    svc.type === "process"
+    svc.type === "external"
+      ? `external · ${describeHealth(svc.health)}`
+      : svc.type === "process"
       ? `$ ${svc.cmd}`
       : svc.type === "docker"
         ? `image ${svc.image}${svc.cmd ? ` · ${svc.cmd}` : ""}`

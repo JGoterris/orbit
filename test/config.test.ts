@@ -64,6 +64,20 @@ describe("config", () => {
     expect(load("    oneshot: true\n    post_stop: echo hi\n").services.a!.hooks!.postStop).toHaveLength(1)
   })
 
+  test("external services: only health, no cmd/watch/hooks/depends_on", () => {
+    const load = (body: string) => loadConfig({ dir: project({ "orbit.yaml": `services:\n  ext:\n    type: external\n${body}` }), env: {} })
+    const c = load('    health: "https://x.test/up"\n    url: https://x.test\n    console: psql "$DB"')
+    expect(c.services.ext).toMatchObject({ type: "external", url: "https://x.test", health: { http: "https://x.test/up" } })
+    expect(load('    health: "tcp:db.test:5432"').services.ext!.health?.tcp).toBe("db.test:5432")
+    expect(() => load("    port: 5432")).toThrow(/needs `health`/)
+    for (const key of ["cmd: x", "watch: ['a']", "pre_start: x", "oneshot: true"]) {
+      expect(() => load(`    health: "tcp:1"\n    ${key}`)).toThrow(/has no effect/)
+    }
+    const dep = loadConfig({ dir: project({ "orbit.yaml": "services:\n  a: { cmd: x, depends_on: [ext] }\n  ext: { type: external, health: 'tcp:1' }" }), env: {} })
+    expect(dep.services.a!.dependsOn).toEqual(["ext"])
+    expect(() => loadConfig({ dir: project({ "orbit.yaml": "services:\n  ext: { type: external, health: 'tcp:1', depends_on: [a] }\n  a: { cmd: x }" }) })).toThrow(/has no effect/)
+  })
+
   test("env interpolation and .env", () => {
     expect(parseDotEnv("A=1\n# c\nexport B='two'\nC=3 # note")).toEqual({ A: "1", B: "two", C: "3" })
     expect(interpolate({ a: "${X}-${Y:-def}" }, { X: "x" })).toEqual({ a: "x-def" })

@@ -50,6 +50,7 @@ export const typeBadge: Record<ServiceType, { label: string; color: string }> = 
   process: { label: "proc", get color() { return theme.accent } },
   docker: { label: "dock", get color() { return theme.cyan } },
   compose: { label: "comp", get color() { return theme.accent2 } },
+  external: { label: "ext", get color() { return theme.orange } },
 }
 
 /** Stable color per service name, for prefixes in the combined log view. */
