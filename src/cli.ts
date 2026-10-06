@@ -4,6 +4,7 @@ import YAML from "yaml"
 import type { OrbitConfig } from "./config/schema.ts"
 import { findComposeFile } from "./config/load.ts"
 import { parseComposeFile } from "./config/compose.ts"
+import { attachDesktopNotifier } from "./core/desktopNotify.ts"
 import { exec } from "./core/exec.ts"
 import { cleanLine, FileTail, matcher, pipeLines, readTail, type LogLine } from "./core/logs.ts"
 import { levels, depMapOf } from "./core/graph.ts"
@@ -218,6 +219,7 @@ export async function runUp(config: OrbitConfig, names: string[]): Promise<numbe
   }
   const sup = new Supervisor(config)
   process.on("exit", () => sup.killAllSync())
+  attachDesktopNotifier(sup)
   const { width, color, print } = prefixer(sup.names)
   sup.logs.onLine((l) => print(l.service, l.stream, l.text))
   const last = new Map<string, Status>()

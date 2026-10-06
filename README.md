@@ -23,6 +23,8 @@ Built with TypeScript, [Bun](https://bun.sh) and [OpenTUI](https://github.com/an
 - **External services** (`type: external`): a SaaS API or managed database you do not run. It only needs a
   `health`; it shows up in the graph and dashboard as healthy/unhealthy and works as a `depends_on` target
   (dependents wait until it answers). `start` re-checks it, `stop` does nothing, and `i` still opens its `console:`.
+- **Desktop notifications** when a service crashes or turns unhealthy, even with the terminal closed.
+  On by default; toggle it from the command palette (`:`).
 - **Ordered startup**: `start` brings up dependencies first and waits for them to be *ready*
   (healthcheck OK, or running if they don't have one); `stop` stops dependents first.
 - **Healthchecks**: HTTP, TCP, command, or Docker's `HEALTHCHECK`. If you set `port` without

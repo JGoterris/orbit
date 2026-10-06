@@ -1,6 +1,7 @@
 import { statSync } from "node:fs"
 import { loadConfig } from "../config/load.ts"
 import { ConfigError } from "../config/schema.ts"
+import { attachDesktopNotifier } from "./desktopNotify.ts"
 import { registerProject } from "./projects.ts"
 import { connectRemote } from "./ipc/daemon.ts"
 import { RemoteSupervisor } from "./ipc/remote.ts"
@@ -12,6 +13,7 @@ import { Supervisor, type SupervisorLike } from "./supervisor.ts"
 export class Session {
   private ipc?: IpcServer
   private switching = false
+  private stopNotifier?: () => void
 
   /**
    * `onShutdown` runs when a client asks over the socket to quit orbit (`orbit down`).
@@ -24,6 +26,13 @@ export class Session {
     private opts: { onShutdown?: (how: "stop" | "detach") => void; onDisconnect?: () => void; daemon?: boolean } = {},
   ) {
     this.watch(sup)
+    this.notifyOf(sup)
+  }
+
+  /** Services that run in this process (not in a daemon) notify the desktop from here. */
+  private notifyOf(sup: SupervisorLike) {
+    this.stopNotifier?.()
+    this.stopNotifier = sup instanceof Supervisor ? attachDesktopNotifier(sup) : undefined
   }
 
   private watch(sup: SupervisorLike) {
@@ -80,6 +89,8 @@ export class Session {
     }
 
     this.closeIpc()
+    this.stopNotifier?.()
+    this.stopNotifier = undefined
     this.switching = true
     try {
       if (how === "detach") prev.detach()
@@ -90,6 +101,7 @@ export class Session {
     releaseLock(prev.stateDir)
 
     this.watch(next)
+    this.notifyOf(next)
     this.sup = next
     registerProject(next.config.root, next.config.name)
     onSwitch?.(next)

@@ -2,6 +2,7 @@ import { mkdirSync, openSync, closeSync } from "node:fs"
 import { join } from "node:path"
 import { fileURLToPath } from "node:url"
 import type { OrbitConfig } from "../../config/schema.ts"
+import { attachDesktopNotifier, defaultBackend } from "../desktopNotify.ts"
 import { acquireLock, readLock, releaseLock, stateDir } from "../state.ts"
 import { Supervisor } from "../supervisor.ts"
 import { IpcClient } from "./client.ts"
@@ -56,6 +57,8 @@ export async function runDaemon(config: OrbitConfig, opts: { idleMinutes?: numbe
     releaseLock(sup.stateDir)
     return 1
   }
+  attachDesktopNotifier(sup)
+  stamp(`desktop notifications: ${defaultBackend()?.name ?? "no notifier found (notify-send, osascript or powershell)"}`)
   stamp(`orbit daemon for ${config.name} ready (pid ${process.pid}, socket ${ipc.path})`)
 
   if (opts.idleMinutes) {

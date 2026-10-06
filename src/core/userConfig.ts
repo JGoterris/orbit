@@ -10,12 +10,17 @@ export function configDir(): string {
 
 export interface UserConfig {
   theme?: string
+  /** desktop notifications when a service goes down (on unless `false`) */
+  notifications?: boolean
 }
 
 export function readUserConfig(): UserConfig {
   try {
     const raw = JSON.parse(readFileSync(join(configDir(), "config.json"), "utf8")) as UserConfig
-    return typeof raw.theme === "string" ? { theme: raw.theme } : {}
+    return {
+      ...(typeof raw.theme === "string" ? { theme: raw.theme } : {}),
+      ...(typeof raw.notifications === "boolean" ? { notifications: raw.notifications } : {}),
+    }
   } catch {
     return {}
   }

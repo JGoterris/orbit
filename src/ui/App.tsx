@@ -21,7 +21,7 @@ import { viewById, VIEWS, type Pane, type ViewContext } from "./views/index.tsx"
 import type { KeyHandler } from "./views/types.ts"
 import { applyTheme, statusStyle, theme } from "./theme.ts"
 import { DEFAULT_THEME, THEMES, type Palette } from "./themes.ts"
-import { writeUserConfig } from "../core/userConfig.ts"
+import { readUserConfig, writeUserConfig } from "../core/userConfig.ts"
 import { completePath, forgetProject, looksLikePath, projectStatus, readProjects, setPinned, type ProjectEntry, type ProjectStatus } from "../core/projects.ts"
 
 type Mode = "normal" | "palette" | "filter" | "help" | "env" | "quit" | "stopping" | "external" | "copy" | "theme" | "projects" | "switch" | "console"
@@ -346,6 +346,15 @@ export function App({ sup, onQuit, onOpenProject, startWithPicker = false, git, 
       { id: "copy-logs", label: "Copy visible logs to the clipboard", hint: "Y", run: () => logActions.current.copyAll() },
       { id: "projects", label: "Open project…", hint: "P", run: openProjects },
       { id: "theme", label: "Change theme…", hint: "T", run: openThemePicker },
+      {
+        id: "toggle-notifications",
+        label: "Toggle desktop notifications (service down)",
+        run: () => {
+          const on = readUserConfig().notifications === false
+          if (writeUserConfig({ notifications: on })) notify(`desktop notifications ${on ? "on" : "off"}`, on ? theme.green : theme.muted)
+          else notify("could not save the setting to the config file", theme.yellow)
+        },
+      },
       { id: "toggle-time", label: "Toggle log timestamps", hint: "t", run: () => setShowTime((v) => !v) },
       { id: "env", label: "Show environment variables", hint: "e", run: openEnv },
       { id: "help", label: "Show keyboard shortcuts", hint: "?", run: () => setMode("help") },
