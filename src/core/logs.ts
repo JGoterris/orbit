@@ -1,3 +1,7 @@
+import { TraceDetector, type TraceInfo } from "./traces.ts"
+
+export type { TraceInfo } from "./traces.ts"
+
 export type LogStream = "stdout" | "stderr" | "system"
 
 export interface LogLine {
@@ -6,6 +10,10 @@ export interface LogLine {
   service: string
   stream: LogStream
   text: string
+  /** first line of a stack trace */
+  trace?: TraceInfo
+  /** the other lines of a stack trace: seq of its first line */
+  traceOf?: number
 }
 
 /** Fixed-size FIFO buffer. */
@@ -68,6 +76,30 @@ export function filterLines(lines: readonly LogLine[], filter: string): readonly
   return filter ? lines.filter(matcher(filter)) : lines
 }
 
+/** A trace head is folded when it has more than one line behind it and was not expanded. */
+export function isFolded(l: LogLine, expanded: ReadonlySet<number>): boolean {
+  return !!l.trace && l.trace.frames >= 2 && !expanded.has(l.seq)
+}
+
+/** Hides the lines of folded stack traces. A trace whose head is not in `lines` (rotated out, filtered) stays visible. */
+export function foldTraces(lines: readonly LogLine[], expanded: ReadonlySet<number>): LogLine[] {
+  const folded = new Set<number>()
+  const out: LogLine[] = []
+  for (const l of lines) {
+    if (isFolded(l, expanded)) folded.add(l.seq)
+    if (l.traceOf !== undefined && folded.has(l.traceOf)) continue
+    out.push(l)
+  }
+  return out
+}
+
+/** For copying: the lines of `range` plus the hidden lines of every stack trace whose head is in it. */
+export function withFrames(range: readonly LogLine[], all: readonly LogLine[]): LogLine[] {
+  const seqs = new Set(range.map((l) => l.seq))
+  const heads = new Set(range.filter((l) => l.trace).map((l) => l.seq))
+  return all.filter((l) => seqs.has(l.seq) || (l.traceOf !== undefined && heads.has(l.traceOf)))
+}
+
 export function clock(ts: number): string {
   const d = new Date(ts)
   return `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}:${String(d.getSeconds()).padStart(2, "0")}`
@@ -105,6 +137,7 @@ export class LogStore {
   readonly all: Ring<LogLine>
   private perService = new Map<string, Ring<LogLine>>()
   private listeners = new Set<(line: LogLine) => void>()
+  private traces = new TraceDetector()
 
   constructor(
     private perServiceCapacity = 5000,
@@ -119,11 +152,14 @@ export class LogStore {
 
   /** Adds a line produced elsewhere (a remote supervisor), keeping its time and text; the sequence number is ours. */
   ingest(line: LogLine) {
-    this.add({ ...line })
+    // trace tags use the sender's seq numbers: ours are detected again
+    const { trace: _trace, traceOf: _traceOf, ...plain } = line
+    this.add(plain)
   }
 
   private add(line: LogLine) {
     line.seq = ++this.seq
+    this.traces.feed(line)
     const service = line.service
     this.all.push(line)
     let ring = this.perService.get(service)
@@ -141,7 +177,9 @@ export class LogStore {
     if (!service) {
       this.all.clear()
       this.perService.clear()
+      this.traces.reset()
     } else {
+      this.traces.reset(service)
       this.perService.get(service)?.clear()
     }
     this.seq++

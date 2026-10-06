@@ -1,6 +1,6 @@
 import type { BoxRenderable, MouseEvent } from "@opentui/core"
 import { useEffect, useRef, useState } from "react"
-import { clock, detectLevel, filterLines, matcher, type LogLine } from "../core/logs.ts"
+import { clock, detectLevel, filterLines, foldTraces, isFolded, matcher, type LogLine } from "../core/logs.ts"
 import { useSize } from "./hooks.ts"
 import { fit, serviceColor, theme } from "./theme.ts"
 
@@ -29,18 +29,32 @@ interface Props {
   current?: number
   /** mouse: click in copy mode (anchor == cursor) or drag (anchor → cursor) */
   onSelect?: (anchor: number, cursor: number) => void
+  /** collapse stack traces into their first line; `expanded` holds the heads (seq) the user opened */
+  fold?: boolean
+  expanded?: ReadonlySet<number>
+  onToggleTrace?: (seq: number) => void
   onFocus?: () => void
 }
 
-export function LogView({ lines, service, names, filter, scrollBack, onScroll, title, focused, showTime, wrap, cursor, anchor, freeze, search, current, onSelect, onFocus }: Props) {
+const NONE: ReadonlySet<number> = new Set()
+
+export function LogView({ lines, service, names, filter, scrollBack, onScroll, title, focused, showTime, wrap, cursor, anchor, freeze, search, current, onSelect, fold = false, expanded = NONE, onToggleTrace, onFocus }: Props) {
   const { ref, size, onSizeChange } = useSize<BoxRenderable>()
-  const filtered = filterLines(lines, filter)
+  const matching = filterLines(lines, filter)
+  const filtered = fold ? foldTraces(matching, expanded) : matching
   const height = Math.max(1, size.height - 2)
   const width = Math.max(10, size.width - 4)
   const prefixW = service ? 0 : Math.min(14, Math.max(4, ...names.map((n) => n.length))) + 1
   const timeW = showTime ? 9 : 0
   const textW = Math.max(1, width - timeW - prefixW)
-  const bodyOf = (l: LogLine) => (l.stream === "system" ? `» ${l.text}` : l.text)
+  const isHead = (l: LogLine) => fold && !!l.trace && l.trace.frames >= 2
+  const bodyOf = (l: LogLine) => {
+    if (l.stream === "system") return `» ${l.text}`
+    if (!isHead(l)) return l.text
+    if (!isFolded(l, expanded)) return `▾ ${l.text}`
+    const t = l.trace!
+    return `▸ ${l.text} ⋯ ${t.summary ? `${t.summary} · ` : ""}+${t.frames} lines`
+  }
   const rowsOf = (l: LogLine) => (wrap ? Math.max(1, Math.ceil(bodyOf(l).length / textW)) : 1)
 
   // with wrap a line takes several rows: the top of the scroll range is where `height` rows fit from line 0
@@ -95,6 +109,7 @@ export function LogView({ lines, service, names, filter, scrollBack, onScroll, t
 
   const status = [
     cursor !== undefined ? (anchor !== undefined ? `${selHi - selLo + 1} selected` : "copy mode") : "",
+    fold && filtered.some((l) => isFolded(l, expanded)) ? `${filtered.filter((l) => isFolded(l, expanded)).length} traces folded` : "",
     filter ? `/${filter}  ${filtered.length} matches` : `${filtered.length} lines`,
     back ? `↑ ${back}${unread ? ` · +${unread} new` : ""}  (f to follow)` : "following",
   ]
@@ -137,6 +152,7 @@ export function LogView({ lines, service, names, filter, scrollBack, onScroll, t
         const l = lineAt(e.y)
         pressed.current = l?.seq
         if (l && cursor !== undefined) onSelect?.(l.seq, l.seq)
+        else if (l && isHead(l)) onToggleTrace?.(l.seq)
       }}
       onMouseDrag={(e: MouseEvent) => {
         const l = lineAt(e.y)
@@ -153,7 +169,11 @@ export function LogView({ lines, service, names, filter, scrollBack, onScroll, t
             const color =
               l.stream === "system"
                 ? theme.accent2
-                : level === "error"
+                : fold && l.traceOf !== undefined
+                  ? theme.muted
+                  : l.trace
+                    ? theme.red
+                    : level === "error"
                   ? theme.red
                   : level === "warn"
                     ? theme.yellow

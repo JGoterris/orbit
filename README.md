@@ -33,6 +33,8 @@ Built with TypeScript, [Bun](https://bun.sh) and [OpenTUI](https://github.com/an
   On WSL2, edits made from Windows tools to files under `/mnt/c` don't trigger inotify: keep the project in the Linux filesystem.
 - **Long log lines wrap** (`w` toggles), the view stays put while you scroll up, and copy mode
   (`v`) selects across scrolling and copies whole lines via OSC 52 (or `wl-copy`/`xclip`/`pbcopy`/`clip.exe`).
+- **Stack traces fold** (`b` toggles): Java, Node and Python traces collapse into one row
+  (`▸ TypeError: … ⋯ +12 lines`). `b` folds/unfolds them all; to open just one, enter copy mode (`v`), move to its row and press `enter` or `space`. Copying and exporting keep every line.
 - **Live logs** per service or combined with color prefix, regex filter, scroll
   (wheel/PgUp/PgDn), timestamps, error/warning highlighting.
 - **CPU and memory** per process tree (via `/proc`) and per container (`docker stats`), with
@@ -124,7 +126,8 @@ recent unpinned ones are kept; pinned ones are never dropped).
 | `n` · `N` | next (newer) · previous (older) search match |
 | `f` · `PgUp PgDn` · wheel | follow / scroll logs |
 | `t` · `w` · `c` | timestamps · line wrap · clear logs |
-| `v` (logs focused) | copy mode: `j k` `ctrl+u/d` `g G` move, `v` start/clear selection, `y` copy, `esc` cancel |
+| `b` | fold / unfold all stack traces |
+| `v` (logs focused) | copy mode: `j k` `ctrl+u/d` `g G` move, `v` start/clear selection, `enter`/`space` on a trace row opens/closes it, `y` copy, `esc` cancel |
 | `Y` · `E` | copy all visible logs · export them to `~/.local/state/orbit/<project>/exports/` (the path is copied) |
 | `o` | open `http://localhost:<port>` (or `url`) in the browser |
 | `i` | interactive console of the selected service in a floating terminal (`console:` command, or `$SHELL` / the container's shell). `ctrl+]` hides it and keeps it running; `i` brings it back |

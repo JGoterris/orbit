@@ -51,7 +51,7 @@ export interface ViewContext {
     showTime: boolean
     wrap: boolean
     /** copy-mode / search props shared by every LogView */
-    extras: Pick<ComponentProps<typeof LogView>, "cursor" | "anchor" | "freeze" | "search" | "current" | "onSelect">
+    extras: Pick<ComponentProps<typeof LogView>, "cursor" | "anchor" | "freeze" | "search" | "current" | "onSelect" | "fold" | "expanded" | "onToggleTrace">
   }
 }
 

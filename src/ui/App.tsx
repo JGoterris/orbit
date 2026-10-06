@@ -7,7 +7,7 @@ import { resolveEnv } from "../config/envFiles.ts"
 import { consoleCommand, ConsoleManager, type ConsoleSession } from "../core/console.ts"
 import { openUrl } from "../core/exec.ts"
 import { findGitRoot } from "../core/git.ts"
-import { filterLines, formatLines, matcher } from "../core/logs.ts"
+import { filterLines, foldTraces, formatLines, matcher, withFrames } from "../core/logs.ts"
 import type { SupervisorLike } from "../core/supervisor.ts"
 import { ConsoleOverlay, consoleSize } from "./ConsoleOverlay.tsx"
 import { GraphView, neighbourInDirection, useGraphLayout } from "./GraphView.tsx"
@@ -79,6 +79,9 @@ export function App({ sup, onQuit, onOpenProject, startWithPicker = false, git, 
   const [scrollBack, setScrollBack] = useState(0)
   const [showTime, setShowTime] = useState(false)
   const [wrap, setWrap] = useState(true)
+  // stack traces collapse into one row; `expanded` are the heads (by seq) the user opened
+  const [fold, setFold] = useState(true)
+  const [expanded, setExpanded] = useState<ReadonlySet<number>>(new Set())
   // the bar opened by "/" either hides non-matching lines (filter) or highlights matches and lets n/N jump (search)
   const [barKind, setBarKind] = useState<"filter" | "search">("filter")
   const [search, setSearch] = useState("")
@@ -103,8 +106,19 @@ export function App({ sup, onQuit, onOpenProject, startWithPicker = false, git, 
   const toastTimer = useRef<ReturnType<typeof setTimeout>>(undefined)
 
   const logService = view === "logs" && logScope === "all" ? undefined : selected
-  /** the lines the focused log panel shows (after the filter) */
-  const viewLines = () => filterLines(sup.logs.lines(logService), filter)
+  /** every line that matches the filter, stack traces included: what is copied, exported and searched */
+  const rawViewLines = () => filterLines(sup.logs.lines(logService), filter)
+  /** the rows the focused log panel shows (after the filter and the folding) */
+  const viewLines = () => (fold ? foldTraces(rawViewLines(), expanded) : rawViewLines())
+  const toggleTrace = useCallback(
+    (seq: number) =>
+      setExpanded((prev) => {
+        const next = new Set(prev)
+        if (!next.delete(seq)) next.add(seq)
+        return next
+      }),
+    [],
+  )
 
   const [sidebarDelta, setSidebarDelta] = useState(noSidebarDelta)
   const [detailH, setDetailH] = useState<number | undefined>()
@@ -326,6 +340,7 @@ export function App({ sup, onQuit, onOpenProject, startWithPicker = false, git, 
         return items
       }),
       { id: "clear-logs", label: "Clear all logs", run: () => sup.clearLogs() },
+      { id: "toggle-fold", label: "Toggle stack trace folding", hint: "b", run: () => setFold((v) => !v) },
       { id: "toggle-wrap", label: "Toggle log line wrap", hint: "w", run: () => setWrap((v) => !v) },
       { id: "export-logs", label: "Export visible logs to a file", hint: "E", run: () => logActions.current.export() },
       { id: "copy-logs", label: "Copy visible logs to the clipboard", hint: "Y", run: () => logActions.current.copyAll() },
@@ -378,7 +393,7 @@ export function App({ sup, onQuit, onOpenProject, startWithPicker = false, git, 
   }
 
   function exportLogs() {
-    const lines = viewLines()
+    const lines = rawViewLines()
     if (!lines.length) return notify("no logs to export", theme.yellow)
     try {
       const dir = join(sup.stateDir, "exports")
@@ -401,7 +416,7 @@ export function App({ sup, onQuit, onOpenProject, startWithPicker = false, git, 
   /** n / N: move to the next (newer) / previous (older) line matching the search; the first jump goes to the newest. */
   function jumpMatch(dir: 1 | -1, fromEnd = false) {
     if (!search) return notify("no search: press /, tab, type, enter", theme.yellow)
-    const lines = viewLines()
+    const lines = rawViewLines()
     const hit = matcher(search)
     const idxs = lines.flatMap((l, i) => (hit(l) ? [i] : []))
     if (!idxs.length) return notify(`no matches for /${search}`, theme.yellow)
@@ -412,11 +427,14 @@ export function App({ sup, onQuit, onOpenProject, startWithPicker = false, git, 
       const before = idxs.filter((i) => i < at).length - 1
       k = dir > 0 ? (after < 0 ? 0 : after) : before < 0 ? idxs.length - 1 : before
     }
-    setMatch(lines[idxs[k]!]!.seq)
+    const found = lines[idxs[k]!]!
+    setMatch(found.seq)
+    // a match inside a folded stack trace opens it
+    if (fold && found.traceOf !== undefined && !expanded.has(found.traceOf)) toggleTrace(found.traceOf)
     notify(`match ${k + 1}/${idxs.length}`, theme.accent)
   }
 
-  logActions.current = { export: exportLogs, copyAll: () => copyLines(viewLines(), "all logs in view") }
+  logActions.current = { export: exportLogs, copyAll: () => copyLines(rawViewLines(), "all logs in view") }
 
   useKeyboard((key: KeyEvent) => {
     const ch = key.sequence
@@ -542,12 +560,20 @@ export function App({ sup, onQuit, onOpenProject, startWithPicker = false, git, 
       if (key.name === "pageup") return go(at - logPage)
       if (ch === "g" || key.name === "home") return go(0)
       if (ch === "G" || key.name === "end") return go(lines.length - 1)
+      // on a stack trace row, enter / space / o open or close it (everywhere else they copy / select)
+      const cur = lines[at]!
+      const head = fold ? (cur.traceOf ?? (cur.trace && cur.trace.frames >= 2 ? cur.seq : undefined)) : undefined
+      if (head !== undefined && (ch === "o" || ch === " " || key.name === "return")) {
+        toggleTrace(head)
+        return cur.traceOf !== undefined ? setCopy({ ...copy, cursor: head }) : undefined
+      }
+      if (ch === "o") return notify(fold ? "not in a stack trace" : "stack trace folding is off (b)", theme.yellow)
       if (ch === "v" || ch === " ") return setCopy({ cursor: copy.cursor, anchor: copy.anchor === undefined ? copy.cursor : undefined })
       if (ch === "y" || key.name === "return") {
         const from = copy.anchor === undefined ? at : Math.max(0, lines.findIndex((l) => l.seq === copy.anchor))
         const range = lines.slice(Math.min(at, from), Math.max(at, from) + 1)
         exitCopy()
-        return copyLines(range, "selection")
+        return copyLines(withFrames(range, rawViewLines()), "selection")
       }
       return
     }
@@ -630,7 +656,8 @@ export function App({ sup, onQuit, onOpenProject, startWithPicker = false, git, 
     if (ch === "f") return setScrollBack(0)
     if (ch === "t") return setShowTime((v) => !v)
     if (ch === "w") return setWrap((v) => !v)
-    if (ch === "Y") return copyLines(viewLines(), "all logs in view")
+    if (ch === "b") return setFold((v) => !v)
+    if (ch === "Y") return copyLines(rawViewLines(), "all logs in view")
     if (ch === "E") return exportLogs()
     if (ch === "n") return jumpMatch(1)
     if (ch === "N") return jumpMatch(-1)
@@ -752,6 +779,9 @@ export function App({ sup, onQuit, onOpenProject, startWithPicker = false, git, 
     cursor: mode === "copy" ? copy?.cursor : undefined,
     anchor: mode === "copy" ? copy?.anchor : undefined,
     freeze: mode === "copy",
+    fold,
+    expanded,
+    onToggleTrace: toggleTrace,
     search: search || undefined,
     current: match,
     onSelect: (anchor: number, cursor: number) => {
@@ -798,6 +828,7 @@ export function App({ sup, onQuit, onOpenProject, startWithPicker = false, git, 
           ["j/k", "move"],
           ["ctrl+d/u", "page"],
           ["v", "start/clear selection"],
+          ["enter/space", "open/close trace"],
           ["y", "copy"],
           ["esc", "cancel"],
         ]
