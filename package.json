@@ -1,6 +1,6 @@
 {
   "name": "@jgoterris/orbit",
-  "version": "0.4.0",
+  "version": "0.5.0",
   "description": "Terminal UI to launch, control and monitor local services",
   "type": "module",
   "license": "MIT",
