@@ -21,6 +21,7 @@
     "src",
     "bin",
     "README.md",
+    "assets/logo.svg",
     "LICENSE",
     "THIRD_PARTY_NOTICES.md"
   ],

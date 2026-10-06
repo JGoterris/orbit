@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="assets/logo.svg" alt="orbit" width="128" height="128">
+</p>
+
 # orbit
 
 TUI to launch, control and monitor local services —processes (backends, frontends,

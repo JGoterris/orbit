@@ -1,0 +1,40 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" width="256" height="256" role="img" aria-labelledby="title">
+  <title id="title">orbit</title>
+  <defs>
+    <linearGradient id="core" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#22d3ee"/>
+      <stop offset="1" stop-color="#a78bfa"/>
+    </linearGradient>
+    <linearGradient id="ring" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#a78bfa" stop-opacity="0.35"/>
+      <stop offset="0.5" stop-color="#94a3b8" stop-opacity="0.9"/>
+      <stop offset="1" stop-color="#22d3ee"/>
+    </linearGradient>
+  </defs>
+
+  <!-- background -->
+  <rect width="256" height="256" rx="56" fill="#0b0f17"/>
+
+  <g transform="translate(128 128)">
+    <g transform="rotate(-28)">
+      <!-- orbit: back half (behind the core) -->
+      <ellipse rx="100" ry="38" fill="none" stroke="url(#ring)" stroke-width="7"/>
+    </g>
+
+    <!-- core: ◉ -->
+    <circle r="44" fill="none" stroke="url(#core)" stroke-width="7"/>
+    <circle r="27" fill="url(#core)"/>
+
+    <g transform="rotate(-28)">
+      <!-- orbit: front half (over the core, with a gap) -->
+      <path d="M 100 0 A 100 38 0 0 1 -100 0" fill="none" stroke="#0b0f17" stroke-width="19"/>
+      <path d="M 100 0 A 100 38 0 0 1 -100 0" fill="none" stroke="url(#ring)" stroke-width="7"/>
+
+      <!-- satellites (services) -->
+      <circle cx="94" cy="-13" r="17" fill="#0b0f17"/>
+      <circle cx="94" cy="-13" r="11" fill="#4ade80"/>
+      <circle cx="-88" cy="18" r="12" fill="#0b0f17"/>
+      <circle cx="-88" cy="18" r="7" fill="#a78bfa"/>
+    </g>
+  </g>
+</svg>
