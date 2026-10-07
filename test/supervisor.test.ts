@@ -67,6 +67,49 @@ describe.skipIf(win)("supervisor", () => {
     await sup.dispose()
   })
 
+  test("ready_when log gates dependents until the line shows up (stdout or stderr)", async () => {
+    for (const redirect of ["", " >&2"]) {
+      const events: string[] = []
+      const sup = new Supervisor(config(
+        svc("worker", `sleep 0.5; echo Listening on 1${redirect}; sleep 30`, { readyWhen: { log: "Listening on" } }),
+        svc("app", sleepCmd(30), { dependsOn: ["worker"] }),
+      ))
+      sup.logs.onLine((l) => l.text === "Listening on 1" && events.push("line"))
+      sup.on("change", (n: string) => {
+        if (n === "app" && sup.state("app").status === "starting") events.push("app")
+      })
+      expect(await sup.start("app")).toBe(true)
+      expect(events[0]).toBe("line")
+      expect(events).toContain("app")
+      expect(sup.state("worker").status).toBe("running")
+      await sup.dispose()
+    }
+  })
+
+  test("ready_when log never printed: not ready after start_timeout, dependents fail", async () => {
+    const sup = new Supervisor(config(
+      svc("worker", sleepCmd(30), { readyWhen: { log: "never" }, startTimeout: 800 }),
+      svc("app", sleepCmd(30), { dependsOn: ["worker"] }),
+    ))
+    expect(await sup.start("app")).toBe(false)
+    expect(sup.state("worker").status).toBe("unhealthy")
+    expect(sup.state("app").status).toBe("failed")
+    await sup.dispose()
+  })
+
+  test("ready_when + health: both must pass", async () => {
+    const sup = new Supervisor(config(
+      svc("w", "sleep 1; echo ready-now; sleep 30", {
+        readyWhen: { log: "/READY/i" }, health: { cmd: "true", interval: 100, timeout: 500 },
+      }),
+    ))
+    const started = Date.now()
+    expect(await sup.start("w")).toBe(true)
+    expect(Date.now() - started).toBeGreaterThanOrEqual(900)
+    expect(sup.state("w").status).toBe("healthy")
+    await sup.dispose()
+  })
+
   test("crash + restart on-failure, dependents fail when a dependency cannot start", async () => {
     const sup = new Supervisor(config(
       svc("bad", "echo boom >&2; exit 3", { restart: "on-failure", health: { cmd: "false", interval: 100, timeout: 100 } }),

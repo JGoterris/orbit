@@ -22,6 +22,12 @@ export function describeHealth(h: HealthCheck | undefined): string {
   return "none"
 }
 
+/** Everything a service must satisfy to be ready: its health check and/or its log pattern. */
+export function describeReadiness(svc: ServiceConfig): string {
+  const parts = [svc.readyWhen && `log ${JSON.stringify(svc.readyWhen.log)}`, svc.health && describeHealth(svc.health)]
+  return parts.filter(Boolean).join(" + ") || "none"
+}
+
 export async function checkHealth(
   h: HealthCheck,
   svc: ServiceConfig,

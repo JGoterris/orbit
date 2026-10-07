@@ -64,6 +64,17 @@ describe("config", () => {
     expect(load("    oneshot: true\n    post_stop: echo hi\n").services.a!.hooks!.postStop).toHaveLength(1)
   })
 
+  test("ready_when: log pattern parsed and validated", () => {
+    const load = (body: string) => loadConfig({ dir: project({ "orbit.yaml": `services:\n  a:\n    cmd: sleep 1\n${body}` }) })
+    expect(load("    ready_when: { log: Listening on }\n").services.a!.readyWhen).toEqual({ log: "Listening on" })
+    expect(load("    ready_when: { log: '/port \\d+/i' }\n").services.a!.readyWhen).toEqual({ log: "/port \\d+/i" })
+    expect(load("").services.a!.readyWhen).toBeUndefined()
+    expect(() => load("    ready_when: { log: '/(/' }\n")).toThrow("invalid regex")
+    expect(() => load("    ready_when: {}\n")).toThrow("non-empty `log`")
+    expect(() => load("    oneshot: true\n    ready_when: { log: x }\n")).toThrow("oneshot")
+    expect(() => loadConfig({ dir: project({ "orbit.yaml": "services:\n  e: { type: external, health: 'tcp:1', ready_when: { log: x } }" }), env: {} })).toThrow(/has no effect/)
+  })
+
   test("external services: only health, no cmd/watch/hooks/depends_on", () => {
     const load = (body: string) => loadConfig({ dir: project({ "orbit.yaml": `services:\n  ext:\n    type: external\n${body}` }), env: {} })
     const c = load('    health: "https://x.test/up"\n    url: https://x.test\n    console: psql "$DB"')

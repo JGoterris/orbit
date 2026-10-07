@@ -12,6 +12,7 @@ import {
   asRecord,
   asString,
   asStringList,
+  compileLogPattern,
   ConfigError,
   hostPortOf,
   parseDuration,
@@ -19,6 +20,7 @@ import {
   type Hook,
   type Hooks,
   type OrbitConfig,
+  type ReadyWhen,
   type RestartPolicy,
   type ServiceConfig,
   type ServiceType,
@@ -88,6 +90,19 @@ function parseWatch(raw: unknown, path: string): WatchConfig | undefined {
   }
 }
 
+/** `ready_when: { log: "Listening on" }` */
+function parseReadyWhen(raw: unknown, path: string): ReadyWhen | undefined {
+  if (raw === undefined || raw === null || raw === false) return undefined
+  const log = asString(asRecord(raw, path).log, `${path}.log`)?.trim()
+  if (!log) throw new ConfigError("ready_when needs a non-empty `log` pattern", path)
+  try {
+    compileLogPattern(log)
+  } catch (err) {
+    throw new ConfigError(`invalid regex ${JSON.stringify(log)}: ${(err as Error).message}`, `${path}.log`)
+  }
+  return { log }
+}
+
 /** `"cmd"`, `{ cmd, timeout }`, or a list of either */
 function parseHookList(raw: unknown, path: string): Hook[] {
   if (raw === undefined || raw === null || raw === false) return []
@@ -148,6 +163,9 @@ function parseService(
     throw new ConfigError(`invalid restart "${restart}" (expected ${RESTART.join(", ")})`, `${path}.restart`)
   }
 
+  if (rec.oneshot === true && rec.ready_when !== undefined) {
+    throw new ConfigError("a oneshot is ready when it exits 0: `ready_when` has no effect", `${path}.ready_when`)
+  }
   const hooks = parseHooks(rec, path, base?.hooks)
   if (rec.oneshot === true && hooks?.postStart.length) {
     throw new ConfigError("a oneshot has no running phase: use post_stop instead", `${path}.post_start`)
@@ -174,6 +192,7 @@ function parseService(
         : rec.health !== undefined || !base
           ? parseHealth(rec.health, `${path}.health`, type === "external" ? undefined : port)
           : base.health,
+    readyWhen: rec.ready_when !== undefined ? parseReadyWhen(rec.ready_when, `${path}.ready_when`) : base?.readyWhen,
     oneshot: rec.oneshot === true || undefined,
     watch: rec.watch !== undefined ? parseWatch(rec.watch, `${path}.watch`) : base?.watch,
     hooks,
@@ -197,7 +216,7 @@ function parseService(
   }
 
   if (svc.type === "external") {
-    for (const key of ["cmd", "command", "image", "watch", "oneshot", "pre_start", "post_start", "post_stop", "depends_on", "dependsOn"]) {
+    for (const key of ["cmd", "command", "image", "watch", "oneshot", "ready_when", "pre_start", "post_start", "post_stop", "depends_on", "dependsOn"]) {
       if (rec[key] !== undefined) throw new ConfigError(`an external service is not run by orbit: \`${key}\` has no effect`, `${path}.${key}`)
     }
     if (!svc.health) throw new ConfigError("an external service needs `health` (it is only monitored)", `${path}.health`)

@@ -31,6 +31,9 @@ Built with TypeScript, [Bun](https://bun.sh) and [OpenTUI](https://github.com/an
   On by default; toggle it from the command palette (`:`).
 - **Ordered startup**: `start` brings up dependencies first and waits for them to be *ready*
   (healthcheck OK, or running if they don't have one); `stop` stops dependents first.
+- **Readiness by log line**: `ready_when: { log: "Listening on" }` keeps a service in `starting` until its
+  output matches (a substring, or `"/regex/i"`). For workers and queues with no health endpoint; combined
+  with `health`, both must pass.
 - **Healthchecks**: HTTP, TCP, command, or Docker's `HEALTHCHECK`. If you set `port` without
   `health`, a TCP check to that port is used.
 - **Restart policy** `no | on-failure | always` with exponential backoff (1s → 30s).
@@ -261,6 +264,7 @@ services:
     port: 3000                  # checks for occupied port, TCP health by default, `o` key
     depends_on: [postgres, redis]
     health: { http: "http://localhost:3000/health", interval: 2s, timeout: 2s }
+    ready_when: { log: "Listening on" }   # not ready until a stdout/stderr line matches ("/regex/i" also works)
     restart: on-failure         # no | on-failure | always
     watch: ["src/**", "package.json"]   # restart on change; globs relative to `cwd`
     # long form:

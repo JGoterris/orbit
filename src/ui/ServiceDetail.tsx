@@ -108,6 +108,7 @@ export function ServiceDetail({ sup, name, width, focused, expanded, height, row
   const extra = Math.max(0, (rows ?? 0) - BASE_ROWS)
   const items: Item[] = []
   if (svc.health) items.push({ label: "check", value: `every ${formatDuration(svc.health.interval)} · timeout ${formatDuration(svc.health.timeout)}` })
+  if (svc.readyWhen) items.push({ label: "ready when", value: `log ${JSON.stringify(svc.readyWhen.log)}` })
   items.push({ label: "start_timeout", value: formatDuration(svc.startTimeout) }, { label: "stop_timeout", value: formatDuration(svc.stopTimeout) })
   items.push({ label: "autostart", value: svc.autostart ? "yes" : "no" })
   if (svc.oneshot) items.push({ label: "oneshot", value: "yes" })

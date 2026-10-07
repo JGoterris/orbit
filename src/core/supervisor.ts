@@ -2,13 +2,13 @@ import { EventEmitter } from "node:events"
 import type { Subprocess } from "bun"
 import { relative } from "node:path"
 import { readEnvFiles } from "../config/envFiles.ts"
-import type { Hook, OrbitConfig, ServiceConfig } from "../config/schema.ts"
+import { compileLogPattern, type Hook, type OrbitConfig, type ServiceConfig } from "../config/schema.ts"
 import { isPortOpen } from "./exec.ts"
 import { killTree, whoListens } from "./platform/index.ts"
 import { dependentsMap, depMapOf, topoOrder, type DepMap } from "./graph.ts"
-import { checkHealth, describeHealth } from "./health.ts"
+import { checkHealth, describeHealth, describeReadiness } from "./health.ts"
 import { runHooks, type HookPhase } from "./hooks.ts"
-import { LogStore } from "./logs.ts"
+import { cleanLine, LogStore } from "./logs.ts"
 import { ProcessSampler, sampleContainers } from "./metrics.ts"
 import { detectLeak, memLevel, ResourceHistory, type ResourceBucket, type ResourceInfo } from "./resources.ts"
 import { createRunner, type Runner } from "./runners.ts"
@@ -114,6 +114,9 @@ interface Runtime {
   adopted: boolean
   backoff: number
   healthFailures: number
+  /** `ready_when.log` already matched in this run (always true when the service has none) */
+  logReady: boolean
+  readyMatch?: (line: string) => boolean
   /** environment the service was last started with (env files included), also given to its hooks */
   env: Record<string, string>
   /** the pre_start / post_start hook process running right now */
@@ -149,7 +152,11 @@ export class Supervisor extends EventEmitter implements SupervisorLike {
     this.order = topoOrder(this.deps)
     for (const name of Object.keys(config.services)) {
       this.states.set(name, { name, status: "stopped", restarts: 0, cpu: [], mem: [] })
-      this.rt.set(name, { gen: 0, waiters: [], userStopping: false, adopted: false, backoff: 1000, healthFailures: 0, env: {} })
+      const readyWhen = config.services[name]!.readyWhen
+      this.rt.set(name, {
+        gen: 0, waiters: [], userStopping: false, adopted: false, backoff: 1000, healthFailures: 0, env: {},
+        logReady: !readyWhen, readyMatch: readyWhen && compileLogPattern(readyWhen.log),
+      })
     }
   }
 
@@ -221,6 +228,7 @@ export class Supervisor extends EventEmitter implements SupervisorLike {
         rt.runner = runner
         // a container orbit did not start itself stays up when orbit quits; anything recorded in state.json is ours
         rt.adopted = svc.type !== "process" && !entry
+        rt.logReady = true // it printed its line before we got here
         const gen = ++rt.gen
         this.log(
           name,
@@ -310,6 +318,7 @@ export class Supervisor extends EventEmitter implements SupervisorLike {
 
     const runner = this.makeRunner(name, env)
     rt.runner = runner
+    rt.logReady = !svc.readyWhen
     rt.adopted = false
     rt.userStopping = false
     this.log(name, svc.type === "process" ? `$ ${svc.cmd}` : `starting ${svc.type} service`)
@@ -324,7 +333,7 @@ export class Supervisor extends EventEmitter implements SupervisorLike {
 
     this.update(name, {
       // a oneshot task is "starting" until it exits; its exit code is its health check
-      status: svc.health || svc.oneshot ? "starting" : "running",
+      status: svc.health || svc.oneshot || !rt.logReady ? "starting" : "running",
       pid: runner.pid,
       containerId: runner.containerId,
       startedAt: Date.now(),
@@ -341,7 +350,7 @@ export class Supervisor extends EventEmitter implements SupervisorLike {
     if (ready === "timeout") {
       if (gen !== rt.gen || this.isReady(name)) return this.isReady(name)
       this.update(name, { status: "unhealthy", error: `not ready after ${Math.round(svc.startTimeout / 1000)}s` })
-      this.log(name, `not ready after ${Math.round(svc.startTimeout / 1000)}s (${describeHealth(svc.health)})`)
+      this.log(name, `not ready after ${Math.round(svc.startTimeout / 1000)}s (${describeReadiness(svc)})`)
       this.flushWaiters(name, false)
       return false
     }
@@ -574,7 +583,11 @@ export class Supervisor extends EventEmitter implements SupervisorLike {
   private makeRunner(name: string, env?: Record<string, string>): Runner {
     const svc = this.service(name)
     const runner: Runner = createRunner(env ? { ...svc, env } : svc, this.config.name, {
-      log: (stream, text) => this.logs.append(name, stream, text),
+      log: (stream, text) => {
+        this.logs.append(name, stream, text)
+        const rt = this.rt.get(name)!
+        if (stream !== "system" && !rt.logReady && rt.runner === runner && rt.readyMatch?.(cleanLine(text))) this.onLogReady(name)
+      },
       exit: (code, signal) => this.onExit(name, runner, code, signal),
     }, procFiles(this.stateDir, name))
     return runner
@@ -627,6 +640,17 @@ export class Supervisor extends EventEmitter implements SupervisorLike {
     }
   }
 
+  /** The service printed its `ready_when.log` line: ready now, or as soon as its health check passes. */
+  private onLogReady(name: string) {
+    const rt = this.rt.get(name)!
+    const svc = this.service(name)
+    rt.logReady = true
+    this.log(name, `ready (log matched ${JSON.stringify(svc.readyWhen!.log)})`)
+    const status = this.state(name).status
+    if (svc.health) this.scheduleHealth(name, rt.gen, 0)
+    else if (status === "starting" || status === "unhealthy") this.update(name, { status: "running", error: undefined })
+  }
+
   private scheduleHealth(name: string, gen: number, delay: number) {
     const svc = this.service(name)
     const rt = this.rt.get(name)!
@@ -640,7 +664,10 @@ export class Supervisor extends EventEmitter implements SupervisorLike {
       }))
       if (gen !== rt.gen || !rt.runner) return
       const st = this.state(name)
-      if (res.ok) {
+      if (res.ok && !rt.logReady) {
+        // up, but still waiting for its log line
+        if (st.health !== res.detail) this.update(name, { health: res.detail })
+      } else if (res.ok) {
         rt.healthFailures = 0
         if (st.status !== "healthy") {
           this.log(name, `healthy (${describeHealth(svc.health)}: ${res.detail})`)

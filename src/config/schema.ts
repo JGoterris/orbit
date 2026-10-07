@@ -18,6 +18,12 @@ export interface HealthCheck {
   timeout: number
 }
 
+/** Extra readiness condition read from the service's output */
+export interface ReadyWhen {
+  /** substring, or `/regex/flags`, that a stdout/stderr line must match */
+  log: string
+}
+
 export interface WatchConfig {
   /** globs relative to the service's cwd; a change to a matching file restarts the service */
   paths: string[]
@@ -59,6 +65,8 @@ export interface ServiceConfig {
   port?: number
   url?: string
   health?: HealthCheck
+  /** the service is not ready until its output matches (and `health`, if any, passes) */
+  readyWhen?: ReadyWhen
   /** restart the service automatically when matching files change */
   watch?: WatchConfig
   /** host commands run around the service's life; undefined when it has none */
@@ -115,6 +123,14 @@ export function parseDuration(value: unknown, path: string, fallback: number): n
   const n = Number(m[1])
   const unit = m[2] ?? "ms"
   return n * { ms: 1, s: 1000, m: 60_000, h: 3_600_000 }[unit]!
+}
+
+/** `"Listening on"` matches as a substring; `"/listening on \\d+/i"` as a regex. Throws on an invalid regex. */
+export function compileLogPattern(src: string): (line: string) => boolean {
+  const m = /^\/(.+)\/([a-z]*)$/s.exec(src)
+  if (!m) return (line) => line.includes(src)
+  const re = new RegExp(m[1]!, m[2]!.replace(/[gy]/g, "")) // g / y make `test` stateful
+  return (line) => re.test(line)
 }
 
 export function asString(value: unknown, path: string): string | undefined {
