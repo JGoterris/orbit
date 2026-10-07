@@ -20,4 +20,11 @@ jobs:
           bun-version: latest
       - run: bun install --frozen-lockfile
       - run: bun run typecheck
+      - name: IPC trace (Windows diagnosis, temporary)
+        if: runner.os == 'Windows'
+        continue-on-error: true
+        shell: bash
+        env:
+          ORBIT_IPC_DEBUG: "1"
+        run: bun test test/ipc.test.ts -t "history" 2>&1 | tail -80
       - run: bun test

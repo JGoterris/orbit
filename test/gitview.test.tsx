@@ -287,7 +287,9 @@ describe("git view", () => {
     git(dir, "switch", "-q", "-c", "other")
     writeFileSync(join(dir, "o.txt"), "o\n")
     git(dir, "add", ".")
-    git(dir, "commit", "-q", "-m", "on other")
+    // branches are listed newest first and ties break by name: an old date keeps `main` first, `other` second on any machine
+    const old = { ...process.env, GIT_COMMITTER_DATE: "2000-01-01T00:00:00Z", GIT_AUTHOR_DATE: "2000-01-01T00:00:00Z" }
+    expect(Bun.spawnSync(["git", "commit", "-q", "-m", "on other"], { cwd: dir, env: old }).exitCode).toBe(0)
     git(dir, "switch", "-q", "main")
     const t = await setup(dir)
     await openGit(t)

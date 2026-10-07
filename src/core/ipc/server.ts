@@ -5,7 +5,7 @@ import type { LogLine } from "../logs.ts"
 import type { SupervisorLike } from "../supervisor.ts"
 import { IpcClient } from "./client.ts"
 import { socketDir, socketPath } from "./endpoint.ts"
-import { encode, ERR, LineParser, PROTOCOL, type Hello, type Method, type Notification } from "./protocol.ts"
+import { dbg, encode, ERR, LineParser, PROTOCOL, type Hello, type Method, type Notification } from "./protocol.ts"
 
 /** A client that lets this much output pile up unread is cut off instead of growing our memory. */
 const MAX_BACKLOG = 4 * 1024 * 1024
@@ -103,15 +103,21 @@ export class IpcServer {
   private accept(socket: Socket) {
     this.clients.set(socket, { states: false, logs: false })
     socket.setEncoding("utf8")
-    const send = (msg: Parameters<typeof encode>[0]) => socket.writable && socket.write(encode(msg))
+    const send = (msg: Parameters<typeof encode>[0]) => {
+      const ok = socket.writable && socket.write(encode(msg))
+      dbg("server send", "id" in msg ? msg.id : msg.method, { writable: socket.writable, flushed: ok, destroyed: socket.destroyed })
+      return ok
+    }
     const parser = new LineParser(
       (msg) => {
         const id = typeof msg.id === "number" ? msg.id : null
+        dbg("server recv", id, msg.method)
         if (typeof msg.method !== "string") return void send({ jsonrpc: "2.0", id, error: { code: ERR.invalid, message: "invalid request" } })
         const params = (msg.params && typeof msg.params === "object" ? msg.params : {}) as Record<string, unknown>
         this.handle(socket, msg.method as Method, params).then(
           (result) => id !== null && send({ jsonrpc: "2.0", id, result }),
           (err) => {
+            dbg("server handler rejected", id, (err as Error).message)
             const code = err instanceof RpcError ? err.code : ERR.internal
             send({ jsonrpc: "2.0", id, error: { code, message: (err as Error).message } })
           },
@@ -120,8 +126,12 @@ export class IpcServer {
       () => send({ jsonrpc: "2.0", id: null, error: { code: ERR.parse, message: "parse error" } }),
     )
     socket.on("data", (chunk) => parser.push(chunk as string))
-    socket.on("error", () => {})
-    socket.on("close", () => this.clients.delete(socket))
+    socket.on("error", (err) => dbg("server socket error", err.message))
+    socket.on("end", () => dbg("server socket end"))
+    socket.on("close", (hadError) => {
+      dbg("server socket close", { hadError })
+      this.clients.delete(socket)
+    })
   }
 
   /** Service names from params; groups expand to their members. */
