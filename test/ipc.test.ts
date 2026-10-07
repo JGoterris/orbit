@@ -10,7 +10,7 @@ import { IpcServer } from "../src/core/ipc/server.ts"
 import type { Hello, Notification } from "../src/core/ipc/protocol.ts"
 import type { LogLine } from "../src/core/logs.ts"
 import { Supervisor, type ServiceState } from "../src/core/supervisor.ts"
-import { echoSleepCmd, sleepCmd } from "./helpers.ts"
+import { echoSleepCmd, rejection, sleepCmd } from "./helpers.ts"
 
 process.env.XDG_STATE_HOME = mkdtempSync(`${tmpdir()}/orbit-state-`) // tests must not touch the real ~/.local/state
 
@@ -75,16 +75,14 @@ describe("ipc", () => {
     expect(buckets.length).toBe(1)
     expect(buckets[0]).toMatchObject({ cpu: 5, mem: 1000 })
     expect(await client.request<unknown[]>("history", { service: "a", since: 1 })).toEqual([])
-    // not `expect(promise).rejects`: under bun test on Windows that form never sees the reply once earlier requests went through
-    const err = await client.request("history", { service: "nope" }).then(() => undefined, (e: Error) => e)
-    expect(err?.message).toContain('unknown service "nope"')
+    expect(await rejection(client.request("history", { service: "nope" }))).toContain('unknown service "nope"')
   })
 
   test("errors for unknown services and methods", async () => {
     const { client } = await setup("errs", svc("a", sleepCmd(30)))
-    await expect(client.request("start", { services: ["nope"] })).rejects.toThrow('unknown service or group "nope"')
-    await expect(client.request("start", {})).rejects.toThrow("list of names")
-    await expect(client.request("bogus" as never)).rejects.toThrow("unknown method")
+    expect(await rejection(client.request("start", { services: ["nope"] }))).toContain('unknown service or group "nope"')
+    expect(await rejection(client.request("start", {}))).toContain("list of names")
+    expect(await rejection(client.request("bogus" as never))).toContain("unknown method")
   })
 
   test("subscribers receive state changes and log lines", async () => {
@@ -245,7 +243,7 @@ describe("RemoteSupervisor", () => {
       return method === "hello" ? { ...(res as object), protocol: 99, version: "9.9.9" } : res
     } as typeof real
     try {
-      await expect(RemoteSupervisor.connect(server.path)).rejects.toThrow("protocol 99")
+      expect(await rejection(RemoteSupervisor.connect(server.path))).toContain("protocol 99")
     } finally {
       IpcClient.prototype.request = real
     }

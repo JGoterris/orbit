@@ -15,3 +15,9 @@ export function echoSleepCmd(text: string, seconds: number): string {
 
 /** A temp root with a short path: some assertions read paths off a fixed-width screen, and macOS' tmpdir() is long. */
 export const shortTmp = isWindows ? (process.env.TEMP ?? "C:\\Temp") : "/tmp"
+
+/**
+ * The message a promise rejects with ("resolved" if it does not). Use it instead of `expect(promise).rejects` for requests
+ * over a socket: under bun test on Windows, that form stops seeing replies from the event loop after the first one.
+ */
+export const rejection = (p: Promise<unknown>): Promise<string> => p.then(() => "resolved", (e: Error) => e.message)
