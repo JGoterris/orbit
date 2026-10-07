@@ -1,9 +1,10 @@
+import type { ConfigDiff } from "../../config/diff.ts"
 import type { OrbitConfig } from "../../config/schema.ts"
 import type { LogLine } from "../logs.ts"
-import type { ServiceState } from "../supervisor.ts"
+import type { PendingConfig, ServiceState } from "../supervisor.ts"
 
 /** Bumped when a request or notification changes incompatibly. */
-export const PROTOCOL = 2
+export const PROTOCOL = 3
 
 /**
  * JSON-RPC 2.0, one message per line (NDJSON).
@@ -17,10 +18,12 @@ export const PROTOCOL = 2
  *   toggleWatch {service}                  → {watch: "paused"|"active"|null}
  *   clearLogs {service?}                   → {ok: true}
  *   history {service, since?}              → ResourceBucket[]   cpu / memory in 10 s buckets, `since` = ms back
+ *   reload {config?}                       → {ok: true, diff}  applies orbit.yaml (re-read by the server unless `config` is given)
  *   subscribe {states?, logs?, services?}  → {ok: true, snapshot}  every notification after it is newer than the snapshot
  *   shutdown {how: "stop"|"detach"}        → {ok: true}      the server exits afterwards
  *
- * notifications (server → client): state {name, state}, log LogLine, cleared {service?}
+ * notifications (server → client): state {name, state}, log LogLine, cleared {service?},
+ *   config {config, diff} (a reload happened), configPending {diff?, error?} | null (orbit.yaml changed on disk, not applied)
  */
 export interface Hello {
   protocol: number
@@ -28,6 +31,8 @@ export interface Hello {
   pid: number
   stateDir: string
   config: OrbitConfig
+  /** orbit.yaml changed on disk and nobody applied it yet */
+  pending?: PendingConfig
 }
 
 export type Method =
@@ -43,6 +48,7 @@ export type Method =
   | "toggleWatch"
   | "clearLogs"
   | "history"
+  | "reload"
   | "subscribe"
   | "shutdown"
 
@@ -55,8 +61,8 @@ export interface Request {
 
 export interface Notification {
   jsonrpc: "2.0"
-  method: "state" | "log" | "cleared"
-  params: { name: string; state: ServiceState } | LogLine | { service?: string }
+  method: "state" | "log" | "cleared" | "config" | "configPending"
+  params: { name: string; state: ServiceState } | LogLine | { service?: string } | { config: OrbitConfig; diff: ConfigDiff } | { pending: PendingConfig | null }
 }
 
 export interface Response {

@@ -3,7 +3,9 @@ import { useKeyboard, useRenderer, useTerminalDimensions } from "@opentui/react"
 import { mkdirSync, writeFileSync } from "node:fs"
 import { join } from "node:path"
 import { useCallback, useEffect, useMemo, useRef, useState } from "react"
+import type { ConfigDiff } from "../config/diff.ts"
 import { resolveEnv } from "../config/envFiles.ts"
+import type { OrbitConfig } from "../config/schema.ts"
 import { consoleCommand, ConsoleManager, type ConsoleSession } from "../core/console.ts"
 import { openUrl } from "../core/exec.ts"
 import { formatBytes } from "../core/metrics.ts"
@@ -15,7 +17,7 @@ import { ConsoleOverlay, consoleSize } from "./ConsoleOverlay.tsx"
 import { GraphView, neighbourInDirection, useGraphLayout } from "./GraphView.tsx"
 import { useSupervisorVersion, useTick } from "./hooks.ts"
 import { clipboard } from "./clipboard.ts"
-import { CommandPalette, ConfirmOverlay, EnvOverlay, envPageSize, filterCommands, HelpOverlay, ProjectPicker, projectRows, ThemePicker, type Command } from "./Overlays.tsx"
+import { CommandPalette, ConfirmOverlay, EnvOverlay, envPageSize, filterCommands, HelpOverlay, ProjectPicker, projectRows, ReloadOverlay, ThemePicker, type Command } from "./Overlays.tsx"
 import { ServiceList } from "./ServiceList.tsx"
 import type { GitRepo } from "../core/git/repo.ts"
 import { discoverRepos, repoEntries, repoOfService } from "../core/git/repos.ts"
@@ -26,7 +28,7 @@ import { DEFAULT_THEME, THEMES, type Palette } from "./themes.ts"
 import { readUserConfig, writeUserConfig } from "../core/userConfig.ts"
 import { completePath, forgetProject, looksLikePath, projectStatus, readProjects, setPinned, type ProjectEntry, type ProjectStatus } from "../core/projects.ts"
 
-type Mode = "normal" | "palette" | "filter" | "help" | "env" | "quit" | "stopping" | "external" | "copy" | "theme" | "projects" | "switch" | "console"
+type Mode = "normal" | "palette" | "filter" | "help" | "env" | "quit" | "stopping" | "external" | "copy" | "theme" | "projects" | "switch" | "console" | "reload"
 
 const MIN_SIDEBAR = 16
 const MIN_DETAIL = 3
@@ -40,6 +42,8 @@ interface Props {
   onOpenProject?: (dir: string, how: "stop" | "detach") => Promise<string | undefined>
   /** open the project picker right away (orbit was started in a folder that is not a project) */
   startWithPicker?: boolean
+  /** orbit.yaml differs from what the running orbit has: offered as soon as the app opens (`config` is applied as is) */
+  relaunch?: { diff: ConfigDiff; config?: OrbitConfig }
   /** the git repositories to show; by default those the services live in, `null` turns git off */
   git?: GitRepo | GitRepo[] | null
   /** every selectable theme (built-in first, then the user's); defaults to the built-in ones */
@@ -52,14 +56,14 @@ interface Props {
   themeErrors?: string[]
 }
 
-export function App({ sup, onQuit, onOpenProject, startWithPicker = false, git, themes = THEMES, customThemes = [], initialTheme = DEFAULT_THEME, themeErrors = [] }: Props) {
+export function App({ sup, onQuit, onOpenProject, startWithPicker = false, relaunch, git, themes = THEMES, customThemes = [], initialTheme = DEFAULT_THEME, themeErrors = [] }: Props) {
   useSupervisorVersion(sup)
   const tick = useTick(250)
   const { width, height } = useTerminalDimensions()
   const renderer = useRenderer()
   const layout = useGraphLayout(sup)
   const names = sup.order
-  const repos = useMemo(() => (git === null ? [] : git ? repoEntries([git].flat()) : discoverRepos(sup.config)), [git, sup])
+  const repos = useMemo(() => (git === null ? [] : git ? repoEntries([git].flat()) : discoverRepos(sup.config)), [git, sup, sup.config])
   const [repoIndex, setRepoIndex] = useState(0)
   // what the open view wants from the keyboard (see ViewContext.keys / .capture)
   const viewKeys = useRef<KeyHandler | undefined>(undefined)
@@ -106,6 +110,8 @@ export function App({ sup, onQuit, onOpenProject, startWithPicker = false, git, 
   // one live console per service; closing the modal keeps it
   const consoles = useRef(new ConsoleManager())
   const [consoleOf, setConsoleOf] = useState<{ name: string; session: ConsoleSession } | undefined>()
+  // the orbit.yaml changes on offer in the reload modal (`config`: given by the command line, not read by the daemon)
+  const [reloadOffer, setReloadOffer] = useState<{ diff: ConfigDiff; config?: OrbitConfig } | undefined>()
   const [toast, setToast] = useState<{ text: string; color: string } | undefined>()
   const toastTimer = useRef<ReturnType<typeof setTimeout>>(undefined)
 
@@ -195,6 +201,23 @@ export function App({ sup, onQuit, onOpenProject, startWithPicker = false, git, 
       sup.off("change", onChange)
     }
   }, [sup, names, notify])
+
+  // orbit.yaml edited while this is open: a toast now, the header badge until it is applied or reverted
+  useEffect(() => {
+    const onPending = (p?: { diff?: ConfigDiff; error?: string }) => {
+      if (p?.error) notify(`✖ orbit.yaml does not load: ${p.error}`, theme.red)
+      else if (p?.diff) notify("⟳ orbit.yaml changed — U to apply", theme.orange)
+    }
+    sup.on("configPending", onPending)
+    return () => {
+      sup.off("configPending", onPending)
+    }
+  }, [sup, notify])
+
+  // a reload can remove the selected service
+  useEffect(() => {
+    setSelected((cur) => (cur && !names.includes(cur) ? (names[0] ?? "") : cur))
+  }, [names])
 
   const run = useCallback(
     (label: string, p: Promise<unknown>) => {
@@ -370,6 +393,7 @@ export function App({ sup, onQuit, onOpenProject, startWithPicker = false, git, 
       { id: "toggle-wrap", label: "Toggle log line wrap", hint: "w", run: () => setWrap((v) => !v) },
       { id: "export-logs", label: "Export visible logs to a file", hint: "E", run: () => logActions.current.export() },
       { id: "copy-logs", label: "Copy visible logs to the clipboard", hint: "Y", run: () => logActions.current.copyAll() },
+      { id: "reload", label: "Apply orbit.yaml changes", hint: "U", run: openReload },
       { id: "projects", label: "Open project…", hint: "P", run: openProjects },
       { id: "theme", label: "Change theme…", hint: "T", run: openThemePicker },
       {
@@ -506,6 +530,14 @@ export function App({ sup, onQuit, onOpenProject, startWithPicker = false, git, 
       else if (ch === "n" || key.name === "escape" || ch === "q") setMode("normal")
       return
     }
+    if (mode === "reload") {
+      if (ch === "y" || ch === "Y" || key.name === "return") return applyReload()
+      if (ch === "n" || key.name === "escape" || ch === "q") {
+        setReloadOffer(undefined)
+        setMode("normal")
+      }
+      return
+    }
     if (mode === "switch") {
       if (!pendingDir) return setMode("normal")
       if (ch === "y" || ch === "Y" || ch === "s" || ch === "S" || key.name === "return") void openProject(pendingDir, "stop")
@@ -627,6 +659,7 @@ export function App({ sup, onQuit, onOpenProject, startWithPicker = false, git, 
     if (ch === "?") return setMode("help")
     if (ch === "T") return openThemePicker()
     if (ch === "P") return openProjects()
+    if (ch === "U") return openReload()
     const byNumber = /^[1-9]$/.test(ch) ? VIEWS[Number(ch) - 1] : undefined
     if (byNumber) return setView(byNumber.id)
     if (key.name === "tab") {
@@ -711,6 +744,29 @@ export function App({ sup, onQuit, onOpenProject, startWithPicker = false, git, 
     notify(`watch ${res === "paused" ? "paused" : "resumed"}: ${name}`, res === "paused" ? theme.yellow : theme.accent)
   }
 
+  function openReload() {
+    const pending = sup.pendingConfig()
+    if (pending?.error) return notify(`orbit.yaml does not load: ${pending.error}`, theme.red)
+    if (!pending?.diff) return notify("orbit.yaml: no changes to apply", theme.muted)
+    setReloadOffer({ diff: pending.diff })
+    setMode("reload")
+  }
+
+  function applyReload() {
+    const offer = reloadOffer
+    setReloadOffer(undefined)
+    setMode("normal")
+    if (!offer) return
+    sup.reload(offer.config).then(
+      (d) => {
+        const restarted = d.changed.filter((c) => c.restart).length
+        const parts = [restarted && `${restarted} restarted`, d.added.length && `${d.added.length} added`, d.removed.length && `${d.removed.length} removed`].filter(Boolean)
+        notify(`orbit.yaml applied${parts.length ? `: ${parts.join(", ")}` : ""}`, theme.green)
+      },
+      (err) => notify(`orbit.yaml: ${(err as Error).message} (not applied)`, theme.red),
+    )
+  }
+
   function openEnv() {
     if (!selected) return
     setEnvScroll(0)
@@ -754,6 +810,10 @@ export function App({ sup, onQuit, onOpenProject, startWithPicker = false, git, 
 
   useEffect(() => {
     if (startWithPicker) openProjects()
+    else if (relaunch) {
+      setReloadOffer(relaunch)
+      setMode("reload")
+    }
   }, [])
 
   useEffect(() => {
@@ -896,6 +956,11 @@ export function App({ sup, onQuit, onOpenProject, startWithPicker = false, git, 
           </box>
         ))}
         {zoomed ? <text fg={theme.accent}>{"  ⛶ zoom"}</text> : null}
+        {sup.pendingConfig() ? (
+          <text fg={sup.pendingConfig()!.error ? theme.red : theme.orange}>
+            {sup.pendingConfig()!.error ? "  ✖ orbit.yaml invalid" : "  ⟳ orbit.yaml changed · U"}
+          </text>
+        ) : null}
         <box flexGrow={1} />
         <text>
           <span fg={theme.green}>● {counts.up} up</span>
@@ -979,6 +1044,7 @@ export function App({ sup, onQuit, onOpenProject, startWithPicker = false, git, 
         <ProjectPicker rows={projRows} selected={projIndex} value={projQuery} inputKey={projInputKey} onQuery={setProjQuery} width={width} height={height} />
       ) : null}
       {mode === "console" && consoleOf ? <ConsoleOverlay service={consoleOf.name} session={consoleOf.session} width={width} height={height} /> : null}
+      {mode === "reload" && reloadOffer ? <ReloadOverlay diff={reloadOffer.diff} width={width} height={height} /> : null}
       {mode === "help" ? <HelpOverlay width={width} height={height} /> : null}
       {mode === "env" && selected ? (
         <EnvOverlay service={selected} {...resolveEnv(sup.service(selected), sup.config.root)} scroll={envScroll} reveal={envReveal} width={width} height={height} />

@@ -17,7 +17,7 @@ interface Props {
 }
 
 export function useGraphLayout(sup: SupervisorLike): GraphLayout {
-  return useMemo(() => layoutGraph(sup.deps, sup.names), [sup])
+  return useMemo(() => layoutGraph(sup.deps, sup.names), [sup, sup.deps])
 }
 
 /** Nearest box in a direction, for arrow-key navigation inside the graph. */

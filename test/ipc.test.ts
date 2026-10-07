@@ -7,7 +7,7 @@ import { IpcClient } from "../src/core/ipc/client.ts"
 import { socketPath } from "../src/core/ipc/endpoint.ts"
 import { RemoteSupervisor } from "../src/core/ipc/remote.ts"
 import { IpcServer } from "../src/core/ipc/server.ts"
-import type { Hello, Notification } from "../src/core/ipc/protocol.ts"
+import { PROTOCOL, type Hello, type Notification } from "../src/core/ipc/protocol.ts"
 import type { LogLine } from "../src/core/logs.ts"
 import { Supervisor, type ServiceState } from "../src/core/supervisor.ts"
 import { echoSleepCmd, rejection, sleepCmd } from "./helpers.ts"
@@ -48,7 +48,7 @@ describe("ipc", () => {
   test("hello and snapshot", async () => {
     const { client, sup } = await setup("hello", svc("a", sleepCmd(30)))
     const hello = await client.request<Hello>("hello")
-    expect(hello.protocol).toBe(2)
+    expect(hello.protocol).toBe(PROTOCOL)
     expect(hello.pid).toBe(process.pid)
     expect(Object.keys(hello.config.services)).toEqual(["a"])
     const snap = await client.request<ServiceState[]>("snapshot")
@@ -136,7 +136,7 @@ describe("ipc", () => {
     const reply = new Promise<string>((resolve) => raw.once("data", (d) => resolve(String(d))))
     raw.write("not json\n")
     expect(JSON.parse(await reply).error.code).toBe(-32700)
-    expect((await client.request<Hello>("hello")).protocol).toBe(2)
+    expect((await client.request<Hello>("hello")).protocol).toBe(PROTOCOL)
   })
 })
 

@@ -14,9 +14,11 @@ export function ProjectHost({ session, ...app }: AppProps & { session: Session }
   const [theme, setTheme] = useState(app.initialTheme)
   const [themeErrors, setThemeErrors] = useState(app.themeErrors)
   const [startWithPicker, setStartWithPicker] = useState(app.startWithPicker)
+  const [relaunch, setRelaunch] = useState(app.relaunch)
 
   const open = (dir: string, how: "stop" | "detach") =>
-    session.switchTo(dir, how, (next) => {
+    session.switchTo(dir, how, (next, offer) => {
+      setRelaunch(offer)
       // the theme may have been changed with T since startup; load errors were already shown once
       const saved = readUserConfig().theme
       if (saved && app.themes?.[saved]) setTheme(saved)
@@ -25,5 +27,5 @@ export function ProjectHost({ session, ...app }: AppProps & { session: Session }
       setSup(next)
     })
 
-  return <App key={sup.stateDir} {...app} sup={sup} onOpenProject={open} initialTheme={theme} themeErrors={themeErrors} startWithPicker={startWithPicker} />
+  return <App key={sup.stateDir} {...app} sup={sup} onOpenProject={open} initialTheme={theme} themeErrors={themeErrors} startWithPicker={startWithPicker} relaunch={relaunch} />
 }

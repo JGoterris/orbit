@@ -70,6 +70,7 @@ export function parseComposeFile(
       composeFile: file,
       composeProject,
       composeService: name,
+      composeHash: String(Bun.hash(JSON.stringify(raw))),
     } satisfies ServiceConfig
   })
 }

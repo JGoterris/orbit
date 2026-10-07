@@ -212,6 +212,7 @@ function parseService(
     dockerArgs: asStringList(rec.docker_args, `${path}.docker_args`),
     composeFile: base?.composeFile ?? composeFile,
     composeProject: base?.composeProject,
+    composeHash: base?.composeHash,
     composeService: asString(rec.service, `${path}.service`) ?? base?.composeService ?? name,
   }
 

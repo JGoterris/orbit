@@ -1,8 +1,9 @@
 import { EventEmitter } from "node:events"
+import type { ConfigDiff } from "../../config/diff.ts"
 import type { OrbitConfig, ServiceConfig } from "../../config/schema.ts"
 import { dependentsMap, depMapOf, topoOrder } from "../graph.ts"
 import { LogStore, type LogLine } from "../logs.ts"
-import { isReadyStatus, UP_STATUSES, type ServiceState, type SupervisorLike } from "../supervisor.ts"
+import { isReadyStatus, UP_STATUSES, type PendingConfig, type ServiceState, type SupervisorLike } from "../supervisor.ts"
 import type { ResourceBucket } from "../resources.ts"
 import { IpcClient } from "./client.ts"
 import { PROTOCOL, type Hello, type Notification } from "./protocol.ts"
@@ -17,9 +18,11 @@ const HISTORY_LINES = 20_000
  */
 export class RemoteSupervisor extends EventEmitter implements SupervisorLike {
   readonly logs = new LogStore()
-  readonly deps
-  readonly dependents
-  readonly order
+  deps
+  dependents
+  order
+  private cfg: OrbitConfig
+  private pending?: PendingConfig
   private states = new Map<string, ServiceState>()
   private lastSeq = 0
 
@@ -44,6 +47,8 @@ export class RemoteSupervisor extends EventEmitter implements SupervisorLike {
   ) {
     super()
     this.setMaxListeners(100)
+    this.cfg = hello.config
+    this.pending = hello.pending
     this.deps = depMapOf(this.config)
     this.dependents = dependentsMap(this.deps)
     this.order = topoOrder(this.deps)
@@ -55,7 +60,7 @@ export class RemoteSupervisor extends EventEmitter implements SupervisorLike {
   }
 
   get config(): OrbitConfig {
-    return this.hello.config
+    return this.cfg
   }
 
   /** Version of the orbit that holds the services. */
@@ -145,12 +150,43 @@ export class RemoteSupervisor extends EventEmitter implements SupervisorLike {
       const { name, state } = n.params as { name: string; state: ServiceState }
       this.states.set(name, state)
       this.emit("change", name)
+    } else if (n.method === "config") {
+      const { config } = n.params as { config: OrbitConfig; diff: ConfigDiff }
+      this.setConfig(config)
+    } else if (n.method === "configPending") {
+      this.pending = (n.params as { pending: PendingConfig | null }).pending ?? undefined
+      this.emit("configPending", this.pending)
+      this.emit("change")
     } else if (n.method === "log") this.ingest(n.params as LogLine)
     else if (n.method === "cleared") {
       const { service } = n.params as { service?: string }
       this.logs.clear(service)
       this.emit("change", service)
     }
+  }
+
+  /** The daemon applied a new config: services come and go, the graph is recomputed. */
+  private setConfig(config: OrbitConfig) {
+    const prev = this.cfg
+    this.cfg = config
+    this.deps = depMapOf(config)
+    this.dependents = dependentsMap(this.deps)
+    this.order = topoOrder(this.deps)
+    for (const name of Object.keys(prev.services)) if (!config.services[name]) this.states.delete(name)
+    for (const name of Object.keys(config.services)) {
+      if (!this.states.has(name)) this.states.set(name, { name, status: "stopped", restarts: 0, cpu: [], mem: [] })
+    }
+    this.pending = undefined
+    this.emit("config")
+    this.emit("change")
+  }
+
+  pendingConfig(): PendingConfig | undefined {
+    return this.pending
+  }
+
+  async reload(next?: OrbitConfig): Promise<ConfigDiff> {
+    return (await this.client.request<{ diff: ConfigDiff }>("reload", next ? { config: next } : {})).diff
   }
 
   // ---------------------------------------------------------------- commands

@@ -1,8 +1,10 @@
 import { chmodSync, mkdirSync, rmSync } from "node:fs"
 import { createServer, type Server, type Socket } from "node:net"
 import pkg from "../../../package.json"
+import type { ConfigDiff } from "../../config/diff.ts"
+import type { OrbitConfig } from "../../config/schema.ts"
 import type { LogLine } from "../logs.ts"
-import type { SupervisorLike } from "../supervisor.ts"
+import type { PendingConfig, SupervisorLike } from "../supervisor.ts"
 import { IpcClient } from "./client.ts"
 import { socketDir, socketPath } from "./endpoint.ts"
 import { encode, ERR, LineParser, PROTOCOL, type Hello, type Method, type Notification } from "./protocol.ts"
@@ -35,6 +37,12 @@ export class IpcServer {
     if (name) this.broadcast("state", (sub) => sub.states && this.wants(sub, name), { name, state: this.sup.state(name) })
   }
 
+  private onConfig = (diff: ConfigDiff) => {
+    this.broadcast("config", (sub) => sub.states, { config: this.sup.config, diff })
+    this.broadcast("configPending", (sub) => sub.states, { pending: null })
+  }
+  private onPending = (pending?: PendingConfig) => this.broadcast("configPending", (sub) => sub.states, { pending: pending ?? null })
+
   constructor(
     private sup: SupervisorLike,
     private opts: { onShutdown?: (how: "stop" | "detach") => void } = {},
@@ -66,12 +74,16 @@ export class IpcServer {
     if (dir) chmodSync(this.path, 0o600)
     this.server = server
     this.sup.on("change", this.onChange)
+    this.sup.on("config", this.onConfig)
+    this.sup.on("configPending", this.onPending)
     this.offLine = this.sup.logs.onLine((line) => this.broadcast("log", (sub) => sub.logs && this.wants(sub, line.service), line))
     return true
   }
 
   close() {
     this.sup.off("change", this.onChange)
+    this.sup.off("config", this.onConfig)
+    this.sup.off("configPending", this.onPending)
     this.offLine?.()
     for (const socket of this.clients.keys()) socket.destroy()
     this.clients.clear()
@@ -147,7 +159,7 @@ export class IpcServer {
     const sup = this.sup
     switch (method) {
       case "hello":
-        return { protocol: PROTOCOL, version: pkg.version, pid: process.pid, stateDir: sup.stateDir, config: sup.config } satisfies Hello
+        return { protocol: PROTOCOL, version: pkg.version, pid: process.pid, stateDir: sup.stateDir, config: sup.config, pending: sup.pendingConfig() } satisfies Hello
       case "snapshot":
         return sup.snapshot()
       case "logs": {
@@ -184,6 +196,15 @@ export class IpcServer {
       }
       case "history":
         return sup.history(this.service(params), typeof params.since === "number" && params.since > 0 ? params.since : undefined)
+      case "reload": {
+        const given = params.config as OrbitConfig | undefined
+        if (given !== undefined && (typeof given !== "object" || given === null || typeof given.services !== "object")) throw new RpcError(ERR.params, "config must be an orbit config")
+        try {
+          return { ok: true, diff: await sup.reload(given) }
+        } catch (err) {
+          throw new RpcError(ERR.params, (err as Error).message) // a config that does not load: nothing was touched
+        }
+      }
       case "subscribe": {
         const services = Array.isArray(params.services) ? new Set(this.targets(params)) : undefined
         this.clients.set(socket, { states: params.states !== false, logs: !!params.logs, services })

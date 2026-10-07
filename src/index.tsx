@@ -2,6 +2,7 @@
 import { statSync } from "node:fs"
 import { parseArgs } from "node:util"
 import { ConfigError, type OrbitConfig } from "./config/schema.ts"
+import { diffConfig, isEmptyDiff } from "./config/diff.ts"
 import { loadConfig } from "./config/load.ts"
 import pkg from "../package.json"
 import { runDaemon } from "./core/ipc/daemon.ts"
@@ -21,6 +22,7 @@ usage
   orbit down                 stop everything orbit left running (also quits an orbit that is open)
   orbit status [--json]      show the state of the services of an orbit that is running
   orbit ctl <action> [svc…]  start|stop|restart|toggle services of a running orbit (no svc: start/stop all)
+  orbit ctl reload           apply the edits made to orbit.yaml to a running orbit (restarts only what changed)
   orbit graph                print the dependency graph
   orbit ls                   list services
   orbit init [dir]           generate an orbit.yaml by scanning the project
@@ -173,6 +175,7 @@ applyTheme(themes[initialTheme]!)
 // or the user opted out: then they run in this process, as a plain Supervisor.
 const useDaemon = !values["no-daemon"] && Object.keys(config.services).length > 0
 let first: SupervisorLike
+let relaunch: { diff: ReturnType<typeof diffConfig>; config: OrbitConfig } | undefined
 if (useDaemon) {
   const { connectRemote } = await import("./core/ipc/daemon.ts")
   try {
@@ -180,6 +183,9 @@ if (useDaemon) {
     // shown once as a toast: an old daemon keeps running its old code after an upgrade
     if (remote.version !== pkg.version) themeErrors.push(`the daemon runs orbit ${remote.version}, this is ${pkg.version}: \`orbit down\` restarts it`)
     first = remote
+    // a daemon that was already running keeps the config it started with: offer what changed since
+    const diff = diffConfig(remote.config, config)
+    if (!isEmptyDiff(diff)) relaunch = { diff, config }
   } catch (err) {
     console.error(`\x1b[31morbit:\x1b[0m ${(err as Error).message}`)
     process.exit(1)
@@ -233,7 +239,7 @@ for (const sig of process.platform === "win32" ? (["SIGTERM", "SIGBREAK"] as con
 process.on("SIGINT", onSignal(130))
 
 createRoot(renderer).render(
-  <ProjectHost session={session} startWithPicker={bare} onQuit={(how) => quit(0, how)} themes={themes} customThemes={Object.keys(custom.themes)} initialTheme={initialTheme} themeErrors={themeErrors} />,
+  <ProjectHost session={session} startWithPicker={bare} relaunch={relaunch} onQuit={(how) => quit(0, how)} themes={themes} customThemes={Object.keys(custom.themes)} initialTheme={initialTheme} themeErrors={themeErrors} />,
 )
 
 void first.init().then(() => {

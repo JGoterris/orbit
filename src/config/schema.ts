@@ -92,6 +92,8 @@ export interface ServiceConfig {
   composeFile?: string
   composeProject?: string
   composeService?: string
+  /** hash of the service's block in the compose file, so a change orbit does not parse (build, command…) still shows up in a config diff */
+  composeHash?: string
 }
 
 export interface OrbitConfig {

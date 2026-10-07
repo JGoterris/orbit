@@ -1,7 +1,10 @@
 import { EventEmitter } from "node:events"
 import type { Subprocess } from "bun"
-import { relative } from "node:path"
+import { watch as fsWatch, type FSWatcher } from "node:fs"
+import { basename, dirname, join, relative } from "node:path"
+import { diffConfig, isEmptyDiff, restartNames, type ConfigDiff } from "../config/diff.ts"
 import { readEnvFiles } from "../config/envFiles.ts"
+import { loadConfig } from "../config/load.ts"
 import { compileLogPattern, type Hook, type OrbitConfig, type ServiceConfig } from "../config/schema.ts"
 import { isPortOpen } from "./exec.ts"
 import { killTree, whoListens } from "./platform/index.ts"
@@ -37,6 +40,12 @@ export function isReadyStatus(status: Status, oneshot?: boolean): boolean {
 }
 
 export const HISTORY = 60
+
+export interface PendingConfig {
+  diff?: ConfigDiff
+  /** the file does not load: nothing to apply until it is fixed */
+  error?: string
+}
 
 export interface ServiceState {
   name: string
@@ -93,6 +102,13 @@ export interface SupervisorLike extends Pick<EventEmitter, "on" | "off"> {
   stopAll(): Promise<void>
   toggleWatch(name: string): "paused" | "active" | undefined
   clearLogs(name?: string): void
+  /**
+   * Applies a new config: restarts the running services whose definition changed, stops the removed ones and
+   * starts the added ones that have `autostart`. Without `next` it re-reads the config file. Emits "config".
+   */
+  reload(next?: OrbitConfig): Promise<ConfigDiff>
+  /** A change in the config file nobody applied yet (or the error that stops it from loading). */
+  pendingConfig(): PendingConfig | undefined
   /** Stops everything this session owns and lets go (a remote one asks its daemon to quit). */
   dispose(): Promise<void>
   /** Quits without stopping anything. */
@@ -127,9 +143,13 @@ interface Runtime {
 
 export class Supervisor extends EventEmitter implements SupervisorLike {
   readonly logs = new LogStore()
-  readonly deps: DepMap
-  readonly dependents: Record<string, string[]>
-  readonly order: string[]
+  deps: DepMap
+  dependents: Record<string, string[]>
+  order: string[]
+  private pending?: PendingConfig
+  private reloading: Promise<unknown> = Promise.resolve()
+  private configWatchers: FSWatcher[] = []
+  private configTimer?: ReturnType<typeof setTimeout>
   private states = new Map<string, ServiceState>()
   private rt = new Map<string, Runtime>()
   private sampler = new ProcessSampler()
@@ -141,7 +161,7 @@ export class Supervisor extends EventEmitter implements SupervisorLike {
   readonly stateDir: string
 
   constructor(
-    readonly config: OrbitConfig,
+    public config: OrbitConfig,
     opts: { stateDir?: string } = {},
   ) {
     super()
@@ -150,14 +170,16 @@ export class Supervisor extends EventEmitter implements SupervisorLike {
     this.deps = depMapOf(config)
     this.dependents = dependentsMap(this.deps)
     this.order = topoOrder(this.deps)
-    for (const name of Object.keys(config.services)) {
-      this.states.set(name, { name, status: "stopped", restarts: 0, cpu: [], mem: [] })
-      const readyWhen = config.services[name]!.readyWhen
-      this.rt.set(name, {
-        gen: 0, waiters: [], userStopping: false, adopted: false, backoff: 1000, healthFailures: 0, env: {},
-        logReady: !readyWhen, readyMatch: readyWhen && compileLogPattern(readyWhen.log),
-      })
-    }
+    for (const name of Object.keys(config.services)) this.initRuntime(name)
+  }
+
+  private initRuntime(name: string) {
+    this.states.set(name, { name, status: "stopped", restarts: 0, cpu: [], mem: [] })
+    const readyWhen = this.config.services[name]!.readyWhen
+    this.rt.set(name, {
+      gen: 0, waiters: [], userStopping: false, adopted: false, backoff: 1000, healthFailures: 0, env: {},
+      logReady: !readyWhen, readyMatch: readyWhen && compileLogPattern(readyWhen.log),
+    })
   }
 
   // ---------------------------------------------------------------- queries
@@ -252,6 +274,7 @@ export class Supervisor extends EventEmitter implements SupervisorLike {
     )
     this.persist()
     this.startWatchers()
+    this.watchConfigFiles()
   }
 
   /** Starts a service (and its dependencies first). Resolves true once it is ready. */
@@ -459,6 +482,7 @@ export class Supervisor extends EventEmitter implements SupervisorLike {
     this.disposed = true
     clearInterval(this.metricsTimer)
     this.closeWatchers()
+    this.closeConfigWatchers()
     await Promise.all(this.names.map((n) => this.stop(n, { keepAdopted: true })))
     for (const rt of this.rt.values()) {
       clearTimeout(rt.healthTimer)
@@ -475,6 +499,7 @@ export class Supervisor extends EventEmitter implements SupervisorLike {
     this.disposed = true
     clearInterval(this.metricsTimer)
     this.closeWatchers()
+    this.closeConfigWatchers()
     this.persist()
     for (const rt of this.rt.values()) {
       clearTimeout(rt.healthTimer)
@@ -507,6 +532,137 @@ export class Supervisor extends EventEmitter implements SupervisorLike {
   clearLogs(name?: string) {
     this.logs.clear(name)
     this.emit("change", name)
+  }
+
+  // ---------------------------------------------------------------- config reload
+
+  pendingConfig(): PendingConfig | undefined {
+    return this.pending
+  }
+
+  reload(next?: OrbitConfig): Promise<ConfigDiff> {
+    // one reload at a time: a second one diffs against the config the first one left
+    const run = this.reloading.then(() => this.applyConfig(next))
+    this.reloading = run.catch(() => {})
+    return run
+  }
+
+  private async applyConfig(given?: OrbitConfig): Promise<ConfigDiff> {
+    const prev = this.config
+    const loaded = given ?? loadConfig({ file: prev.file, dir: prev.root, allowEmpty: true })
+    // the name is part of the state dir and the socket: it stays what this session started with
+    const next: OrbitConfig = { ...loaded, name: prev.name }
+    const diff = diffConfig(prev, next)
+    if (loaded.name !== prev.name) diff.nameChanged = { from: prev.name, to: loaded.name }
+    this.pending = undefined
+    if (isEmptyDiff(diff)) {
+      this.emit("config", diff)
+      return diff
+    }
+
+    const restart = restartNames(diff).filter((n) => this.isUp(n))
+    // with the old config: the stop_timeout and post_stop hooks of the version that was running
+    await Promise.all([...diff.removed, ...restart].map((n) => this.stop(n, { dependents: false })))
+    for (const n of restart) this.log(n, "↻ orbit.yaml changed — restarting")
+
+    const watchChanged = new Set(diff.changed.filter((c) => c.fields.includes("watch") || c.fields.includes("cwd")).map((c) => c.name))
+    for (const n of [...diff.removed, ...watchChanged]) {
+      const rt = this.rt.get(n)
+      rt?.watcher?.close()
+      if (rt) rt.watcher = undefined
+    }
+    for (const n of diff.removed) {
+      this.states.delete(n)
+      this.rt.delete(n)
+    }
+
+    this.config = next
+    this.deps = depMapOf(next)
+    this.dependents = dependentsMap(this.deps)
+    this.order = topoOrder(this.deps)
+    for (const n of diff.added) this.initRuntime(n)
+    for (const c of diff.changed) {
+      const rt = this.rt.get(c.name)!
+      const readyWhen = next.services[c.name]!.readyWhen
+      if (c.fields.includes("readyWhen")) {
+        rt.readyMatch = readyWhen && compileLogPattern(readyWhen.log)
+        if (!this.isUp(c.name)) rt.logReady = !readyWhen
+      }
+      if (c.fields.includes("health") && this.isUp(c.name) && !c.restart) this.scheduleHealth(c.name, rt.gen, 0)
+      if (!next.services[c.name]!.watch) this.update(c.name, { watch: undefined })
+    }
+    this.startWatchers()
+    this.closeConfigWatchers()
+    this.watchConfigFiles()
+    this.persist()
+    this.emit("config", diff)
+    this.emit("change")
+
+    const toStart = [...restart, ...diff.added.filter((n) => next.services[n]!.autostart)]
+    if (toStart.length) void this.startMany(toStart)
+    return diff
+  }
+
+  /** Files whose edit may change the config: the yaml, the .env that interpolates it, and the compose files with theirs. */
+  private configFiles(): string[] {
+    const files = new Set<string>()
+    if (this.config.file) {
+      files.add(this.config.file)
+      files.add(join(this.config.root, ".env"))
+    }
+    for (const svc of Object.values(this.config.services)) {
+      if (!svc.composeFile) continue
+      files.add(svc.composeFile)
+      files.add(join(dirname(svc.composeFile), ".env"))
+    }
+    return [...files]
+  }
+
+  /** Watches the config files; a change is diffed against the running config and offered, never applied by itself. */
+  private watchConfigFiles() {
+    if (this.disposed || this.configWatchers.length || !this.config.file) return
+    const check = () => {
+      clearTimeout(this.configTimer)
+      this.configTimer = setTimeout(() => this.checkConfig(), 300)
+    }
+    // watch the directories: editors replace files instead of writing them, which kills a watcher on the file itself
+    const names = new Map<string, Set<string>>()
+    for (const f of this.configFiles()) {
+      const dir = dirname(f)
+      names.set(dir, (names.get(dir) ?? new Set()).add(basename(f)))
+    }
+    for (const [dir, files] of names) {
+      try {
+        const w = fsWatch(dir, (_, file) => {
+          if (!file || files.has(String(file))) check()
+        })
+        w.on("error", () => {})
+        this.configWatchers.push(w)
+      } catch {}
+    }
+  }
+
+  private closeConfigWatchers() {
+    clearTimeout(this.configTimer)
+    for (const w of this.configWatchers) w.close()
+    this.configWatchers = []
+  }
+
+  private checkConfig() {
+    if (this.disposed) return
+    let pending: PendingConfig | undefined
+    try {
+      const next = loadConfig({ file: this.config.file, dir: this.config.root, allowEmpty: true })
+      const diff = diffConfig(this.config, { ...next, name: this.config.name })
+      if (next.name !== this.config.name) diff.nameChanged = { from: this.config.name, to: next.name }
+      if (!isEmptyDiff(diff)) pending = { diff }
+    } catch (err) {
+      pending = { error: (err as Error).message }
+    }
+    if (JSON.stringify(pending) === JSON.stringify(this.pending)) return
+    this.pending = pending
+    this.emit("configPending", pending)
+    this.emit("change")
   }
 
   // ---------------------------------------------------------------- internals

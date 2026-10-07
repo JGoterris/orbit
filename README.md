@@ -128,6 +128,7 @@ orbit up [svc|group] # without TUI: starts and shows logs (ctrl+c to stop)
 orbit down           # stops whatever orbit left running; also quits an orbit that is open (TUI or `up`)
 orbit status [--json]          # state of the services of a running orbit (TUI or `orbit up`)
 orbit ctl start|stop|restart|toggle [svc|group…]   # drives a running orbit from another terminal
+orbit ctl reload     # applies the edits made to orbit.yaml to a running orbit
 orbit graph          # prints the dependency graph
 orbit ls             # lists services
 orbit logs [svc|group…] [-f] [-n 200] [--grep re] [--since 10m]
@@ -138,6 +139,12 @@ orbit validate [dir] # checks the orbit.yaml (errors and unknown keys, e.g. a ty
 
 Without `orbit.yaml`, orbit opens the services from a `docker-compose.yml` directly. In a folder with
 neither, the TUI opens with no services and the project picker (other commands report an error).
+
+### Editing `orbit.yaml` while running
+
+When `orbit.yaml` changes, the header shows `⟳ orbit.yaml changed · U`; `U` shows the diff and applies it on `y`.
+Like `docker compose up`, only what changed is touched: modified services restart (dependents don't), removed
+ones stop, added ones start if `autostart`. `orbit` / `orbit up` on a running project and `orbit ctl reload` do the same.
 
 Projects are remembered in `~/.config/orbit/projects.json` the first time orbit opens them (the 30 most
 recent unpinned ones are kept; pinned ones are never dropped).

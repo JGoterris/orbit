@@ -1,4 +1,5 @@
 import { statSync } from "node:fs"
+import { describeDiff, type ConfigDiff } from "../config/diff.ts"
 import type { EnvEntry } from "../config/envFiles.ts"
 import { expandPath, looksLikePath, sortProjects, type ProjectEntry, type ProjectStatus } from "../core/projects.ts"
 import { fit, theme } from "./theme.ts"
@@ -187,7 +188,7 @@ const HELP: Array<[string, string]> = [
   ["(git) m then f p u b s", "multi-repo on the marked repos (all if none): fetch · pull · push · new branch · switch branch"],
   ["(git diff) [ ] { }", "previous/next hunk · previous/next file (read only)"],
   ["(git commands)", "j k move · y copy the command · c clear"],
-  ["P", "open another project (recent, pinned, or a folder path)"],
+  ["P · U", "open another project · apply orbit.yaml edits (restarts only what changed)"],
   ["T", "change color theme (live preview, enter saves)"],
   ["h", "dashboard: cpu / memory chart range 2m ⇄ 15m ⇄ 1h (memory turns orange/red near its limit, ↗ = leak)"],
   ["e", "environment variables of the selected service"],
@@ -257,6 +258,31 @@ export function ConfirmOverlay({
           </text>
         </>
       )}
+    </Modal>
+  )
+}
+
+export function ReloadOverlay({ diff, width, height }: { diff: ConfigDiff; width: number; height: number }) {
+  const w = Math.min(72, width - 4)
+  const lines = describeDiff(diff)
+  const shown = Math.max(1, Math.min(lines.length, height - 10))
+  const colorOf = (l: string) => (l.startsWith("+") ? theme.green : l.startsWith("-") ? theme.red : l.startsWith("!") ? theme.yellow : theme.accent)
+  const restarts = diff.changed.filter((c) => c.restart).length
+  return (
+    <Modal title="orbit.yaml changed" width={w} height={shown + 7}>
+      {lines.slice(0, shown).map((l) => (
+        <text key={l} fg={colorOf(l)}>{fit(l, w - 4)}</text>
+      ))}
+      {lines.length > shown ? <text fg={theme.dim}>{`… and ${lines.length - shown} more`}</text> : null}
+      <text fg={theme.dim}>{`${restarts} restart${restarts === 1 ? "" : "s"} (↻) · only running services are restarted`}</text>
+      <text>
+        <span fg={theme.green}>y / enter</span>
+        <span fg={theme.dim}> apply</span>
+      </text>
+      <text>
+        <span fg={theme.red}>n / esc</span>
+        <span fg={theme.dim}> not now (U applies later)</span>
+      </text>
     </Modal>
   )
 }

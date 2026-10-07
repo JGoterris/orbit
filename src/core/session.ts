@@ -1,6 +1,7 @@
 import { statSync } from "node:fs"
+import { diffConfig, isEmptyDiff, type ConfigDiff } from "../config/diff.ts"
 import { loadConfig } from "../config/load.ts"
-import { ConfigError } from "../config/schema.ts"
+import type { OrbitConfig } from "../config/schema.ts"
 import { attachDesktopNotifier } from "./desktopNotify.ts"
 import { registerProject } from "./projects.ts"
 import { connectRemote } from "./ipc/daemon.ts"
@@ -8,6 +9,12 @@ import { RemoteSupervisor } from "./ipc/remote.ts"
 import { IpcServer } from "./ipc/server.ts"
 import { acquireLock, releaseLock, stateDir } from "./state.ts"
 import { Supervisor, type SupervisorLike } from "./supervisor.ts"
+
+/** orbit.yaml on disk differs from what the orbit that already runs the project has loaded. */
+export interface Relaunch {
+  diff: ConfigDiff
+  config: OrbitConfig
+}
 
 /** Holds the project that is open and swaps it for another one without restarting the UI. */
 export class Session {
@@ -62,10 +69,11 @@ export class Session {
    * (stop them, or leave them running to be picked up the next time that project is opened).
    * Resolves to an error message when it could not switch; in that case nothing changed.
    */
-  async switchTo(dir: string, how: "stop" | "detach", onSwitch?: (sup: SupervisorLike) => void): Promise<string | undefined> {
+  async switchTo(dir: string, how: "stop" | "detach", onSwitch?: (sup: SupervisorLike, relaunch?: Relaunch) => void): Promise<string | undefined> {
     const prev = this.sup
     let next: SupervisorLike
     let local = false
+    let relaunch: Relaunch | undefined
     try {
       // allowEmpty would happily turn a typo into a project with no services
       if (!statSync(dir).isDirectory()) return `${dir} is not a folder`
@@ -76,7 +84,11 @@ export class Session {
       const config = loadConfig({ dir, allowEmpty: true })
       if (stateDir(config) === prev.stateDir) return `${config.name} is already open`
       if (this.opts.daemon && Object.keys(config.services).length) {
-        next = await connectRemote(config)
+        const remote = await connectRemote(config)
+        next = remote
+        // a daemon that was already running keeps the config it started with: offer what changed since
+        const diff = diffConfig(remote.config, config)
+        if (!isEmptyDiff(diff)) relaunch = { diff, config }
       } else {
         const sup = new Supervisor(config)
         const holder = acquireLock(sup.stateDir)
@@ -104,7 +116,7 @@ export class Session {
     this.notifyOf(next)
     this.sup = next
     registerProject(next.config.root, next.config.name)
-    onSwitch?.(next)
+    onSwitch?.(next, relaunch)
     if (local) void this.serve()
     void next.init().catch(() => {})
   }

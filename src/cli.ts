@@ -1,6 +1,7 @@
 import { existsSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs"
 import { basename, join, relative } from "node:path"
 import YAML from "yaml"
+import { describeDiff, diffConfig, isEmptyDiff, type ConfigDiff } from "./config/diff.ts"
 import type { OrbitConfig } from "./config/schema.ts"
 import { findComposeFile, type LoadOptions } from "./config/load.ts"
 import { validateFile } from "./config/validate.ts"
@@ -17,7 +18,7 @@ import { IpcClient } from "./core/ipc/client.ts"
 import { socketPath } from "./core/ipc/endpoint.ts"
 import { isServed } from "./core/ipc/daemon.ts"
 import { IpcServer } from "./core/ipc/server.ts"
-import type { Notification } from "./core/ipc/protocol.ts"
+import type { Hello, Notification } from "./core/ipc/protocol.ts"
 import { procFiles, readLock, readState, stateDir, writeState } from "./core/state.ts"
 import { Supervisor, type ServiceState, type Status } from "./core/supervisor.ts"
 import { gridToString, layoutGraph, paintGraph } from "./ui/graphLayout.ts"
@@ -156,10 +157,41 @@ export async function runStatus(config: OrbitConfig, json: boolean): Promise<num
 
 const CTL_ACTIONS = ["start", "stop", "restart", "toggle"] as const
 
+function printDiff(diff: ConfigDiff) {
+  for (const line of describeDiff(diff)) {
+    const paint = line.startsWith("+") ? c.green : line.startsWith("-") ? c.red : line.startsWith("!") ? c.yellow : c.cyan
+    console.log(`  ${paint(line)}`)
+  }
+}
+
+/** `orbit ctl reload`: the running orbit re-reads orbit.yaml and applies the difference. */
+async function runReload(config: OrbitConfig): Promise<number> {
+  const client = await connectIpc(config)
+  if (!client) {
+    console.error(c.red(NOT_RUNNING))
+    return 1
+  }
+  try {
+    const { diff } = await client.request<{ diff: ConfigDiff }>("reload")
+    if (isEmptyDiff(diff)) console.log(c.dim("orbit.yaml: nothing to apply"))
+    else {
+      console.log(c.green("orbit.yaml applied"))
+      printDiff(diff)
+    }
+    return 0
+  } catch (err) {
+    console.error(c.red((err as Error).message))
+    return 1
+  } finally {
+    client.close()
+  }
+}
+
 export async function runCtl(config: OrbitConfig, args: string[]): Promise<number> {
   const [action, ...names] = args
+  if (action === "reload") return names.length ? (console.error(c.red("usage: orbit ctl reload")), 1) : runReload(config)
   if (!action || !(CTL_ACTIONS as readonly string[]).includes(action)) {
-    console.error(c.red(`usage: orbit ctl <${CTL_ACTIONS.join("|")}> [service or group…]`))
+    console.error(c.red(`usage: orbit ctl <${[...CTL_ACTIONS, "reload"].join("|")}> [service or group…]`))
     return 1
   }
   for (const n of names) {
@@ -221,15 +253,20 @@ export async function runUp(config: OrbitConfig, names: string[]): Promise<numbe
       return 1
     }
   }
-  if (await isServed(config)) {
-    console.error(c.red("orbit is already running for this project: `orbit ctl start [svc…]` starts services there, `orbit logs -f` follows them"))
-    return 1
-  }
+  if (await isServed(config)) return upRunning(config, names)
   const sup = new Supervisor(config)
   process.on("exit", () => sup.killAllSync())
   attachDesktopNotifier(sup)
   const { width, color, print } = prefixer(sup.names)
   sup.logs.onLine((l) => print(l.service, l.stream, l.text))
+  sup.on("configPending", (p?: { diff?: ConfigDiff; error?: string }) => {
+    if (p?.error) process.stdout.write(c.yellow(`orbit.yaml changed but does not load: ${p.error}\n`))
+    else if (p?.diff) {
+      process.stdout.write(c.yellow("orbit.yaml changed:\n"))
+      for (const line of describeDiff(p.diff)) process.stdout.write(`  ${line}\n`)
+      process.stdout.write(c.dim("`orbit up` or `orbit ctl reload` in another terminal applies it\n"))
+    }
+  })
   const last = new Map<string, Status>()
   sup.on("change", (n?: string) => {
     if (!n) return
@@ -264,6 +301,42 @@ export async function runUp(config: OrbitConfig, names: string[]): Promise<numbe
   else await sup.startAll()
   await new Promise(() => {}) // run until interrupted
   return 0
+}
+
+/**
+ * `orbit up` while orbit already runs the project: like `docker compose up` on a running stack, it applies what
+ * changed in orbit.yaml (asking first on a terminal) and starts what was asked for.
+ */
+async function upRunning(config: OrbitConfig, names: string[]): Promise<number> {
+  const client = await connectIpc(config)
+  if (!client) {
+    console.error(c.red(NOT_RUNNING))
+    return 1
+  }
+  try {
+    const hello = await client.request<Hello>("hello")
+    const diff = diffConfig(hello.config, config)
+    if (!isEmptyDiff(diff)) {
+      console.log(c.bold("orbit.yaml differs from the running orbit:"))
+      printDiff(diff)
+      // no terminal to ask on (a script, CI): apply, as compose does
+      const answer = process.stdin.isTTY ? (prompt("apply? [Y/n]") ?? "n").trim().toLowerCase() : "y"
+      if (answer === "" || answer === "y" || answer === "yes") {
+        await client.request("reload", { config })
+        console.log(c.green("applied"))
+      }
+    }
+    const targets = names.length ? names : undefined
+    const res = targets ? await client.request<{ ok: boolean }>("start", { services: targets }) : await client.request<{ ok: boolean }>("startAll")
+    console.log(res.ok ? c.green(`up: ${targets?.join(", ") ?? "all services"}`) : c.red("some services did not become ready (see `orbit logs`)"))
+    console.log(c.dim("orbit is already running for this project: `orbit logs -f` follows the services, `orbit down` stops them"))
+    return res.ok ? 0 : 1
+  } catch (err) {
+    console.error(c.red((err as Error).message))
+    return 1
+  } finally {
+    client.close()
+  }
 }
 
 export async function runDown(config: OrbitConfig): Promise<number> {
