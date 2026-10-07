@@ -2,7 +2,7 @@ import { EventEmitter } from "node:events"
 import type { Subprocess } from "bun"
 import { readEnvFiles } from "../config/envFiles.ts"
 import type { ServiceConfig } from "../config/schema.ts"
-import { killGroup } from "./runners.ts"
+import { killTree, ptySupported, shellArgv, userShell } from "./platform/index.ts"
 
 export interface ConsoleSpec {
   argv: string[]
@@ -23,6 +23,7 @@ export function consoleCommand(
   svc: ServiceConfig,
   state: { status: string; containerId?: string },
 ): ConsoleSpec | { error: string } {
+  if (!ptySupported) return { error: "the console needs a pseudo-terminal, which this platform does not offer" }
   if (svc.type === "process" || svc.type === "external") {
     let env: Record<string, string>
     try {
@@ -30,9 +31,9 @@ export function consoleCommand(
     } catch (err) {
       return { error: (err as Error).message }
     }
-    const shell = process.env.SHELL || "/bin/sh"
+    const shell = userShell()
     return {
-      argv: svc.console ? ["/bin/sh", "-c", svc.console] : [shell],
+      argv: svc.console ? shellArgv(svc.console, svc.shell) : [shell],
       cwd: svc.cwd,
       env: { ...env, ORBIT_SERVICE: svc.name },
       title: svc.console ?? shell,
@@ -94,8 +95,10 @@ export class ConsoleSession extends EventEmitter {
       this.terminal.close()
       throw err
     }
-    this.exited = this.proc.exited.then((code) => {
+    this.exited = this.proc.exited.then(async (code) => {
       this.exitCode = code
+      // the last output can still be in flight in the pty (macOS): let it through before closing it
+      await new Promise((r) => setTimeout(r, 50))
       this.terminal?.close()
       this.emit("exit", code)
     })
@@ -126,7 +129,7 @@ export class ConsoleSession extends EventEmitter {
 
   kill() {
     if (this.proc && this.alive) {
-      if (!killGroup(this.proc.pid, "SIGHUP")) this.proc.kill("SIGHUP")
+      if (!killTree(this.proc.pid, "SIGHUP")) this.proc.kill("SIGHUP")
       setTimeout(() => this.alive && this.proc?.kill("SIGKILL"), 1000).unref()
     }
   }

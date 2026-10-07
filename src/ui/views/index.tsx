@@ -27,6 +27,7 @@ function Dashboard(c: ViewContext) {
           expanded={c.zoomed}
           height={c.detailRows}
           rows={c.zoomed ? c.height - 6 : c.detailRows - 2}
+          range={c.range}
           onFocus={() => c.setFocus("detail")}
         />
       ) : null}

@@ -1,10 +1,11 @@
 import { describe, expect, test } from "bun:test"
 import { loadConfig } from "../src/config/load.ts"
 import { ConsoleManager, ConsoleSession, consoleCommand } from "../src/core/console.ts"
+import { win } from "./helpers.ts"
 
 const svc = (over: Record<string, unknown>) => ({ name: "db", type: "process", cwd: "/tmp", env: { A: "1" }, envFiles: [], ...over }) as never
 
-describe("consoleCommand", () => {
+describe.skipIf(win)("consoleCommand", () => {
   test("process: console command or $SHELL, in its cwd with its env", () => {
     const c = consoleCommand(svc({ console: "psql -U me" }), { status: "stopped" })
     expect(c).toMatchObject({ argv: ["/bin/sh", "-c", "psql -U me"], cwd: "/tmp", title: "psql -U me" })
@@ -32,13 +33,16 @@ describe("consoleCommand", () => {
   })
 })
 
-describe("ConsoleSession", () => {
+describe.skipIf(win)("ConsoleSession", () => {
   test("talks to a program through a pty and keeps a backlog", async () => {
     const session = new ConsoleSession({ argv: ["/bin/sh", "-c", "read x; echo got:$x"], env: {}, title: "t" }, 80, 24)
     const seen: string[] = []
     session.on("data", (d: Uint8Array) => seen.push(new TextDecoder().decode(d)))
+    // the program may not be reading yet when the first bytes arrive (macOS drops them): keep typing until it answers
+    const typing = setInterval(() => session.write("hi\r"), 50)
     session.write("hi\r")
     await session.exited
+    clearInterval(typing)
     expect(session.exitCode).toBe(0)
     expect(seen.join("")).toContain("got:hi")
     expect(new TextDecoder().decode(session.backlog)).toContain("got:hi")

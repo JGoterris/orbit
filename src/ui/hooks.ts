@@ -1,5 +1,6 @@
 import type { Renderable } from "@opentui/core"
 import { useCallback, useEffect, useRef, useState } from "react"
+import { RANGE_MS, type Range, type ResourceBucket } from "../core/resources.ts"
 import type { SupervisorLike } from "../core/supervisor.ts"
 
 /** Re-renders when the supervisor or its logs change, throttled to ~20 fps. */
@@ -54,4 +55,26 @@ export function useSize<T extends Renderable>(): {
     return () => clearTimeout(t)
   }, [onSizeChange])
   return { ref, size, onSizeChange }
+}
+
+/** The cpu / memory buckets of a service for the 15m / 1h charts, refreshed every 10 s (empty for 2m: the live samples are enough). */
+export function useResourceHistory(sup: SupervisorLike, name: string, range: Range): ResourceBucket[] {
+  const [buckets, setBuckets] = useState<ResourceBucket[]>([])
+  useEffect(() => {
+    setBuckets([])
+    if (range === "2m") return
+    let alive = true
+    const load = () =>
+      sup
+        .history(name, RANGE_MS[range])
+        .then((b) => alive && setBuckets(b))
+        .catch(() => {})
+    void load()
+    const t = setInterval(load, 10_000)
+    return () => {
+      alive = false
+      clearInterval(t)
+    }
+  }, [sup, name, range])
+  return buckets
 }

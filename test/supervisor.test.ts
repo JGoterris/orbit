@@ -4,12 +4,13 @@ import { readState, writeState } from "../src/core/state.ts"
 import { Supervisor } from "../src/core/supervisor.ts"
 import { mkdtempSync as __mk } from "node:fs"
 import { tmpdir as __tmp } from "node:os"
+import { sleepCmd, win } from "./helpers.ts"
 process.env.XDG_STATE_HOME = __mk(`${__tmp()}/orbit-state-`) // tests must not touch the real ~/.local/state
 
 function svc(name: string, cmd: string, extra: Partial<ServiceConfig> = {}): ServiceConfig {
   return {
     name, type: "process", cmd, cwd: process.cwd(), env: {}, envFiles: [], dependsOn: [], restart: "no",
-    startTimeout: 5000, stopTimeout: 1000, autostart: true, ports: [], volumes: [], dockerArgs: [], ...extra,
+    startTimeout: 5000, stopTimeout: 1000, autostart: true, leakDetection: true, ports: [], volumes: [], dockerArgs: [], ...extra,
   }
 }
 
@@ -17,7 +18,24 @@ function config(...services: ServiceConfig[]): OrbitConfig {
   return { name: "t", root: process.cwd(), services: Object.fromEntries(services.map((s) => [s.name, s])), groups: {} }
 }
 
-describe("supervisor", () => {
+// these use POSIX shell syntax (`;`, `&`, `$VAR`, `exit N`); Windows is covered by test/platform.test.ts
+describe.skipIf(win)("supervisor", () => {
+  test("memory over its limit is flagged in the state and in the history", async () => {
+    const sup = new Supervisor(config(svc("hog", sleepCmd(30), { memLimit: 1024 }), svc("calm", sleepCmd(30))))
+    await sup.init()
+    expect(await sup.startMany(["hog", "calm"])).toBeUndefined()
+    for (let i = 0; i < 40 && !sup.state("hog").resources?.level; i++) await Bun.sleep(250)
+    expect(sup.state("hog").resources).toMatchObject({ memLimit: 1024, level: "over" })
+    expect(sup.state("calm").resources).toBeUndefined()
+    const buckets = await sup.history("hog")
+    expect(buckets.length).toBeGreaterThan(0)
+    expect(buckets[0]!.mem).toBeGreaterThan(0)
+    await sup.stop("hog")
+    expect(sup.state("hog").resources).toBeUndefined()
+    await expect(sup.history("nope")).rejects.toThrow("unknown service")
+    await sup.dispose()
+  })
+
   test("starts dependencies first and stops dependents first", async () => {
     const started: string[] = []
     const sup = new Supervisor(config(
@@ -52,7 +70,7 @@ describe("supervisor", () => {
   test("crash + restart on-failure, dependents fail when a dependency cannot start", async () => {
     const sup = new Supervisor(config(
       svc("bad", "echo boom >&2; exit 3", { restart: "on-failure", health: { cmd: "false", interval: 100, timeout: 100 } }),
-      svc("app", "sleep 30", { dependsOn: ["bad"] }),
+      svc("app", sleepCmd(30), { dependsOn: ["bad"] }),
     ))
     expect(await sup.start("app")).toBe(false)
     expect(sup.state("app").status).toBe("failed")
@@ -110,7 +128,7 @@ describe("supervisor", () => {
       svc("build", "sleep 0.2; echo built", { oneshot: true, restart: "always" }),
       svc("app", "echo app-up; sleep 30", { dependsOn: ["build"] }),
       svc("broken", "exit 2", { oneshot: true }),
-      svc("needs-broken", "sleep 30", { dependsOn: ["broken"] }),
+      svc("needs-broken", sleepCmd(30), { dependsOn: ["broken"] }),
     ))
     expect(await sup.start("app")).toBe(true)
     expect(sup.state("build").status).toBe("exited")
@@ -147,7 +165,7 @@ describe("supervisor", () => {
       const m = marker()
       const sup = new Supervisor(config(
         svc("a", `touch ${m}; sleep 30`, { hooks: { preStart: [hook("exit 1")], postStart: [], postStop: [] } }),
-        svc("b", "sleep 30", { dependsOn: ["a"] }),
+        svc("b", sleepCmd(30), { dependsOn: ["a"] }),
       ))
       expect(await sup.start("b")).toBe(false)
       expect(sup.state("a").status).toBe("failed")
@@ -159,7 +177,7 @@ describe("supervisor", () => {
 
     test("a failing post_start is reported but the service stays up", async () => {
       const sup = new Supervisor(config(
-        svc("a", "sleep 30", { hooks: { preStart: [], postStart: [hook("exit 4")], postStop: [] } }),
+        svc("a", sleepCmd(30), { hooks: { preStart: [], postStart: [hook("exit 4")], postStop: [] } }),
       ))
       expect(await sup.start("a")).toBe(true)
       await Bun.sleep(300)
@@ -171,7 +189,7 @@ describe("supervisor", () => {
     test("post_stop runs on stop and after a crash, with ORBIT_EXIT_CODE", async () => {
       const m = marker()
       const sup = new Supervisor(config(
-        svc("stopped", "sleep 30", { hooks: { preStart: [], postStart: [], postStop: [hook(`echo $ORBIT_SERVICE > ${m}`)] } }),
+        svc("stopped", sleepCmd(30), { hooks: { preStart: [], postStart: [], postStop: [hook(`echo $ORBIT_SERVICE > ${m}`)] } }),
         svc("crashy", "sleep 0.2; exit 3", { hooks: { preStart: [], postStart: [], postStop: [hook(`echo code=$ORBIT_EXIT_CODE`)] } }),
       ))
       await sup.start("stopped")
@@ -188,7 +206,7 @@ describe("supervisor", () => {
 
     test("stopping during a long pre_start kills it", async () => {
       const sup = new Supervisor(config(
-        svc("a", "sleep 30", { hooks: { preStart: [hook("sleep 30", 60_000)], postStart: [], postStop: [] } }),
+        svc("a", sleepCmd(30), { hooks: { preStart: [hook(sleepCmd(30), 60_000)], postStart: [], postStop: [] } }),
       ))
       const started = sup.start("a")
       await Bun.sleep(300)
@@ -241,7 +259,7 @@ describe("supervisor", () => {
 
   test("a recycled pid (different start time) is not adopted", async () => {
     const stateDir = __mk(`${__tmp()}/orbit-stale-`)
-    const cfg = () => config(svc("keep", "sleep 30"))
+    const cfg = () => config(svc("keep", sleepCmd(30)))
     const first = new Supervisor(cfg(), { stateDir })
     await first.start("keep")
     const pid = first.state("keep").pid!
@@ -283,7 +301,7 @@ describe("external services", () => {
 
   test("a dependent waits for it; unreachable means the dependent fails", async () => {
     const port = freePort()
-    const sup = new Supervisor(config(external("saas", port), svc("api", "sleep 30", { dependsOn: ["saas"] })))
+    const sup = new Supervisor(config(external("saas", port), svc("api", sleepCmd(30), { dependsOn: ["saas"] })))
     await sup.init()
     expect(await sup.start("api")).toBe(false)
     expect(sup.state("api").status).toBe("failed")
@@ -301,7 +319,7 @@ describe("external services", () => {
   test("stop does nothing to it nor to its dependents; start works without init()", async () => {
     const port = freePort()
     const server = Bun.serve({ port, fetch: () => new Response("ok") })
-    const sup = new Supervisor(config(external("saas", port), svc("api", "sleep 30", { dependsOn: ["saas"] })))
+    const sup = new Supervisor(config(external("saas", port), svc("api", sleepCmd(30), { dependsOn: ["saas"] })))
     try {
       expect(await sup.start("api")).toBe(true)
       await sup.stop("saas")

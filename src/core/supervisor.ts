@@ -3,13 +3,15 @@ import type { Subprocess } from "bun"
 import { relative } from "node:path"
 import { readEnvFiles } from "../config/envFiles.ts"
 import type { Hook, OrbitConfig, ServiceConfig } from "../config/schema.ts"
-import { isPortOpen, whoListens } from "./exec.ts"
+import { isPortOpen } from "./exec.ts"
+import { killTree, whoListens } from "./platform/index.ts"
 import { dependentsMap, depMapOf, topoOrder, type DepMap } from "./graph.ts"
 import { checkHealth, describeHealth } from "./health.ts"
 import { runHooks, type HookPhase } from "./hooks.ts"
 import { LogStore } from "./logs.ts"
 import { ProcessSampler, sampleContainers } from "./metrics.ts"
-import { createRunner, killGroup, type Runner } from "./runners.ts"
+import { detectLeak, memLevel, ResourceHistory, type ResourceBucket, type ResourceInfo } from "./resources.ts"
+import { createRunner, type Runner } from "./runners.ts"
 import { FileWatcher } from "./watch.ts"
 import { procFiles, readState, stateDir, writeState, type SavedService } from "./state.ts"
 
@@ -54,6 +56,8 @@ export interface ServiceState {
   adopted?: boolean
   cpu: number[]
   mem: number[]
+  /** memory against its limit, and sustained growth; undefined until there is something to say */
+  resources?: ResourceInfo
 }
 
 /**
@@ -71,6 +75,8 @@ export interface SupervisorLike extends Pick<EventEmitter, "on" | "off"> {
   service(name: string): ServiceConfig
   state(name: string): ServiceState
   snapshot(): ServiceState[]
+  /** Up to an hour of cpu / memory in 10 s buckets, oldest first; `sinceMs` keeps only the last stretch. */
+  history(name: string, sinceMs?: number): Promise<ResourceBucket[]>
   isReady(name: string): boolean
   isUp(name: string): boolean
   isAdopted(name: string): boolean
@@ -124,6 +130,7 @@ export class Supervisor extends EventEmitter implements SupervisorLike {
   private states = new Map<string, ServiceState>()
   private rt = new Map<string, Runtime>()
   private sampler = new ProcessSampler()
+  private resHistory = new ResourceHistory()
   private metricsTimer?: ReturnType<typeof setInterval>
   private sampling = false
   private disposed = false
@@ -164,6 +171,11 @@ export class Supervisor extends EventEmitter implements SupervisorLike {
 
   snapshot(): ServiceState[] {
     return this.names.map((n) => this.states.get(n)!)
+  }
+
+  async history(name: string, sinceMs?: number): Promise<ResourceBucket[]> {
+    this.service(name)
+    return this.resHistory.buckets(name, sinceMs)
   }
 
   /** Ready to be depended on: up (and healthy if checked), or a oneshot task that finished OK. */
@@ -380,7 +392,7 @@ export class Supervisor extends EventEmitter implements SupervisorLike {
     clearTimeout(rt.restartTimer)
     rt.gen++
     // a pre_start / post_start still running is cut short
-    if (rt.hook) killGroup(rt.hook.pid, "SIGKILL")
+    if (rt.hook) killTree(rt.hook.pid, "SIGKILL")
     const st = this.state(name)
     const runner = rt.runner
     if (!runner || TERMINAL.has(st.status)) {
@@ -402,7 +414,7 @@ export class Supervisor extends EventEmitter implements SupervisorLike {
       if (rt.runner === runner) rt.runner = undefined
       const postStop = this.service(name).hooks?.postStop
       if (postStop?.length) await this.runHook(name, "post_stop", postStop)
-      this.update(name, { status: "stopped", pid: undefined, stoppedAt: Date.now() })
+      this.update(name, { status: "stopped", pid: undefined, stoppedAt: Date.now(), resources: undefined })
       this.persist()
       this.log(name, "stopped")
       this.flushWaiters(name, false)
@@ -469,7 +481,7 @@ export class Supervisor extends EventEmitter implements SupervisorLike {
   killAllSync() {
     for (const rt of this.rt.values()) {
       rt.runner?.killSync()
-      if (rt.hook) killGroup(rt.hook.pid, "SIGKILL")
+      if (rt.hook) killTree(rt.hook.pid, "SIGKILL")
     }
   }
 
@@ -542,6 +554,7 @@ export class Supervisor extends EventEmitter implements SupervisorLike {
     return runHooks(phase, hooks, {
       service: name,
       cwd: this.service(name).cwd,
+      shell: this.service(name).shell,
       env: rt.env,
       exitCode,
       log: (stream, text) => this.logs.append(name, stream, text),
@@ -589,6 +602,7 @@ export class Supervisor extends EventEmitter implements SupervisorLike {
       exitCode: code,
       pid: undefined,
       stoppedAt: Date.now(),
+      resources: undefined,
       error: ok ? undefined : `exited with ${signal ?? `code ${code}`}`,
     })
     this.flushWaiters(name, false)
@@ -683,6 +697,24 @@ export class Supervisor extends EventEmitter implements SupervisorLike {
     this.logs.append(name, "system", text)
   }
 
+  /** The `resources` of a service after a sample; the previous object when nothing changed (no needless re-render / broadcast). */
+  private assess(name: string, mem: number, containerLimit?: number): ResourceInfo | undefined {
+    const st = this.state(name)
+    const svc = this.service(name)
+    const prev = st.resources
+    const memLimit = svc.memLimit ?? containerLimit
+    const level = memLevel(mem, memLimit, prev?.level)
+    const since = (st.startedAt ?? 0) - 10_000
+    const leak = svc.leakDetection
+      ? detectLeak(this.resHistory.buckets(name).filter((b) => b.t >= since), memLimit)
+      : undefined
+    // the estimate moves every sample; only a leak that appears, disappears or changes a lot is news
+    const keepLeak = prev?.leak && leak && Math.abs(leak.perMin - prev.leak.perMin) < prev.leak.perMin * 0.25 ? prev.leak : leak
+    if (!memLimit && !level && !keepLeak) return undefined
+    if (prev && prev.memLimit === memLimit && prev.level === level && prev.leak === keepLeak) return prev
+    return { memLimit, level, leak: keepLeak }
+  }
+
   private async sampleMetrics() {
     if (this.sampling) return
     this.sampling = true
@@ -694,10 +726,15 @@ export class Supervisor extends EventEmitter implements SupervisorLike {
         if (st.pid) procs.push([st.name, st.pid])
         else if (st.containerId) containers.push([st.name, st.containerId])
       }
-      const procSamples = this.sampler.sample(procs.map(([, p]) => p))
-      const push = (name: string, cpu: number, mem: number) => {
+      const procSamples = await this.sampler.sample(procs.map(([, p]) => p))
+      const push = (name: string, cpu: number, mem: number, containerLimit?: number) => {
         const st = this.state(name)
-        this.update(name, { cpu: [...st.cpu, cpu].slice(-HISTORY), mem: [...st.mem, mem].slice(-HISTORY) })
+        this.resHistory.push(name, cpu, mem)
+        this.update(name, {
+          cpu: [...st.cpu, cpu].slice(-HISTORY),
+          mem: [...st.mem, mem].slice(-HISTORY),
+          resources: this.assess(name, mem, containerLimit),
+        })
       }
       for (const [name, pid] of procs) {
         const s = procSamples.get(pid)
@@ -707,7 +744,7 @@ export class Supervisor extends EventEmitter implements SupervisorLike {
         const samples = await sampleContainers(containers.map(([, id]) => id))
         for (const [name, id] of containers) {
           const s = samples.get(id)
-          if (s && UP_STATUSES.has(this.state(name).status)) push(name, s.cpu, s.mem)
+          if (s && UP_STATUSES.has(this.state(name).status)) push(name, s.cpu, s.mem, s.limit)
         }
       }
     } finally {

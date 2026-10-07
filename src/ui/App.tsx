@@ -6,6 +6,8 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { resolveEnv } from "../config/envFiles.ts"
 import { consoleCommand, ConsoleManager, type ConsoleSession } from "../core/console.ts"
 import { openUrl } from "../core/exec.ts"
+import { formatBytes } from "../core/metrics.ts"
+import { RANGES, type Range } from "../core/resources.ts"
 import { findGitRoot } from "../core/git.ts"
 import { filterLines, foldTraces, formatLines, matcher, withFrames } from "../core/logs.ts"
 import type { SupervisorLike } from "../core/supervisor.ts"
@@ -74,6 +76,8 @@ export function App({ sup, onQuit, onOpenProject, startWithPicker = false, git, 
   const [themeIndex, setThemeIndex] = useState(0)
   const [focus, setFocus] = useState<Pane>("services")
   const [zoomed, setZoomed] = useState(false)
+  // time span of the cpu / mem charts in the service detail
+  const [resRange, setResRange] = useState<Range>("2m")
   const [logScope, setLogScope] = useState<"selected" | "all">("all")
   const [filter, setFilter] = useState("")
   const [scrollBack, setScrollBack] = useState(0)
@@ -162,12 +166,24 @@ export function App({ sup, onQuit, onOpenProject, startWithPicker = false, git, 
     toastTimer.current = setTimeout(() => setToast(undefined), 3500)
   }, [])
 
-  // surface failures/crashes as toasts
+  const cycleRange = useCallback(() => setResRange((r) => RANGES[(RANGES.indexOf(r) + 1) % RANGES.length]!), [])
+
+  // surface failures/crashes and memory alerts as toasts
   useEffect(() => {
     const last = new Map(names.map((n) => [n, sup.state(n).status]))
+    const lastRes = new Map(names.map((n) => [n, { level: sup.state(n).resources?.level, leak: !!sup.state(n).resources?.leak }]))
     const onChange = (name?: string) => {
       if (!name) return
       const st = sup.state(name)
+      const r = st.resources
+      const was = lastRes.get(name)
+      lastRes.set(name, { level: r?.level, leak: !!r?.leak })
+      if (r?.level && r.level !== was?.level && r.memLimit) {
+        const mem = st.mem[st.mem.length - 1] ?? 0
+        if (r.level === "over") notify(`✖ ${name}: memory over its limit (${formatBytes(mem)} / ${formatBytes(r.memLimit)})`, theme.red)
+        else notify(`▲ ${name}: memory at ${Math.round((mem / r.memLimit) * 100)}% of ${formatBytes(r.memLimit)}`, theme.orange)
+      }
+      if (r?.leak && !was?.leak) notify(`↗ ${name}: possible memory leak (+${formatBytes(r.leak.perMin)}/min)`, theme.orange)
       const prev = last.get(name)
       last.set(name, st.status)
       if (prev === st.status) return
@@ -193,7 +209,7 @@ export function App({ sup, onQuit, onOpenProject, startWithPicker = false, git, 
       const url = svc.url ?? (svc.port ? `http://localhost:${svc.port}` : undefined)
       if (!url) return notify(`${name} has no port or url`, theme.yellow)
       notify(`opening ${url}`, theme.accent)
-      void openUrl(url).then((ok) => ok || notify(`could not open ${url} (no xdg-open/wslview)`, theme.red))
+      void openUrl(url).then((ok) => ok || notify(`could not open ${url} (no browser opener found)`, theme.red))
     },
     [sup, notify],
   )
@@ -315,6 +331,7 @@ export function App({ sup, onQuit, onOpenProject, startWithPicker = false, git, 
           setDetailH(undefined)
         },
       },
+      { id: "usage-range", label: "Cycle the cpu / memory chart range (2m · 15m · 1h)", hint: "h", run: cycleRange },
       { id: "toggle-zoom", label: "Toggle zoom of the focused panel", hint: "z", run: () => setZoomed((v) => !v) },
       ...Object.entries(sup.config.groups).flatMap(([g, members]) => [
         { id: `group-start-${g}`, label: `Start group ${g}`, hint: members.join(","), run: () => run(g, sup.startMany(members)) },
@@ -376,7 +393,7 @@ export function App({ sup, onQuit, onOpenProject, startWithPicker = false, git, 
       },
     ]
     return list
-  }, [sup, names, selected, run, openService, openServiceLazygit, openConsole, requestQuit, doQuit, onQuit])
+  }, [sup, names, selected, run, cycleRange, openService, openServiceLazygit, openConsole, requestQuit, doQuit, onQuit])
 
   const matches = useMemo(() => filterCommands(commands, query), [commands, query])
   const projRows = useMemo(
@@ -624,6 +641,7 @@ export function App({ sup, onQuit, onOpenProject, startWithPicker = false, git, 
     if (key.name === "escape" && (search || filter)) return clearLogQueries()
     if (key.name === "escape" && zoomed) return setZoomed(false)
     if (viewKeys.current?.(key)) return
+    if (ch === "h" && view === "dashboard") return cycleRange()
 
     if (focus === "logs") {
       if (key.name === "down" || ch === "j") return setScrollBack((v) => Math.max(0, v - 1))
@@ -807,6 +825,7 @@ export function App({ sup, onQuit, onOpenProject, startWithPicker = false, git, 
     sidebarW,
     detailRows,
     zoomed,
+    range: resRange,
     focus,
     setFocus,
     notify,

@@ -47,7 +47,9 @@ Built with TypeScript, [Bun](https://bun.sh) and [OpenTUI](https://github.com/an
 - **Live logs** per service or combined with color prefix, regex filter, scroll
   (wheel/PgUp/PgDn), timestamps, error/warning highlighting.
 - **CPU and memory** per process tree (via `/proc`) and per container (`docker stats`), with
-  sparklines.
+  sparklines and up to an hour of history (`h` cycles 2m · 15m · 1h).
+- **Memory alerts**: `mem_limit` turns memory orange at 85 % and red at 100 %, and a steady growth
+  (leak) shows `↗`; both raise a toast and a desktop notification.
 - **Docker / compose**: automatically imports `docker-compose.yml` (with `depends_on`, ports,
   healthchecks and `${VAR:-def}` interpolation), and re-attaches to containers that were
   already running. Those containers **are not stopped when exiting orbit** (only with explicit `x`/`X`).
@@ -87,9 +89,28 @@ bunx @jgoterris/orbit
 ```
 
 Requires [Bun](https://bun.sh) ≥ 1.3 — orbit runs on Bun regardless of which package manager
-installed it. Docker is only needed for `docker`/`compose` services. CPU/memory sparklines for
-process trees read `/proc`, so they're Linux-only (container metrics via `docker stats` work
-anywhere).
+installed it. Docker is only needed for `docker`/`compose` services.
+
+### Platforms
+
+orbit runs natively on **Linux, macOS and Windows** (and WSL2, as Linux).
+
+| | Linux / WSL2 | macOS | Windows |
+| --- | --- | --- | --- |
+| `cmd:`, hooks, `health.cmd`, `console:` run through | `sh -c` | `sh -c` | `cmd.exe /d /s /c` |
+| Stop a service | `SIGTERM` to its process group, then `SIGKILL` | same | `taskkill /T` on its process tree, then `/F` |
+| CPU / memory of process trees | `/proc` | `ps` | `Get-CimInstance Win32_Process` (PowerShell) |
+| `orbit` socket | Unix socket | Unix socket | named pipe |
+| State (logs, pids) | `~/.local/state/orbit` | `~/.local/state/orbit` | `%LOCALAPPDATA%\orbit` |
+| User config (themes) | `~/.config/orbit` | `~/.config/orbit` | `%APPDATA%\orbit` |
+
+`$XDG_STATE_HOME` / `$XDG_CONFIG_HOME` win on every platform. To pick another shell, set `shell:` at the top of
+`orbit.yaml` (or per service): `shell: pwsh`, `shell: bash` (Git Bash on Windows)… PowerShell gets
+`-NoProfile -Command`, everything else `-c`.
+
+On Windows there are no signals: a stop is a `taskkill` that console programs usually honour only when forced, so
+`stop_timeout` mostly delays the forced kill. A tree whose leader died cannot be found afterwards, and the embedded
+console (`i`) needs a pseudo-terminal, which Bun may not offer there.
 
 ## Usage
 
@@ -140,7 +161,7 @@ recent unpinned ones are kept; pinned ones are never dropped).
 | `v` (logs focused) | copy mode: `j k` `ctrl+u/d` `g G` move, `v` start/clear selection, `enter`/`space` on a trace row opens/closes it, `y` copy, `esc` cancel |
 | `Y` · `E` | copy all visible logs · export them to `~/.local/state/orbit/<project>/exports/` (the path is copied) |
 | `o` | open `http://localhost:<port>` (or `url`) in the browser |
-| `i` | interactive console of the selected service in a floating terminal (`console:` command, or `$SHELL` / the container's shell). `ctrl+]` hides it and keeps it running; `i` brings it back |
+| `i` | interactive console of the selected service in a floating terminal (`console:` command, or `$SHELL` (`%ComSpec%` on Windows) / the container's shell). `ctrl+]` hides it and keeps it running; `i` brings it back |
 | `e` | environment variables of the selected service (secrets masked, `v` reveals) |
 | `L` | open the selected service's git repo in [lazygit](https://github.com/jesseduffield/lazygit) (if installed) |
 | `4` | Git view, see [Git](#git) |
@@ -166,8 +187,8 @@ echo '{"jsonrpc":"2.0","id":1,"method":"snapshot"}' | socat - UNIX-CONNECT:$SOCK
 
 Requests: `hello`, `snapshot`, `logs`, `start` / `stop` / `restart` / `toggle` (`{"services": [...]}`, groups expand),
 `startAll`, `stopAll`, `toggleWatch`, `clearLogs`, `subscribe` (`{"logs": true}` to receive `state` and `log`
-notifications) and `shutdown`. Linux, macOS and WSL2 use Unix sockets; the Windows endpoint (a named pipe) exists in
-the code but orbit itself does not run on native Windows yet.
+notifications) and `shutdown`. Linux, macOS and WSL2 use Unix sockets; Windows uses a named pipe
+(`\\.\pipe\orbit-<hash>`).
 
 ## Git
 
@@ -227,6 +248,7 @@ compose: ./docker-compose.yml   # optional; by default the compose in this direc
 env:                            # variables for all services. ${VAR} and ${VAR:-def} are interpolated (+ .env)
   LOG_LEVEL: info
 env_file: .env.shared           # .env files for all services (optional)
+shell: pwsh                     # optional: shell for cmd, hooks, health and console (default: sh, or cmd.exe on Windows)
 
 services:
   api:                          # type: process (default if there is a cmd)
@@ -247,6 +269,7 @@ services:
     #   ignore: ["**/*_test.go"]   # .git, node_modules and editor swap files are always ignored
     #   debounce: 1s               # quiet time needed after the last change (default 1s)
     #   cooldown: 10s              # at most one restart per cooldown; changes in between are batched (default 10s)
+    shell: bash                 # optional, overrides the global one for this service
     console: bin/rails console  # `i` opens it in a terminal (process: in cwd/env; docker: inside the container)
     start_timeout: 60s
     stop_timeout: 8s
@@ -273,6 +296,11 @@ services:
   docs:
     cmd: bun run docs
     autostart: false            # not started with S / --up
+
+  worker:
+    cmd: bun run worker
+    mem_limit: 1G               # alert (orange ≥85 %, red ≥100 %); 512m, 1.5G, or bytes
+    leak_detection: false       # default true: warn about sustained memory growth
 
   build-lib:                    # task: build, migration, provisioning…
     cmd: mvn -q install -pl shared-kernel -am -DskipTests
@@ -336,6 +364,7 @@ src/
                        remote.ts (RemoteSupervisor: the TUI's mirror of a daemon), daemon.ts (orbit daemon + auto-start)
     git/               status, diff parsing, operations, GitRepo (cached state + change events), multi-repo runs,
                        repos.ts (the repos a project's services live in)
+    platform/          everything that differs per OS: shells, process trees, metrics, ports, per-user dirs (wrap.ts: Windows exit-code wrapper)
     health.ts metrics.ts logs.ts exec.ts
   ui/
     App.tsx            layout, keyboard, views, overlays

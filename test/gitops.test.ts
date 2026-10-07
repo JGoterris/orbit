@@ -234,7 +234,7 @@ describe("remotes", () => {
     expect((await ops.fetch(a)).ok).toBe(true)
     expect(await readStatus(a)).toMatchObject({ ahead: 0, behind: 1 })
     expect((await ops.pull(a)).ok).toBe(true)
-    expect(readFileSync(join(a, "b.txt"), "utf8")).toBe("from b\n")
+    expect(readFileSync(join(a, "b.txt"), "utf8").replace(/\r\n/g, "\n")).toBe("from b\n") // Windows checks files out with CRLF
     expect(await readStatus(a)).toMatchObject({ ahead: 0, behind: 0 })
     expect((await ops.push(a, "main", true)).ok).toBe(true)
   })

@@ -7,6 +7,8 @@ import { connectRemote } from "../src/core/ipc/daemon.ts"
 import { socketPath } from "../src/core/ipc/endpoint.ts"
 import { RemoteSupervisor } from "../src/core/ipc/remote.ts"
 import { readLock, stateDir } from "../src/core/state.ts"
+import { killTree } from "../src/core/platform/index.ts"
+import { sleepCmd } from "./helpers.ts"
 
 process.env.XDG_STATE_HOME = mkdtempSync(`${tmpdir()}/orbit-state-`) // the daemon inherits it: never the real ~/.local/state
 
@@ -56,7 +58,7 @@ async function open(config: ReturnType<typeof project>) {
 
 describe("orbit daemon", () => {
   test("starts on demand, outlives its clients, supervises with nobody connected, and quits on request", async () => {
-    const config = project("d1", "services:\n  w:\n    cmd: sleep 300\n    restart: always\n")
+    const config = project("d1", `services:\n  w:\n    cmd: ${sleepCmd(300)}\n    restart: always\n`)
     expect(existsSync(socketPath(stateDir(config)))).toBe(false)
 
     const first = await open(config)
@@ -74,7 +76,7 @@ describe("orbit daemon", () => {
     expect(alive(servicePid)).toBe(true)
 
     // the service dies while nobody watches: restart: always brings it back
-    process.kill(-servicePid, "SIGKILL")
+    killTree(servicePid, "SIGKILL")
     await until(() => !alive(servicePid))
 
     // "open another terminal": same daemon, and by now it restarted the service
@@ -94,7 +96,7 @@ describe("orbit daemon", () => {
   }, 40_000)
 
   test("a second client does not start a second daemon", async () => {
-    const config = project("d2", "services:\n  w:\n    cmd: sleep 300\n")
+    const config = project("d2", `services:\n  w:\n    cmd: ${sleepCmd(300)}\n`)
     const [a, b] = await Promise.all([open(config), open(config)])
     expect(a.hello.pid).toBe(b.hello.pid)
     const pid = a.hello.pid

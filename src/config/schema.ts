@@ -1,3 +1,4 @@
+import { parseMemSize } from "../core/metrics.ts"
 import type { EnvFileRef } from "./envFiles.ts"
 
 /** `external`: something orbit does not run (a SaaS API, a managed database): it is only health-checked */
@@ -44,6 +45,8 @@ export interface ServiceConfig {
   type: ServiceType
   description?: string
   cmd?: string
+  /** shell that runs cmd, hooks, health.cmd and console (default: sh on POSIX, cmd.exe on Windows) */
+  shell?: string
   /** interactive command for the `i` console (psql, rails console...): process → runs in the service's cwd/env, docker/compose → inside the container */
   console?: string
   cwd: string
@@ -66,6 +69,10 @@ export interface ServiceConfig {
   /** ms to wait after SIGTERM before SIGKILL */
   stopTimeout: number
   autostart: boolean
+  /** memory (bytes) above which orbit alerts; orbit does not enforce it (compose/docker do, if they set it) */
+  memLimit?: number
+  /** warn about sustained memory growth (default on) */
+  leakDetection: boolean
   /** a task that runs to completion (build, migration, provisioning): ready once it exits 0 */
   oneshot?: boolean
   // docker
@@ -146,6 +153,15 @@ export function asEnv(value: unknown, path: string): Record<string, string> {
   const out: Record<string, string> = {}
   for (const [k, v] of Object.entries(rec)) out[k] = asString(v, `${path}.${k}`) ?? ""
   return out
+}
+
+/** `mem_limit` / `deploy.resources.limits.memory`: "1G", "512m", or bytes */
+export function asMemSize(value: unknown, path: string): number | undefined {
+  if (value === undefined || value === null) return undefined
+  if (typeof value !== "string" && typeof value !== "number") throw new ConfigError(`expected a size like "1G", got ${typeof value}`, path)
+  const n = parseMemSize(value)
+  if (n === undefined) throw new ConfigError(`invalid memory size ${JSON.stringify(value)} (use e.g. 512m, 1G)`, path)
+  return n
 }
 
 /** "8080:80" -> 8080, "127.0.0.1:5432:5432" -> 5432, "3000" -> 3000 */

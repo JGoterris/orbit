@@ -1,9 +1,10 @@
 import { existsSync, readdirSync, readFileSync } from "node:fs"
 import { homedir } from "node:os"
-import { dirname, join, resolve } from "node:path"
+import { dirname, isAbsolute, join, resolve, sep } from "node:path"
 import type { OrbitConfig } from "../config/schema.ts"
 import { configDir, writeJsonAtomic } from "./userConfig.ts"
-import { procStartTime, readLock, readState, stateDir } from "./state.ts"
+import { pidAlive, procStartTime } from "./platform/index.ts"
+import { readLock, readState, stateDir } from "./state.ts"
 
 /** A project orbit has opened before. Kept in ~/.config/orbit/projects.json, shared by every project. */
 export interface ProjectEntry {
@@ -70,20 +71,11 @@ export interface ProjectStatus {
   running: number
 }
 
-function alive(pid: number): boolean {
-  try {
-    process.kill(pid, 0)
-    return true
-  } catch (err) {
-    return (err as NodeJS.ErrnoException).code === "EPERM"
-  }
-}
-
 export function projectStatus(p: ProjectEntry): ProjectStatus {
   const dir = stateDir({ name: p.name, root: p.path } as OrbitConfig)
   const holder = readLock(dir)
   const running = Object.values(readState(dir).services).filter(
-    (s) => s.pid !== undefined && alive(s.pid) && (s.startTime === undefined || procStartTime(s.pid) === s.startTime),
+    (s) => s.pid !== undefined && pidAlive(s.pid) && (s.startTime === undefined || procStartTime(s.pid) === s.startTime),
   ).length
   return { exists: existsSync(p.path), openIn: holder && holder !== process.pid ? holder : undefined, running }
 }
@@ -92,12 +84,12 @@ export function projectStatus(p: ProjectEntry): ProjectStatus {
 export function expandPath(input: string, cwd = process.cwd()): string {
   const t = input.trim()
   if (t === "~") return homedir()
-  if (t.startsWith("~/")) return join(homedir(), t.slice(2))
+  if (t.startsWith("~/") || t.startsWith("~\\")) return join(homedir(), t.slice(2))
   return resolve(cwd, t)
 }
 
 /** Whether what was typed in the project picker is a path rather than a search. */
-export const looksLikePath = (input: string) => /^(\/|~|\.{1,2}(\/|$))/.test(input.trim())
+export const looksLikePath = (input: string) => /^(\/|\\|[a-zA-Z]:[\\/]|~|\.{1,2}([\\/]|$))/.test(input.trim())
 
 /**
  * Shell-style tab completion of a directory path: a single match is completed (with a trailing `/`),
@@ -106,9 +98,9 @@ export const looksLikePath = (input: string) => /^(\/|~|\.{1,2}(\/|$))/.test(inp
 export function completePath(input: string, cwd = process.cwd()): string {
   const home = homedir()
   const full = expandPath(input, cwd)
-  const endsInSlash = input.endsWith("/")
+  const endsInSlash = /[\\/]$/.test(input)
   const parent = endsInSlash || input === "~" ? full : dirname(full)
-  const prefix = endsInSlash || input === "~" ? "" : full.slice(parent.length + (parent.endsWith("/") ? 0 : 1))
+  const prefix = endsInSlash || input === "~" ? "" : full.slice(parent.length + (parent.endsWith(sep) ? 0 : 1))
   let names: string[]
   try {
     names = readdirSync(parent, { withFileTypes: true })
@@ -122,10 +114,10 @@ export function completePath(input: string, cwd = process.cwd()): string {
   let common = names[0]!
   for (const n of names) while (!n.startsWith(common)) common = common.slice(0, -1)
   if (names.length > 1 && common === prefix) return input // several candidates, nothing more in common
-  const done = join(parent, common) + (names.length === 1 ? "/" : "")
+  const done = join(parent, common) + (names.length === 1 ? sep : "")
   // keep the way the user wrote it (~ stays ~, relative stays relative)
   if (input.startsWith("~")) return done.startsWith(home) ? `~${done.slice(home.length)}` : done
-  if (!input.startsWith("/")) return done.startsWith(cwd + "/") ? `${input.startsWith("./") ? "./" : ""}${done.slice(cwd.length + 1)}` : done
+  if (!isAbsolute(input)) return done.startsWith(cwd + sep) ? `${/^\.[\\/]/.test(input) ? `.${sep}` : ""}${done.slice(cwd.length + 1)}` : done
   return done
 }
 

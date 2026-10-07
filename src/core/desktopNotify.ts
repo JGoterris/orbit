@@ -1,5 +1,6 @@
 import { readFileSync } from "node:fs"
 import { readUserConfig } from "./userConfig.ts"
+import { formatBytes, formatDuration } from "./metrics.ts"
 import type { Status, SupervisorLike } from "./supervisor.ts"
 
 export interface Notice {
@@ -93,7 +94,7 @@ export function sendDesktop(n: Notice, backend = defaultBackend()) {
   } catch {}
 }
 
-type Kind = "crashed" | "failed" | "unhealthy" | "recovered"
+type Kind = "crashed" | "failed" | "unhealthy" | "recovered" | "memory" | "leak"
 interface Event {
   kind: Kind
   name: string
@@ -114,9 +115,13 @@ export interface NotifierOptions {
 const describe = (e: Event) =>
   e.kind === "recovered"
     ? `✔  ${e.name} recovered`
-    : e.kind === "unhealthy"
-      ? `●  ${e.name} is unhealthy${e.detail ? `: ${e.detail}` : ""}`
-      : `✖  ${e.name} ${e.kind}${e.detail ? `: ${e.detail}` : ""}`
+    : e.kind === "memory"
+      ? `▲  ${e.name} is over its memory limit${e.detail ? ` (${e.detail})` : ""}`
+      : e.kind === "leak"
+        ? `↗  ${e.name} may be leaking memory${e.detail ? `: ${e.detail}` : ""}`
+        : e.kind === "unhealthy"
+          ? `●  ${e.name} is unhealthy${e.detail ? `: ${e.detail}` : ""}`
+          : `✖  ${e.name} ${e.kind}${e.detail ? `: ${e.detail}` : ""}`
 
 /**
  * Sends a desktop notification when a service of `sup` crashes, fails or turns unhealthy, and when it
@@ -144,18 +149,44 @@ export function attachDesktopNotifier(
     const events = pending
     pending = []
     if (!events.length || !enabled()) return
-    const downs = events.filter((e) => e.kind !== "recovered")
+    const alerts = events.filter((e) => e.kind === "memory" || e.kind === "leak")
+    const downs = events.filter((e) => e.kind !== "recovered" && e.kind !== "memory" && e.kind !== "leak")
     const ups = events.filter((e) => e.kind === "recovered")
-    const lines: string[] = []
+    const lines: string[] = alerts.map(describe)
     if (downs.length === 1) lines.push(describe(downs[0]!))
     else if (downs.length > 1) lines.push(`✖  ${downs.length} services down: ${downs.map((e) => e.name).join(", ")}`)
     if (ups.length === 1) lines.push(describe(ups[0]!))
     else if (ups.length > 1) lines.push(`✔  ${ups.length} services recovered: ${ups.map((e) => e.name).join(", ")}`)
-    send({ title: `orbit · ${sup.config.name}`, body: lines.join("\n"), urgent: downs.length > 0 })
+    send({ title: `orbit · ${sup.config.name}`, body: lines.join("\n"), urgent: downs.length > 0 || alerts.some((e) => e.kind === "memory") })
+  }
+
+  const queue = (e: Event, key: string, every: number) => {
+    const at = now()
+    if (at - (sent.get(key) ?? -Infinity) < every) return
+    sent.set(key, at)
+    pending.push(e)
+    timer ??= setTimeout(flush, groupMs)
+  }
+
+  // memory alerts are reported when they start, not while they last
+  const lastAlert = new Map<string, { over: boolean; leak: boolean }>()
+  const checkResources = (name: string) => {
+    const r = sup.state(name).resources
+    const prev = lastAlert.get(name) ?? { over: false, leak: false }
+    const cur = { over: r?.level === "over", leak: !!r?.leak }
+    lastAlert.set(name, cur)
+    if (cur.over && !prev.over) {
+      queue({ kind: "memory", name, detail: r?.memLimit ? `limit ${formatBytes(r.memLimit)}` : undefined }, `${name}:memory`, throttleMs)
+    }
+    if (cur.leak && !prev.leak) {
+      const eta = r?.leak?.etaMs
+      queue({ kind: "leak", name, detail: `+${formatBytes(r!.leak!.perMin)}/min${eta ? `, limit in ~${formatDuration(eta)}` : ""}` }, `${name}:leak`, Math.max(throttleMs, 15 * 60_000))
+    }
   }
 
   const onChange = (name?: string) => {
     if (!name) return
+    checkResources(name)
     const st = sup.state(name)
     const prev = last.get(name)
     last.set(name, st.status)

@@ -11,7 +11,7 @@ const hasDocker = (await exec(["docker", "image", "inspect", "redis:7-alpine"], 
 function redis(): OrbitConfig {
   const svc: ServiceConfig = {
     name: "cache", type: "docker", image: "redis:7-alpine", cwd: process.cwd(), env: {}, envFiles: [],
-    dependsOn: [], restart: "no", startTimeout: 20_000, stopTimeout: 2000, autostart: true,
+    dependsOn: [], restart: "no", startTimeout: 20_000, stopTimeout: 2000, autostart: true, leakDetection: true,
     ports: [], volumes: [], dockerArgs: [],
   }
   return { name: "adopt-test", root: process.cwd(), services: { cache: svc }, groups: {} }

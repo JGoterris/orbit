@@ -3,7 +3,7 @@ import type { LogLine } from "../logs.ts"
 import type { ServiceState } from "../supervisor.ts"
 
 /** Bumped when a request or notification changes incompatibly. */
-export const PROTOCOL = 1
+export const PROTOCOL = 2
 
 /**
  * JSON-RPC 2.0, one message per line (NDJSON).
@@ -16,6 +16,7 @@ export const PROTOCOL = 1
  *   startAll | stopAll                     → {ok: true}
  *   toggleWatch {service}                  → {watch: "paused"|"active"|null}
  *   clearLogs {service?}                   → {ok: true}
+ *   history {service, since?}              → ResourceBucket[]   cpu / memory in 10 s buckets, `since` = ms back
  *   subscribe {states?, logs?, services?}  → {ok: true, snapshot}  every notification after it is newer than the snapshot
  *   shutdown {how: "stop"|"detach"}        → {ok: true}      the server exits afterwards
  *
@@ -41,6 +42,7 @@ export type Method =
   | "stopAll"
   | "toggleWatch"
   | "clearLogs"
+  | "history"
   | "subscribe"
   | "shutdown"
 

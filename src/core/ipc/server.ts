@@ -182,6 +182,8 @@ export class IpcServer {
         this.broadcast("cleared", () => true, { service })
         return { ok: true }
       }
+      case "history":
+        return sup.history(this.service(params), typeof params.since === "number" && params.since > 0 ? params.since : undefined)
       case "subscribe": {
         const services = Array.isArray(params.services) ? new Set(this.targets(params)) : undefined
         this.clients.set(socket, { states: params.states !== false, logs: !!params.logs, services })

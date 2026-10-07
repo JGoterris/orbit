@@ -1,13 +1,15 @@
 import type { Subprocess } from "bun"
 import type { Hook } from "../config/schema.ts"
 import { pipeLines, type LogStream } from "./logs.ts"
-import { killGroup } from "./runners.ts"
+import { killTree, shellCommand } from "./platform/index.ts"
 
 export type HookPhase = "pre_start" | "post_start" | "post_stop"
 
 export interface HookContext {
   service: string
   cwd: string
+  /** `shell:` of the service */
+  shell?: string
   env: Record<string, string>
   /** exit code of the service, for post_stop after it ended on its own */
   exitCode?: number | null
@@ -21,14 +23,16 @@ export interface HookResult {
   error?: string
 }
 
-/** Runs the hooks of one phase in order through `sh -c`, in the service's cwd; stops at the first failure. */
+/** Runs the hooks of one phase in order through the shell (`sh -c`, `cmd /c` on Windows), in the service's cwd; stops at the first failure. */
 export async function runHooks(phase: HookPhase, hooks: Hook[], ctx: HookContext): Promise<HookResult> {
   for (const hook of hooks) {
     const started = Date.now()
     ctx.log("system", `▸ ${phase}: ${hook.cmd}`)
     let proc: Subprocess<"ignore", "pipe", "pipe">
     try {
-      proc = Bun.spawn(["/bin/sh", "-c", hook.cmd], {
+      const sh = shellCommand(hook.cmd, ctx.shell)
+      proc = Bun.spawn(sh.argv, {
+        windowsVerbatimArguments: sh.verbatim,
         cwd: ctx.cwd,
         env: {
           ...process.env,
@@ -53,7 +57,7 @@ export async function runHooks(phase: HookPhase, hooks: Hook[], ctx: HookContext
     let timedOut = false
     const timer = setTimeout(() => {
       timedOut = true
-      killGroup(proc.pid, "SIGKILL")
+      killTree(proc.pid, "SIGKILL")
     }, hook.timeout)
     const [code] = await Promise.all([
       proc.exited,

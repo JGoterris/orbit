@@ -2,6 +2,7 @@ import type { KeyEvent } from "@opentui/core"
 import type { ComponentProps, MutableRefObject, ReactNode } from "react"
 import type { LogLine } from "../../core/logs.ts"
 import type { RepoEntry } from "../../core/git/repos.ts"
+import type { Range } from "../../core/resources.ts"
 import type { SupervisorLike } from "../../core/supervisor.ts"
 import type { LogView } from "../LogView.tsx"
 
@@ -23,6 +24,8 @@ export interface ViewContext {
   sidebarW: number
   detailRows: number
   zoomed: boolean
+  /** time span of the cpu / mem charts */
+  range: Range
   focus: Pane
   setFocus: (pane: Pane) => void
   notify: (text: string, color?: string) => void

@@ -2,7 +2,7 @@ import { dirname, basename } from "node:path"
 import YAML from "yaml"
 import { existsSync, readFileSync } from "node:fs"
 import { join } from "node:path"
-import { asRecord, asStringList, hostPortOf, asEnv, type ServiceConfig } from "./schema.ts"
+import { asMemSize, asRecord, asStringList, hostPortOf, asEnv, type ServiceConfig } from "./schema.ts"
 import { interpolate, parseDotEnv } from "./interpolate.ts"
 
 export const COMPOSE_FILENAMES = ["compose.yaml", "compose.yml", "docker-compose.yml", "docker-compose.yaml"]
@@ -39,6 +39,8 @@ export function parseComposeFile(
       `${path}.ports`,
     )
     const port = ports.map(hostPortOf).find((p) => p !== undefined)
+    const limits = asRecord(asRecord(asRecord(svc.deploy, `${path}.deploy`).resources, `${path}.deploy.resources`).limits, `${path}.deploy.resources.limits`)
+    const memLimit = asMemSize(svc.mem_limit ?? limits.memory, `${path}.mem_limit`)
     const hasHealthcheck = svc.healthcheck !== undefined && asRecord(svc.healthcheck, path).disable !== true
 
     return {
@@ -59,6 +61,8 @@ export function parseComposeFile(
       startTimeout: 120_000,
       stopTimeout: 10_000,
       autostart: true,
+      memLimit,
+      leakDetection: true,
       image: typeof svc.image === "string" ? svc.image : undefined,
       ports,
       volumes: [],

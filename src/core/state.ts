@@ -1,8 +1,8 @@
 import { createHash } from "node:crypto"
 import { mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs"
-import { homedir } from "node:os"
 import { join } from "node:path"
 import type { OrbitConfig } from "../config/schema.ts"
+import { pidAlive, stateBase } from "./platform/index.ts"
 
 /** What orbit remembers about a service it launched, so a later session can pick it up again. */
 export interface SavedService {
@@ -17,9 +17,9 @@ export interface SavedState {
   services: Record<string, SavedService>
 }
 
-/** Per-project directory for logs, pids and the lock: ~/.local/state/orbit/<name>-<hash of root>. */
+/** Per-project directory for logs, pids and the lock: <state base>/orbit/<name>-<hash of root> (~/.local/state, %LOCALAPPDATA% on Windows). */
 export function stateDir(config: OrbitConfig): string {
-  const base = process.env.XDG_STATE_HOME || join(homedir(), ".local", "state")
+  const base = stateBase()
   const hash = createHash("sha1").update(config.root).digest("hex").slice(0, 8)
   return join(base, "orbit", `${config.name}-${hash}`.replace(/[^a-zA-Z0-9_.-]/g, "-"))
 }
@@ -52,27 +52,6 @@ export function writeState(dir: string, state: SavedState) {
     renameSync(tmp, join(dir, "state.json"))
   } catch {
     // state is best effort: orbit keeps working without it
-  }
-}
-
-/** Start time of a pid in clock ticks since boot (Linux), undefined if it is gone or /proc is missing. */
-export function procStartTime(pid: number): number | undefined {
-  try {
-    const stat = readFileSync(`/proc/${pid}/stat`, "utf8")
-    // comm may contain spaces/parens: fields start after the last ')', starttime is field 22 (index 19 from field 3)
-    const n = Number(stat.slice(stat.lastIndexOf(")") + 2).split(" ")[19])
-    return Number.isFinite(n) ? n : undefined
-  } catch {
-    return undefined
-  }
-}
-
-function pidAlive(pid: number): boolean {
-  try {
-    process.kill(pid, 0)
-    return true
-  } catch (err) {
-    return (err as NodeJS.ErrnoException).code === "EPERM"
   }
 }
 

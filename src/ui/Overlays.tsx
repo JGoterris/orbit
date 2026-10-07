@@ -189,6 +189,7 @@ const HELP: Array<[string, string]> = [
   ["(git commands)", "j k move · y copy the command · c clear"],
   ["P", "open another project (recent, pinned, or a folder path)"],
   ["T", "change color theme (live preview, enter saves)"],
+  ["h", "dashboard: cpu / memory chart range 2m ⇄ 15m ⇄ 1h (memory turns orange/red near its limit, ↗ = leak)"],
   ["e", "environment variables of the selected service"],
   ["i", "interactive console: psql, rails console, container shell (ctrl+] hides it)"],
   ["o", "open service URL in the browser"],

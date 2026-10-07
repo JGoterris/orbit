@@ -19,6 +19,8 @@ import { Session } from "../src/core/session.ts"
 import { acquireLock, readState, releaseLock } from "../src/core/state.ts"
 import { Supervisor, type SupervisorLike } from "../src/core/supervisor.ts"
 import { projectRows } from "../src/ui/Overlays.tsx"
+import { killTree } from "../src/core/platform/index.ts"
+import { sleepCmd, win } from "./helpers.ts"
 
 process.env.XDG_STATE_HOME = mkdtempSync(`${tmpdir()}/orbit-state-`) // tests must not touch the real ~/.local/state
 const freshConfigHome = () => (process.env.XDG_CONFIG_HOME = mkdtempSync(`${tmpdir()}/orbit-config-`))
@@ -72,7 +74,7 @@ describe("project registry", () => {
   })
 })
 
-describe("paths", () => {
+describe.skipIf(win)("paths", () => {
   test("looksLikePath and expandPath", () => {
     for (const p of ["/x", "~", "~/x", "./x", "../x", ".."]) expect(looksLikePath(p)).toBe(true)
     for (const p of ["orbit", "my-api", ".hidden"]) expect(looksLikePath(p)).toBe(false)
@@ -113,7 +115,7 @@ describe("projectStatus", () => {
   })
 
   test("counts processes a previous session left running", async () => {
-    const dir = project("left", `services:\n  s:\n    cmd: sleep 30\n`)
+    const dir = project("left", `services:\n  s:\n    cmd: ${sleepCmd(30)}\n`)
     const sup = new Supervisor(loadConfig({ dir }))
     await sup.init()
     expect(await sup.start("s")).toBe(true)
@@ -122,7 +124,7 @@ describe("projectStatus", () => {
     try {
       expect(projectStatus({ path: dir, name: "left", lastOpened: 1 }).running).toBe(1)
     } finally {
-      process.kill(-pid, "SIGKILL")
+      killTree(pid, "SIGKILL")
     }
     await Bun.sleep(100)
     expect(projectStatus({ path: dir, name: "left", lastOpened: 1 }).running).toBe(0)
@@ -146,7 +148,7 @@ describe("projectRows", () => {
     expect(projectRows(entries, statuses, "sh", "/w/api").map((r) => r.path)).toEqual(["/w/shop"])
   })
 
-  test("a typed path becomes an 'open folder' row, flagged when it is not a folder", () => {
+  test.skipIf(win)("a typed path becomes an 'open folder' row, flagged when it is not a folder", () => {
     const real = tmp()
     expect(projectRows(entries, statuses, "zzz", "/w/api")).toEqual([]) // not path-like: a search, nothing matches
     const rows = projectRows(entries, statuses, `${real}/`, "/w/api")
@@ -171,7 +173,7 @@ describe("Session.switchTo", () => {
   }
 
   test("switches, registers the new project, hands over the lock, and stops the old services", async () => {
-    const a = project("one", `services:\n  s:\n    cmd: sleep 30\n`)
+    const a = project("one", `services:\n  s:\n    cmd: ${sleepCmd(30)}\n`)
     const b = project("two")
     const session = await open(a)
     const first = session.sup
@@ -192,7 +194,7 @@ describe("Session.switchTo", () => {
   })
 
   test("detach leaves the old services running and recorded for the next time", async () => {
-    const a = project("keep", `services:\n  s:\n    cmd: sleep 30\n`)
+    const a = project("keep", `services:\n  s:\n    cmd: ${sleepCmd(30)}\n`)
     const b = project("other")
     const session = await open(a)
     const old = session.sup
@@ -209,14 +211,14 @@ describe("Session.switchTo", () => {
       expect(session.sup.logs.lines("s").some((l) => l.text.includes("re-attached to running process"))).toBe(true)
     } finally {
       try {
-        process.kill(-pid, "SIGKILL")
+        killTree(pid, "SIGKILL")
       } catch {}
       releaseLock(session.sup.stateDir)
     }
   })
 
   test("errors leave the current project untouched", async () => {
-    const a = project("stay", `services:\n  s:\n    cmd: sleep 30\n`)
+    const a = project("stay", `services:\n  s:\n    cmd: ${sleepCmd(30)}\n`)
     const session = await open(a)
     const sup = session.sup
     expect(await sup.start("s")).toBe(true)
@@ -228,13 +230,13 @@ describe("Session.switchTo", () => {
       writeFileSync(join(broken, "orbit.yaml"), "services: [oops")
       expect(await session.switchTo(broken, "stop")).toContain("invalid YAML")
 
-      // another live orbit has the target open: pid 1 is always alive
+      // another live orbit has the target open: our parent is always alive
       const taken = project("taken")
       const probe = new Supervisor(loadConfig({ dir: taken }))
       const { mkdirSync: mk, writeFileSync: wf } = await import("node:fs")
       mk(probe.stateDir, { recursive: true })
-      wf(join(probe.stateDir, "orbit.lock"), "1")
-      expect(await session.switchTo(taken, "stop")).toContain("pid 1")
+      wf(join(probe.stateDir, "orbit.lock"), String(process.ppid))
+      expect(await session.switchTo(taken, "stop")).toContain(`pid ${process.ppid}`)
 
       expect(session.sup).toBe(sup)
       expect(sup.isUp("s")).toBe(true)
@@ -254,7 +256,7 @@ describe("findProject / CLI", () => {
     { path: "/z/docs", name: "docs", lastOpened: 5 },
   ]
 
-  test("exact name, path, then unique fragment; ambiguity and misses explain themselves", () => {
+  test.skipIf(win)("exact name, path, then unique fragment; ambiguity and misses explain themselves", () => {
     expect(findProject("docs", list)).toMatchObject({ path: "/z/docs" })
     expect(findProject("/w/shop-web", list)).toMatchObject({ name: "shop-web" })
     expect(findProject("DOC", list)).toMatchObject({ path: "/z/docs" })

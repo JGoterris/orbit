@@ -8,6 +8,7 @@ import { missingEnvFiles, parseEnvFileRefs, type EnvFileRef } from "./envFiles.t
 export { interpolate, parseDotEnv }
 import {
   asEnv,
+  asMemSize,
   asRecord,
   asString,
   asStringList,
@@ -158,6 +159,7 @@ function parseService(
     description: asString(rec.description, `${path}.description`) ?? base?.description,
     cmd: asString(rec.cmd ?? rec.command, `${path}.cmd`) ?? base?.cmd,
     console: asString(rec.console, `${path}.console`) ?? base?.console,
+    shell: asString(rec.shell, `${path}.shell`) ?? base?.shell,
     cwd,
     env: { ...base?.env, ...asEnv(rec.env ?? rec.environment, `${path}.env`) },
     envFiles: parseEnvFileRefs(rec.env_file, `${path}.env_file`, root),
@@ -179,6 +181,8 @@ function parseService(
     startTimeout: parseDuration(rec.start_timeout, `${path}.start_timeout`, base?.startTimeout ?? 60_000),
     stopTimeout: parseDuration(rec.stop_timeout, `${path}.stop_timeout`, base?.stopTimeout ?? 8_000),
     autostart: rec.autostart === undefined ? (base?.autostart ?? true) : rec.autostart !== false,
+    memLimit: rec.mem_limit !== undefined ? asMemSize(rec.mem_limit, `${path}.mem_limit`) : base?.memLimit,
+    leakDetection: rec.leak_detection === undefined ? (base?.leakDetection ?? true) : rec.leak_detection !== false,
     image: asString(rec.image, `${path}.image`) ?? base?.image,
     ports,
     volumes: asStringList(rec.volumes, `${path}.volumes`).map((v) => {
@@ -268,6 +272,9 @@ export function loadConfig(opts: LoadOptions = {}): OrbitConfig {
         ? [findComposeFile(root)].filter((f): f is string => !!f)
         : asStringList(doc.compose, "compose").map((f) => resolve(root, f))
 
+  const globalShell = asString(doc.shell, "shell")
+  if (globalShell !== undefined && !globalShell.trim()) throw new ConfigError("shell must not be empty", "shell")
+
   const imported = new Map<string, ServiceConfig>()
   for (const cf of composeFiles) {
     if (!existsSync(cf)) throw new ConfigError(`compose file not found: ${cf}`, "compose")
@@ -286,6 +293,7 @@ export function loadConfig(opts: LoadOptions = {}): OrbitConfig {
   }
   for (const svc of Object.values(services)) {
     svc.env = { ...globalEnv, ...svc.env }
+    svc.shell ??= globalShell
     // compose services get their environment from docker compose itself
     if (svc.type !== "compose") svc.envFiles = [...globalEnvFiles, ...svc.envFiles]
     const missing = missingEnvFiles(svc.envFiles)

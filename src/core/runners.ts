@@ -1,10 +1,11 @@
 import { closeSync, existsSync, mkdirSync, openSync, readFileSync, rmSync } from "node:fs"
-import { dirname } from "node:path"
+import { dirname, join } from "node:path"
 import type { Subprocess } from "bun"
 import type { ServiceConfig } from "../config/schema.ts"
 import { exec, sleep } from "./exec.ts"
 import { FileTail, pipeLines, type LogStream } from "./logs.ts"
-import { procStartTime, type ProcFiles, type SavedService } from "./state.ts"
+import { cheapStartTime, isWindows, killTree, pidAlive, procStartTime, shellArgv, treeAlive } from "./platform/index.ts"
+import type { ProcFiles, SavedService } from "./state.ts"
 
 export interface RunnerCallbacks {
   log(stream: LogStream, text: string): void
@@ -81,31 +82,9 @@ export function splitArgs(cmd: string): string[] {
   return out
 }
 
-export function killGroup(pid: number, signal: NodeJS.Signals): boolean {
-  try {
-    process.kill(-pid, signal)
-    return true
-  } catch {
-    try {
-      process.kill(pid, signal)
-      return true
-    } catch {
-      return false
-    }
-  }
-}
-
-export function groupAlive(pid: number): boolean {
-  try {
-    process.kill(-pid, 0)
-    return true
-  } catch {
-    return false
-  }
-}
-
-/** Runs the command and leaves its exit code in a file, so a later orbit session can tell how it ended. */
+/** Runs the command and leaves its exit code in a file, so a later orbit session can tell how it ended (POSIX; Windows uses platform/wrap.ts). */
 const WRAPPER = 'sh -c "$1"; c=$?; echo $c > "$2"; exit $c'
+const WIN_WRAPPER = join(import.meta.dir, "platform", "wrap.ts")
 const BACKLOG = { bytes: 64 * 1024, lines: 200 }
 
 /**
@@ -119,6 +98,7 @@ export class ProcessRunner implements Runner {
   private tails: FileTail[] = []
   private watcher?: ReturnType<typeof setInterval>
   private released = false
+  private verified = false
 
   constructor(
     private svc: ServiceConfig,
@@ -143,7 +123,12 @@ export class ProcessRunner implements Runner {
     const err = openSync(this.files.err, "w")
     let proc: Subprocess<"ignore", number, number>
     try {
-      proc = Bun.spawn(["/bin/sh", "-c", WRAPPER, "orbit", this.svc.cmd!, this.files.exit], {
+      const argv = isWindows
+        ? [process.execPath, WIN_WRAPPER, this.files.exit, this.svc.cmd!, ...(this.svc.shell ? [this.svc.shell] : [])]
+        : this.svc.shell
+          ? [...shellArgv(WRAPPER, this.svc.shell), "orbit", this.svc.cmd!, this.files.exit]
+          : ["/bin/sh", "-c", WRAPPER, "orbit", this.svc.cmd!, this.files.exit]
+      proc = Bun.spawn(argv, {
         cwd: this.svc.cwd,
         env: { ...process.env, FORCE_COLOR: "1", ...this.svc.env },
         stdin: "ignore",
@@ -159,10 +144,11 @@ export class ProcessRunner implements Runner {
     this.proc = proc
     this._pid = proc.pid
     this._startTime = procStartTime(proc.pid)
+    this.verified = true
     await this.follow()
     proc.exited.then(async (code) => {
       // leftovers of the group (e.g. a dev server's workers) must not keep ports busy
-      if (groupAlive(proc.pid)) killGroup(proc.pid, "SIGTERM")
+      if (treeAlive(proc.pid)) killTree(proc.pid, "SIGTERM")
       if (this.proc !== proc || this.released) return
       await this.stopTails()
       if (this.proc === proc && !this.released) this.cb.exit(code, proc.signalCode)
@@ -198,10 +184,12 @@ export class ProcessRunner implements Runner {
 
   /** Is `pid` still the process we launched (not a recycled pid)? */
   private isSame(pid: number, startTime?: number): boolean {
+    // where reading the start time spawns a process, only the first check (attach) pays for it; polling just asks the pid
+    if (!cheapStartTime && this.verified) return pidAlive(pid)
     const now = procStartTime(pid)
-    if (now !== undefined) return startTime === undefined || now === startTime
-    // no /proc (not Linux): fall back to "the group exists"
-    return process.platform !== "linux" && groupAlive(pid)
+    if (now !== undefined) return (this.verified = startTime === undefined || now === startTime)
+    // the start time is unavailable (the process is gone, or the platform cannot say): fall back to "the tree exists"
+    return !cheapStartTime && treeAlive(pid)
   }
 
   private leaderAlive(): boolean {
@@ -212,7 +200,7 @@ export class ProcessRunner implements Runner {
     if (this.released || this.leaderAlive()) return
     clearInterval(this.watcher)
     const pid = this._pid!
-    if (groupAlive(pid)) killGroup(pid, "SIGTERM")
+    if (treeAlive(pid)) killTree(pid, "SIGTERM")
     await this.stopTails()
     if (this.released) return
     let code: number | null = null
@@ -232,7 +220,7 @@ export class ProcessRunner implements Runner {
   }
 
   killSync() {
-    if (!this.released && this._pid !== undefined && this.leaderAlive()) killGroup(this._pid, "SIGKILL")
+    if (!this.released && this._pid !== undefined && this.leaderAlive()) killTree(this._pid, "SIGKILL")
   }
 
   private waitLeader(ms: number): Promise<boolean> {
@@ -253,18 +241,18 @@ export class ProcessRunner implements Runner {
     const running = this.proc ? this.proc.exitCode === null && this.proc.signalCode === null : this.leaderAlive()
     if (!running) return
     clearInterval(this.watcher)
-    killGroup(pid, "SIGTERM")
+    killTree(pid, "SIGTERM")
     if (!(await this.waitLeader(timeoutMs))) {
       this.cb.log("system", `did not stop after ${timeoutMs}ms, sending SIGKILL`)
-      killGroup(pid, "SIGKILL")
+      killTree(pid, "SIGKILL")
       await this.waitLeader(5000)
     }
-    if (groupAlive(pid)) {
+    if (treeAlive(pid)) {
       // the main process exited but left group members behind (e.g. background jobs);
       // the leader is already gone, so wait for the group itself to disappear.
       this.cb.log("system", "killing leftover child processes")
-      killGroup(pid, "SIGKILL")
-      for (let i = 0; i < 50 && groupAlive(pid); i++) await sleep(10)
+      killTree(pid, "SIGKILL")
+      for (let i = 0; i < 50 && treeAlive(pid); i++) await sleep(10)
     }
     await this.stopTails()
   }

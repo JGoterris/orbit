@@ -9,6 +9,7 @@ import { exec } from "./core/exec.ts"
 import { cleanLine, FileTail, matcher, pipeLines, readTail, type LogLine } from "./core/logs.ts"
 import { levels, depMapOf } from "./core/graph.ts"
 import { describeHealth } from "./core/health.ts"
+import { formatBytes } from "./core/metrics.ts"
 import { containerName, ProcessRunner } from "./core/runners.ts"
 import { projectStatus, readProjects, sortProjects } from "./core/projects.ts"
 import { IpcClient } from "./core/ipc/client.ts"
@@ -129,8 +130,14 @@ export async function runStatus(config: OrbitConfig, json: boolean): Promise<num
       return 0
     }
     const now = Date.now()
-    const rows = services.map((s) => [s.name, s.status, s.pid ? String(s.pid) : "", s.startedAt && s.pid ? age(now - s.startedAt) : "", s.error ?? s.health ?? ""])
-    const header = ["SERVICE", "STATUS", "PID", "UP", "DETAIL"]
+    const memOf = (s: ServiceState) => {
+      const mem = s.mem[s.mem.length - 1]
+      if (mem === undefined || !s.startedAt) return ""
+      const limit = s.resources?.memLimit
+      return `${formatBytes(mem)}${limit ? `/${formatBytes(limit)}` : ""}${s.resources?.level === "over" ? " !" : ""}${s.resources?.leak ? " ↗" : ""}`
+    }
+    const rows = services.map((s) => [s.name, s.status, s.pid ? String(s.pid) : "", s.startedAt && s.pid ? age(now - s.startedAt) : "", memOf(s), s.error ?? s.health ?? ""])
+    const header = ["SERVICE", "STATUS", "PID", "UP", "MEM", "DETAIL"]
     const widths = header.map((h, i) => Math.max(h.length, ...rows.map((r) => r[i]!.length)))
     console.log(c.bold(header.map((h, i) => h.padEnd(widths[i]!)).join("  ")))
     for (const [i, r] of rows.entries()) {

@@ -3,6 +3,7 @@ import type { OrbitConfig, ServiceConfig } from "../../config/schema.ts"
 import { dependentsMap, depMapOf, topoOrder } from "../graph.ts"
 import { LogStore, type LogLine } from "../logs.ts"
 import { isReadyStatus, UP_STATUSES, type ServiceState, type SupervisorLike } from "../supervisor.ts"
+import type { ResourceBucket } from "../resources.ts"
 import { IpcClient } from "./client.ts"
 import { PROTOCOL, type Hello, type Notification } from "./protocol.ts"
 
@@ -89,6 +90,10 @@ export class RemoteSupervisor extends EventEmitter implements SupervisorLike {
 
   snapshot(): ServiceState[] {
     return this.names.map((n) => this.states.get(n)!)
+  }
+
+  history(name: string, sinceMs?: number): Promise<ResourceBucket[]> {
+    return this.client.request<ResourceBucket[]>("history", sinceMs ? { service: name, since: sinceMs } : { service: name })
   }
 
   isReady(name: string): boolean {

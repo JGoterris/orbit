@@ -6,6 +6,7 @@ import { loadConfig } from "../src/config/load.ts"
 import type { OrbitConfig, ServiceConfig, WatchConfig } from "../src/config/schema.ts"
 import { Supervisor } from "../src/core/supervisor.ts"
 import { FileWatcher, watchRoots } from "../src/core/watch.ts"
+import { sleepCmd } from "./helpers.ts"
 process.env.XDG_STATE_HOME = mkdtempSync(`${tmpdir()}/orbit-state-`)
 
 const cfg = (extra: Partial<WatchConfig> = {}): WatchConfig => ({ paths: ["src/**", "package.json"], ignore: [], debounce: 50, cooldown: 300, ...extra })
@@ -134,8 +135,8 @@ describe("supervisor watch", () => {
   function setup(w: Partial<WatchConfig> = {}) {
     const dir = mkdtempSync(join(tmpdir(), "orbit-sup-"))
     const svc: ServiceConfig = {
-      name: "api", type: "process", cmd: "sleep 30", cwd: dir, env: {}, envFiles: [], dependsOn: [], restart: "no",
-      startTimeout: 5000, stopTimeout: 1000, autostart: true, ports: [], volumes: [], dockerArgs: [],
+      name: "api", type: "process", cmd: sleepCmd(30), cwd: dir, env: {}, envFiles: [], dependsOn: [], restart: "no",
+      startTimeout: 5000, stopTimeout: 1000, autostart: true, leakDetection: true, ports: [], volumes: [], dockerArgs: [],
       watch: { paths: ["*.go"], ignore: [], debounce: 40, cooldown: 100, ...w },
     }
     const config: OrbitConfig = { name: "t", root: dir, services: { api: svc }, groups: {} }
