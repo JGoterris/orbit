@@ -1,5 +1,6 @@
 import type { HealthCheck, ServiceConfig } from "../config/schema.ts"
 import { exec, isPortOpen } from "./exec.ts"
+import { shellArgv } from "./platform/index.ts"
 
 export interface HealthResult {
   ok: boolean
@@ -45,7 +46,7 @@ export async function checkHealth(
     return { ok, detail: ok ? `port ${port} open` : `port ${port} closed` }
   }
   if (h.cmd) {
-    const res = await exec(["/bin/sh", "-c", h.cmd], {
+    const res = await exec(shellArgv(h.cmd, svc.shell), {
       cwd: svc.cwd,
       env: { ...process.env, ...svc.env },
       timeout: h.timeout,

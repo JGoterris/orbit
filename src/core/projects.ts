@@ -3,7 +3,8 @@ import { homedir } from "node:os"
 import { dirname, join, resolve } from "node:path"
 import type { OrbitConfig } from "../config/schema.ts"
 import { configDir, writeJsonAtomic } from "./userConfig.ts"
-import { procStartTime, readLock, readState, stateDir } from "./state.ts"
+import { pidAlive, procStartTime } from "./platform/index.ts"
+import { readLock, readState, stateDir } from "./state.ts"
 
 /** A project orbit has opened before. Kept in ~/.config/orbit/projects.json, shared by every project. */
 export interface ProjectEntry {
@@ -70,20 +71,11 @@ export interface ProjectStatus {
   running: number
 }
 
-function alive(pid: number): boolean {
-  try {
-    process.kill(pid, 0)
-    return true
-  } catch (err) {
-    return (err as NodeJS.ErrnoException).code === "EPERM"
-  }
-}
-
 export function projectStatus(p: ProjectEntry): ProjectStatus {
   const dir = stateDir({ name: p.name, root: p.path } as OrbitConfig)
   const holder = readLock(dir)
   const running = Object.values(readState(dir).services).filter(
-    (s) => s.pid !== undefined && alive(s.pid) && (s.startTime === undefined || procStartTime(s.pid) === s.startTime),
+    (s) => s.pid !== undefined && pidAlive(s.pid) && (s.startTime === undefined || procStartTime(s.pid) === s.startTime),
   ).length
   return { exists: existsSync(p.path), openIn: holder && holder !== process.pid ? holder : undefined, running }
 }

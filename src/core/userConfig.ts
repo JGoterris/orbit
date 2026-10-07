@@ -1,11 +1,11 @@
 import { mkdirSync, readdirSync, readFileSync, renameSync, writeFileSync } from "node:fs"
-import { homedir } from "node:os"
 import { basename, dirname, join } from "node:path"
+import { configBase } from "./platform/index.ts"
 import { DEFAULT_THEME, PALETTE_COLOR_KEYS, THEMES, type Palette } from "../ui/themes.ts"
 
-/** Per-user (not per-project) settings: $XDG_CONFIG_HOME/orbit or ~/.config/orbit. */
+/** Per-user (not per-project) settings: $XDG_CONFIG_HOME/orbit, ~/.config/orbit or %APPDATA%\\orbit. */
 export function configDir(): string {
-  return join(process.env.XDG_CONFIG_HOME || join(homedir(), ".config"), "orbit")
+  return join(configBase(), "orbit")
 }
 
 export interface UserConfig {

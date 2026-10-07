@@ -3,14 +3,15 @@ import type { Subprocess } from "bun"
 import { relative } from "node:path"
 import { readEnvFiles } from "../config/envFiles.ts"
 import type { Hook, OrbitConfig, ServiceConfig } from "../config/schema.ts"
-import { isPortOpen, whoListens } from "./exec.ts"
+import { isPortOpen } from "./exec.ts"
+import { killTree, whoListens } from "./platform/index.ts"
 import { dependentsMap, depMapOf, topoOrder, type DepMap } from "./graph.ts"
 import { checkHealth, describeHealth } from "./health.ts"
 import { runHooks, type HookPhase } from "./hooks.ts"
 import { LogStore } from "./logs.ts"
 import { ProcessSampler, sampleContainers } from "./metrics.ts"
 import { detectLeak, memLevel, ResourceHistory, type ResourceBucket, type ResourceInfo } from "./resources.ts"
-import { createRunner, killGroup, type Runner } from "./runners.ts"
+import { createRunner, type Runner } from "./runners.ts"
 import { FileWatcher } from "./watch.ts"
 import { procFiles, readState, stateDir, writeState, type SavedService } from "./state.ts"
 
@@ -391,7 +392,7 @@ export class Supervisor extends EventEmitter implements SupervisorLike {
     clearTimeout(rt.restartTimer)
     rt.gen++
     // a pre_start / post_start still running is cut short
-    if (rt.hook) killGroup(rt.hook.pid, "SIGKILL")
+    if (rt.hook) killTree(rt.hook.pid, "SIGKILL")
     const st = this.state(name)
     const runner = rt.runner
     if (!runner || TERMINAL.has(st.status)) {
@@ -480,7 +481,7 @@ export class Supervisor extends EventEmitter implements SupervisorLike {
   killAllSync() {
     for (const rt of this.rt.values()) {
       rt.runner?.killSync()
-      if (rt.hook) killGroup(rt.hook.pid, "SIGKILL")
+      if (rt.hook) killTree(rt.hook.pid, "SIGKILL")
     }
   }
 
@@ -553,6 +554,7 @@ export class Supervisor extends EventEmitter implements SupervisorLike {
     return runHooks(phase, hooks, {
       service: name,
       cwd: this.service(name).cwd,
+      shell: this.service(name).shell,
       env: rt.env,
       exitCode,
       log: (stream, text) => this.logs.append(name, stream, text),
@@ -724,7 +726,7 @@ export class Supervisor extends EventEmitter implements SupervisorLike {
         if (st.pid) procs.push([st.name, st.pid])
         else if (st.containerId) containers.push([st.name, st.containerId])
       }
-      const procSamples = this.sampler.sample(procs.map(([, p]) => p))
+      const procSamples = await this.sampler.sample(procs.map(([, p]) => p))
       const push = (name: string, cpu: number, mem: number, containerLimit?: number) => {
         const st = this.state(name)
         this.resHistory.push(name, cpu, mem)

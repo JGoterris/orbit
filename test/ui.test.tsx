@@ -11,6 +11,7 @@ import { mkdirSync, mkdtempSync, mkdtempSync as __mk, writeFileSync } from "node
 import { tmpdir, tmpdir as __tmp } from "node:os"
 import { join } from "node:path"
 import { readProjects, registerProject, setPinned } from "../src/core/projects.ts"
+import { sleepCmd, win } from "./helpers.ts"
 process.env.XDG_STATE_HOME = __mk(`${__tmp()}/orbit-state-`) // tests must not touch the real ~/.local/state
 process.env.XDG_CONFIG_HOME = __mk(`${__tmp()}/orbit-config-`) // ...nor the real ~/.config
 
@@ -220,7 +221,7 @@ describe("tui", () => {
     expect(t.captureCharFrame()).toContain("║ ○ web")
   })
 
-  test("starting a service from the UI shows it healthy, with logs", async () => {
+  test.skipIf(win)("starting a service from the UI shows it healthy, with logs", async () => {
     const port = 41000 + Math.floor(Math.random() * 10000)
     const { mkdtempSync, writeFileSync } = await import("node:fs")
     const { tmpdir } = await import("node:os")
@@ -419,7 +420,7 @@ describe("tui", () => {
     async function setupPicker(opts: { fail?: string; running?: boolean } = {}) {
       calls.length = 0
       // `running`: a project whose only service is a real process that gets started
-      const dir = opts.running ? projectDir("current", "services:\n  s:\n    cmd: sleep 30\n") : `${import.meta.dir}/fixtures/stack`
+      const dir = opts.running ? projectDir("current", `services:\n  s:\n    cmd: ${sleepCmd(30)}\n`) : `${import.meta.dir}/fixtures/stack`
       const sup = new Supervisor(loadConfig({ dir }))
       const onOpenProject = async (dir: string, how: "stop" | "detach") => {
         calls.push([dir, how])
@@ -616,9 +617,9 @@ describe("tui", () => {
     expect(readUserConfig()).toEqual({ theme: "catppuccin-macchiato" })
     expect(t.captureCharFrame()).toContain("theme: catppuccin-macchiato")
   })
-  test("i opens an interactive console, ctrl+] hides it and i brings it back", async () => {
+  test.skipIf(win)("i opens an interactive console, ctrl+] hides it and i brings it back", async () => {
     const dir = mkdtempSync(join(tmpdir(), "orbit-console-"))
-    writeFileSync(join(dir, "orbit.yaml"), "name: c\nservices:\n  box:\n    cmd: sleep 60\n    console: cat\n    autostart: false\n")
+    writeFileSync(join(dir, "orbit.yaml"), `name: c\nservices:\n  box:\n    cmd: ${sleepCmd(60)}\n    console: cat\n    autostart: false\n`)
     const sup = new Supervisor(loadConfig({ dir }))
     const t = await testRender(<App sup={sup} onQuit={() => {}} />, { width: 120, height: 36 })
     cleanup = () => t.renderer.destroy()

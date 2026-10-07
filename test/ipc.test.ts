@@ -10,6 +10,7 @@ import { IpcServer } from "../src/core/ipc/server.ts"
 import type { Hello, Notification } from "../src/core/ipc/protocol.ts"
 import type { LogLine } from "../src/core/logs.ts"
 import { Supervisor, type ServiceState } from "../src/core/supervisor.ts"
+import { sleepCmd } from "./helpers.ts"
 
 process.env.XDG_STATE_HOME = mkdtempSync(`${tmpdir()}/orbit-state-`) // tests must not touch the real ~/.local/state
 
@@ -45,7 +46,7 @@ async function setup(name: string, ...services: ServiceConfig[]) {
 
 describe("ipc", () => {
   test("hello and snapshot", async () => {
-    const { client, sup } = await setup("hello", svc("a", "sleep 30"))
+    const { client, sup } = await setup("hello", svc("a", sleepCmd(30)))
     const hello = await client.request<Hello>("hello")
     expect(hello.protocol).toBe(2)
     expect(hello.pid).toBe(process.pid)
@@ -56,7 +57,7 @@ describe("ipc", () => {
   })
 
   test("commands drive the supervisor, groups expand", async () => {
-    const { client, sup } = await setup("cmds", svc("a", "sleep 30"), svc("b", "sleep 30"))
+    const { client, sup } = await setup("cmds", svc("a", sleepCmd(30)), svc("b", sleepCmd(30)))
     expect(await client.request<{ ok: boolean }>("start", { services: ["all"] })).toEqual({ ok: true })
     expect(sup.state("a").status).toBe("running")
     expect(sup.state("b").status).toBe("running")
@@ -68,7 +69,7 @@ describe("ipc", () => {
   })
 
   test("history: buckets over the socket, through the remote supervisor", async () => {
-    const { client, sup } = await setup("hist", svc("a", "sleep 30"))
+    const { client, sup } = await setup("hist", svc("a", sleepCmd(30)))
     ;(sup as unknown as { resHistory: { push(n: string, c: number, m: number, at?: number): void } }).resHistory.push("a", 5, 1000)
     const buckets = await client.request<Array<{ cpu: number; mem: number }>>("history", { service: "a" })
     expect(buckets.length).toBe(1)
@@ -78,7 +79,7 @@ describe("ipc", () => {
   })
 
   test("errors for unknown services and methods", async () => {
-    const { client } = await setup("errs", svc("a", "sleep 30"))
+    const { client } = await setup("errs", svc("a", sleepCmd(30)))
     await expect(client.request("start", { services: ["nope"] })).rejects.toThrow('unknown service or group "nope"')
     await expect(client.request("start", {})).rejects.toThrow("list of names")
     await expect(client.request("bogus" as never)).rejects.toThrow("unknown method")
@@ -98,7 +99,7 @@ describe("ipc", () => {
   })
 
   test("logs request returns history and honours sinceSeq", async () => {
-    const { client, sup } = await setup("hist", svc("a", "sleep 30"))
+    const { client, sup } = await setup("hist", svc("a", sleepCmd(30)))
     sup.log("a", "one")
     sup.log("a", "two")
     const all = await client.request<LogLine[]>("logs", { service: "a" })
@@ -108,14 +109,14 @@ describe("ipc", () => {
   })
 
   test("shutdown is acknowledged before it runs", async () => {
-    const { client, shutdown } = await setup("down", svc("a", "sleep 30"))
+    const { client, shutdown } = await setup("down", svc("a", sleepCmd(30)))
     expect(await client.request<{ ok: boolean }>("shutdown", { how: "detach" })).toEqual({ ok: true })
     await Bun.sleep(50)
     expect(shutdown()).toBe("detach")
   })
 
   test("a second server refuses to take a live socket; a stale one is replaced", async () => {
-    const { sup, server } = await setup("dup", svc("a", "sleep 30"))
+    const { sup, server } = await setup("dup", svc("a", sleepCmd(30)))
     expect(await new IpcServer(sup).start()).toBe(false)
     server.close()
     expect(existsSync(server.path)).toBe(false)
@@ -128,7 +129,7 @@ describe("ipc", () => {
   })
 
   test("malformed input gets a parse error and keeps the connection", async () => {
-    const { server, client } = await setup("bad", svc("a", "sleep 30"))
+    const { server, client } = await setup("bad", svc("a", sleepCmd(30)))
     const { connect } = await import("node:net")
     const raw = connect(server.path)
     cleanup.push(() => raw.destroy())
@@ -170,7 +171,7 @@ describe("RemoteSupervisor", () => {
   }
 
   test("mirrors config, graph and state; commands reach the real supervisor", async () => {
-    const { rs, sup } = await remote("mirror", svc("db", "sleep 30"), svc("api", "sleep 30", { dependsOn: ["db"] }))
+    const { rs, sup } = await remote("mirror", svc("db", sleepCmd(30)), svc("api", sleepCmd(30), { dependsOn: ["db"] }))
     expect(rs.names).toEqual(["db", "api"])
     expect(rs.order).toEqual(["db", "api"])
     expect(rs.dependents.db).toEqual(["api"])
@@ -208,7 +209,7 @@ describe("RemoteSupervisor", () => {
   })
 
   test("clearing logs on either side clears the mirror", async () => {
-    const { rs, sup } = await remote("clear", svc("a", "sleep 30"))
+    const { rs, sup } = await remote("clear", svc("a", sleepCmd(30)))
     sup.log("a", "x")
     await until(() => rs.logs.lines("a").length === 1)
     sup.clearLogs("a") // the server only broadcasts `cleared` for requests, so use the mirror's own path
@@ -218,14 +219,14 @@ describe("RemoteSupervisor", () => {
   })
 
   test("dispose asks the daemon to quit and waits for the hang-up; detach leaves it alone", async () => {
-    const a = await remote("quit", svc("a", "sleep 30"))
+    const a = await remote("quit", svc("a", sleepCmd(30)))
     const closed = new Promise<void>((r) => a.rs.once("close", () => r()))
     a.rs.detach()
     await closed
     expect(a.rs.connected).toBe(false)
     expect(a.shutdown()).toBeUndefined() // detaching is not shutting the daemon down
 
-    const b = await remote("quit2", svc("a", "sleep 30"))
+    const b = await remote("quit2", svc("a", sleepCmd(30)))
     // the test server only records the request: closing the socket is what a real daemon does next
     const disposing = b.rs.dispose()
     await until(() => b.shutdown() === "stop")
@@ -235,7 +236,7 @@ describe("RemoteSupervisor", () => {
   })
 
   test("refuses a daemon that speaks another protocol", async () => {
-    const { server } = await setup("proto", svc("a", "sleep 30"))
+    const { server } = await setup("proto", svc("a", sleepCmd(30)))
     const real = IpcClient.prototype.request
     IpcClient.prototype.request = async function (this: IpcClient, method, params) {
       const res = await real.call(this, method, params)

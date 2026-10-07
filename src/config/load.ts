@@ -159,6 +159,7 @@ function parseService(
     description: asString(rec.description, `${path}.description`) ?? base?.description,
     cmd: asString(rec.cmd ?? rec.command, `${path}.cmd`) ?? base?.cmd,
     console: asString(rec.console, `${path}.console`) ?? base?.console,
+    shell: asString(rec.shell, `${path}.shell`) ?? base?.shell,
     cwd,
     env: { ...base?.env, ...asEnv(rec.env ?? rec.environment, `${path}.env`) },
     envFiles: parseEnvFileRefs(rec.env_file, `${path}.env_file`, root),
@@ -271,6 +272,9 @@ export function loadConfig(opts: LoadOptions = {}): OrbitConfig {
         ? [findComposeFile(root)].filter((f): f is string => !!f)
         : asStringList(doc.compose, "compose").map((f) => resolve(root, f))
 
+  const globalShell = asString(doc.shell, "shell")
+  if (globalShell !== undefined && !globalShell.trim()) throw new ConfigError("shell must not be empty", "shell")
+
   const imported = new Map<string, ServiceConfig>()
   for (const cf of composeFiles) {
     if (!existsSync(cf)) throw new ConfigError(`compose file not found: ${cf}`, "compose")
@@ -289,6 +293,7 @@ export function loadConfig(opts: LoadOptions = {}): OrbitConfig {
   }
   for (const svc of Object.values(services)) {
     svc.env = { ...globalEnv, ...svc.env }
+    svc.shell ??= globalShell
     // compose services get their environment from docker compose itself
     if (svc.type !== "compose") svc.envFiles = [...globalEnvFiles, ...svc.envFiles]
     const missing = missingEnvFiles(svc.envFiles)

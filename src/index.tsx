@@ -226,7 +226,7 @@ async function quit(code = 0, how: "stop" | "detach" = "stop") {
 }
 // a signal to a TUI that only mirrors a daemon (closing the terminal sends SIGHUP) must not stop the services
 const onSignal = (code: number) => () => void quit(code, session.sup instanceof RemoteSupervisor ? "detach" : "stop")
-for (const sig of ["SIGTERM", "SIGHUP"] as const) process.on(sig, onSignal(0))
+for (const sig of process.platform === "win32" ? (["SIGTERM", "SIGBREAK"] as const) : (["SIGTERM", "SIGHUP"] as const)) process.on(sig, onSignal(0))
 process.on("SIGINT", onSignal(130))
 
 createRoot(renderer).render(

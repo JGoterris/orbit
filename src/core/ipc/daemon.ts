@@ -28,7 +28,7 @@ export async function runDaemon(config: OrbitConfig, opts: { idleMinutes?: numbe
     console.error(`already open for this project (pid ${holder})`)
     return 1
   }
-  process.on("SIGHUP", () => {}) // the terminal that spawned us may go away
+  if (process.platform !== "win32") process.on("SIGHUP", () => {}) // the terminal that spawned us may go away
   process.on("exit", () => {
     sup.killAllSync()
     releaseLock(sup.stateDir)

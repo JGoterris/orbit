@@ -209,7 +209,7 @@ export function App({ sup, onQuit, onOpenProject, startWithPicker = false, git, 
       const url = svc.url ?? (svc.port ? `http://localhost:${svc.port}` : undefined)
       if (!url) return notify(`${name} has no port or url`, theme.yellow)
       notify(`opening ${url}`, theme.accent)
-      void openUrl(url).then((ok) => ok || notify(`could not open ${url} (no xdg-open/wslview)`, theme.red))
+      void openUrl(url).then((ok) => ok || notify(`could not open ${url} (no browser opener found)`, theme.red))
     },
     [sup, notify],
   )

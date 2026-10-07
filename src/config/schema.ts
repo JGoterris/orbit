@@ -45,6 +45,8 @@ export interface ServiceConfig {
   type: ServiceType
   description?: string
   cmd?: string
+  /** shell that runs cmd, hooks, health.cmd and console (default: sh on POSIX, cmd.exe on Windows) */
+  shell?: string
   /** interactive command for the `i` console (psql, rails console...): process → runs in the service's cwd/env, docker/compose → inside the container */
   console?: string
   cwd: string

@@ -27,7 +27,7 @@ export async function exec(
       detached: opts.detached,
     })
     let timer: ReturnType<typeof setTimeout> | undefined
-    if (opts.timeout) timer = setTimeout(() => proc.kill("SIGKILL"), opts.timeout)
+    if (opts.timeout) timer = setTimeout(() => proc.kill(process.platform === "win32" ? undefined : "SIGKILL"), opts.timeout)
     const [stdout, stderr, code] = await Promise.all([
       new Response(proc.stdout).text(),
       new Response(proc.stderr).text(),
@@ -77,24 +77,18 @@ export function isPortOpen(port: number, host = "127.0.0.1", timeout = 800): Pro
   })
 }
 
-/** Best effort: which process listens on a TCP port (Linux 'ss'). */
-export async function whoListens(port: number): Promise<string | undefined> {
-  const res = await exec(["ss", "-ltnpH", `sport = :${port}`], { timeout: 2000 })
-  if (res.code !== 0) return
-  const m = /users:\(\("([^"]+)",pid=(\d+)/.exec(res.stdout)
-  return m ? `${m[1]} (pid ${m[2]})` : res.stdout.trim() ? "another process" : undefined
-}
-
-/** Opens a URL in the host browser (Linux, WSL, macOS). */
+/** Opens a URL in the host browser. */
 export async function openUrl(url: string): Promise<boolean> {
   const candidates =
     process.platform === "darwin"
       ? [["open", url]]
-      : [
-          ["xdg-open", url],
-          ["wslview", url],
-          ["cmd.exe", "/c", "start", "", url.replace(/&/g, "^&")],
-        ]
+      : process.platform === "win32"
+        ? [["cmd.exe", "/c", "start", "", url.replace(/&/g, "^&")]]
+        : [
+            ["xdg-open", url],
+            ["wslview", url],
+            ["cmd.exe", "/c", "start", "", url.replace(/&/g, "^&")],
+          ]
   for (const argv of candidates) {
     if (!Bun.which(argv[0]!)) continue
     const res = await exec(argv, { timeout: 5000 })

@@ -1,6 +1,6 @@
-import { readdirSync, readFileSync } from "node:fs"
 import { totalmem } from "node:os"
 import { exec } from "./exec.ts"
+import { processTable } from "./platform/index.ts"
 
 export interface Sample {
   cpu: number // percent of one core: a multithreaded service can pass 100
@@ -9,52 +9,14 @@ export interface Sample {
   limit?: number
 }
 
-const CLK_TCK = 100
-
-const PAGE_SIZE = 4096
-
-interface ProcStat {
-  ppid: number
-  ticks: number
-  rss: number
-}
-
-/** Snapshot of /proc: pid -> (ppid, cpu ticks, rss bytes). Linux only. */
-function readProcTable(): Map<number, ProcStat> {
-  const table = new Map<number, ProcStat>()
-  let entries: string[]
-  try {
-    entries = readdirSync("/proc")
-  } catch {
-    return table
-  }
-  for (const entry of entries) {
-    const pid = Number(entry)
-    if (!Number.isInteger(pid)) continue
-    try {
-      const stat = readFileSync(`/proc/${pid}/stat`, "utf8")
-      // comm may contain spaces/parens: fields start after the last ')'
-      const fields = stat.slice(stat.lastIndexOf(")") + 2).split(" ")
-      table.set(pid, {
-        ppid: Number(fields[1]),
-        ticks: Number(fields[11]) + Number(fields[12]),
-        rss: Number(fields[21]) * PAGE_SIZE,
-      })
-    } catch {
-      // process vanished
-    }
-  }
-  return table
-}
-
-/** CPU%/RSS for whole process trees, computed from successive /proc snapshots. */
+/** CPU%/RSS for whole process trees, computed from successive process-table snapshots. */
 export class ProcessSampler {
-  private last = new Map<number, { ticks: number; at: number }>()
+  private last = new Map<number, { cpuSeconds: number; at: number }>()
 
-  sample(roots: number[]): Map<number, Sample> {
+  async sample(roots: number[]): Promise<Map<number, Sample>> {
     const out = new Map<number, Sample>()
-    if (process.platform !== "linux" || roots.length === 0) return out
-    const table = readProcTable()
+    if (roots.length === 0) return out
+    const table = await processTable()
     const children = new Map<number, number[]>()
     for (const [pid, s] of table) {
       const list = children.get(s.ppid)
@@ -64,20 +26,22 @@ export class ProcessSampler {
     const now = performance.now()
     for (const root of roots) {
       if (!table.has(root)) continue
-      let ticks = 0
+      let cpuSeconds = 0
       let rss = 0
+      const seen = new Set<number>()
       const stack = [root]
       while (stack.length) {
         const pid = stack.pop()!
         const s = table.get(pid)
-        if (!s) continue
-        ticks += s.ticks
+        if (!s || seen.has(pid)) continue
+        seen.add(pid)
+        cpuSeconds += s.cpuSeconds
         rss += s.rss
         stack.push(...(children.get(pid) ?? []))
       }
       const prev = this.last.get(root)
-      const cpu = prev ? Math.max(0, ((ticks - prev.ticks) / CLK_TCK / ((now - prev.at) / 1000)) * 100) : 0
-      this.last.set(root, { ticks, at: now })
+      const cpu = prev ? Math.max(0, ((cpuSeconds - prev.cpuSeconds) / ((now - prev.at) / 1000)) * 100) : 0
+      this.last.set(root, { cpuSeconds, at: now })
       out.set(root, { cpu, mem: rss })
     }
     for (const pid of this.last.keys()) if (!table.has(pid)) this.last.delete(pid)
