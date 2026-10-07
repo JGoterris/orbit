@@ -24,6 +24,10 @@ jobs:
         if: runner.os == 'Windows'
         continue-on-error: true
         run: bun scripts/pipe-repro.ts
+      - name: Real IPC classes repro (Windows diagnosis, temporary)
+        if: runner.os == 'Windows'
+        continue-on-error: true
+        run: bun scripts/ipc-repro.ts
       - name: IPC trace (Windows diagnosis, temporary)
         if: runner.os == 'Windows'
         continue-on-error: true
