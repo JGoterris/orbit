@@ -69,7 +69,7 @@ describe("ipc", () => {
   })
 
   test("history: buckets over the socket, through the remote supervisor", async () => {
-    const { client, sup } = await setup("hist", svc("a", sleepCmd(30)))
+    const { client, sup } = await setup("buckets", svc("a", sleepCmd(30)))
     ;(sup as unknown as { resHistory: { push(n: string, c: number, m: number, at?: number): void } }).resHistory.push("a", 5, 1000)
     const buckets = await client.request<Array<{ cpu: number; mem: number }>>("history", { service: "a" })
     expect(buckets.length).toBe(1)

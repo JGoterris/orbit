@@ -7,6 +7,7 @@ import { connectRemote } from "../src/core/ipc/daemon.ts"
 import { socketPath } from "../src/core/ipc/endpoint.ts"
 import { RemoteSupervisor } from "../src/core/ipc/remote.ts"
 import { readLock, stateDir } from "../src/core/state.ts"
+import { killTree } from "../src/core/platform/index.ts"
 import { sleepCmd } from "./helpers.ts"
 
 process.env.XDG_STATE_HOME = mkdtempSync(`${tmpdir()}/orbit-state-`) // the daemon inherits it: never the real ~/.local/state
@@ -75,7 +76,7 @@ describe("orbit daemon", () => {
     expect(alive(servicePid)).toBe(true)
 
     // the service dies while nobody watches: restart: always brings it back
-    process.kill(-servicePid, "SIGKILL")
+    killTree(servicePid, "SIGKILL")
     await until(() => !alive(servicePid))
 
     // "open another terminal": same daemon, and by now it restarted the service
