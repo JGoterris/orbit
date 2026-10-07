@@ -58,10 +58,10 @@ export function ServiceList({ sup, names, selected, onSelect, tick, width, focus
               {compact ? null : (
                 <>
                   <span fg={theme.muted}>{cpu.padStart(4)}</span>
-                  <span fg={theme.dim}>{mem.padStart(6)}</span>
-                  <span fg={st.status === "crashed" || st.status === "failed" ? theme.red : theme.dim}>
-                    {" " + fit(uptime, 7)}
-                  </span>
+                  <span fg={st.resources?.level === "over" ? theme.red : st.resources?.level === "warn" ? theme.orange : theme.dim}>{mem.padStart(6)}</span>
+                  {/* the column between memory and uptime flags a leak */}
+                  <span fg={theme.orange}>{st.resources?.leak ? "↗" : " "}</span>
+                  <span fg={st.status === "crashed" || st.status === "failed" ? theme.red : theme.dim}>{fit(uptime, 7)}</span>
                 </>
               )}
             </text>

@@ -16,7 +16,7 @@ process.env.XDG_STATE_HOME = mkdtempSync(`${tmpdir()}/orbit-state-`) // tests mu
 function svc(name: string, cmd: string, extra: Partial<ServiceConfig> = {}): ServiceConfig {
   return {
     name, type: "process", cmd, cwd: process.cwd(), env: {}, envFiles: [], dependsOn: [], restart: "no",
-    startTimeout: 5000, stopTimeout: 1000, autostart: true, ports: [], volumes: [], dockerArgs: [], ...extra,
+    startTimeout: 5000, stopTimeout: 1000, autostart: true, leakDetection: true, ports: [], volumes: [], dockerArgs: [], ...extra,
   }
 }
 
@@ -47,7 +47,7 @@ describe("ipc", () => {
   test("hello and snapshot", async () => {
     const { client, sup } = await setup("hello", svc("a", "sleep 30"))
     const hello = await client.request<Hello>("hello")
-    expect(hello.protocol).toBe(1)
+    expect(hello.protocol).toBe(2)
     expect(hello.pid).toBe(process.pid)
     expect(Object.keys(hello.config.services)).toEqual(["a"])
     const snap = await client.request<ServiceState[]>("snapshot")
@@ -65,6 +65,16 @@ describe("ipc", () => {
     expect(sup.state("b").status).toBe("running")
     await client.request("stopAll")
     expect(sup.state("b").status).toBe("stopped")
+  })
+
+  test("history: buckets over the socket, through the remote supervisor", async () => {
+    const { client, sup } = await setup("hist", svc("a", "sleep 30"))
+    ;(sup as unknown as { resHistory: { push(n: string, c: number, m: number, at?: number): void } }).resHistory.push("a", 5, 1000)
+    const buckets = await client.request<Array<{ cpu: number; mem: number }>>("history", { service: "a" })
+    expect(buckets.length).toBe(1)
+    expect(buckets[0]).toMatchObject({ cpu: 5, mem: 1000 })
+    expect(await client.request<unknown[]>("history", { service: "a", since: 1 })).toEqual([])
+    await expect(client.request("history", { service: "nope" })).rejects.toThrow('unknown service "nope"')
   })
 
   test("errors for unknown services and methods", async () => {
@@ -125,7 +135,7 @@ describe("ipc", () => {
     const reply = new Promise<string>((resolve) => raw.once("data", (d) => resolve(String(d))))
     raw.write("not json\n")
     expect(JSON.parse(await reply).error.code).toBe(-32700)
-    expect((await client.request<Hello>("hello")).protocol).toBe(1)
+    expect((await client.request<Hello>("hello")).protocol).toBe(2)
   })
 })
 

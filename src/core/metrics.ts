@@ -1,12 +1,16 @@
 import { readdirSync, readFileSync } from "node:fs"
+import { totalmem } from "node:os"
 import { exec } from "./exec.ts"
 
 export interface Sample {
-  cpu: number // percent of one core
+  cpu: number // percent of one core: a multithreaded service can pass 100
   mem: number // bytes
+  /** memory limit of the container, when it has one */
+  limit?: number
 }
 
 const CLK_TCK = 100
+
 const PAGE_SIZE = 4096
 
 interface ProcStat {
@@ -97,6 +101,18 @@ export function parseSize(s: string): number {
   return Number(m[1]) * (UNITS[m[2]!.toLowerCase()] ?? 1)
 }
 
+const MEM_UNITS: Record<string, number> = { b: 1, k: 1024, kb: 1024, m: 1024 ** 2, mb: 1024 ** 2, g: 1024 ** 3, gb: 1024 ** 3 }
+
+/** A memory size as docker / compose write it (`1G`, `512m`, `1.5gb`, bytes as a number): binary units. Undefined if invalid. */
+export function parseMemSize(value: string | number): number | undefined {
+  if (typeof value === "number") return Number.isFinite(value) && value > 0 ? value : undefined
+  const m = /^(\d+(?:\.\d+)?)\s*([a-z]*)$/i.exec(value.trim())
+  if (!m) return undefined
+  const unit = MEM_UNITS[m[2]!.toLowerCase() || "b"]
+  const n = Number(m[1]) * (unit ?? NaN)
+  return Number.isFinite(n) && n > 0 ? Math.round(n) : undefined
+}
+
 /** One `docker stats` call for many containers. Keys are the ids passed in (prefix match). */
 export async function sampleContainers(ids: string[]): Promise<Map<string, Sample>> {
   const out = new Map<string, Sample>()
@@ -108,12 +124,19 @@ export async function sampleContainers(ids: string[]): Promise<Map<string, Sampl
       const row = JSON.parse(line) as { ID: string; CPUPerc: string; MemUsage: string }
       const id = ids.find((i) => i.startsWith(row.ID) || row.ID.startsWith(i))
       if (!id) continue
-      out.set(id, { cpu: Number.parseFloat(row.CPUPerc) || 0, mem: parseSize(row.MemUsage.split("/")[0] ?? "") })
+      const [used, max] = row.MemUsage.split("/")
+      out.set(id, { cpu: Number.parseFloat(row.CPUPerc) || 0, mem: parseSize(used ?? ""), limit: containerLimit(max ?? "") })
     } catch {
       // ignore malformed rows
     }
   }
   return out
+}
+
+/** The second half of `MemUsage`; a container without a limit reports the host's memory, which is not one. */
+export function containerLimit(text: string, host = totalmem()): number | undefined {
+  const n = parseSize(text)
+  return n > 0 && n < host * 0.95 ? n : undefined
 }
 
 export function formatBytes(n: number): string {

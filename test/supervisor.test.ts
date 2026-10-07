@@ -9,7 +9,7 @@ process.env.XDG_STATE_HOME = __mk(`${__tmp()}/orbit-state-`) // tests must not t
 function svc(name: string, cmd: string, extra: Partial<ServiceConfig> = {}): ServiceConfig {
   return {
     name, type: "process", cmd, cwd: process.cwd(), env: {}, envFiles: [], dependsOn: [], restart: "no",
-    startTimeout: 5000, stopTimeout: 1000, autostart: true, ports: [], volumes: [], dockerArgs: [], ...extra,
+    startTimeout: 5000, stopTimeout: 1000, autostart: true, leakDetection: true, ports: [], volumes: [], dockerArgs: [], ...extra,
   }
 }
 
@@ -18,6 +18,22 @@ function config(...services: ServiceConfig[]): OrbitConfig {
 }
 
 describe("supervisor", () => {
+  test("memory over its limit is flagged in the state and in the history", async () => {
+    const sup = new Supervisor(config(svc("hog", "sleep 30", { memLimit: 1024 }), svc("calm", "sleep 30")))
+    await sup.init()
+    expect(await sup.startMany(["hog", "calm"])).toBeUndefined()
+    for (let i = 0; i < 40 && !sup.state("hog").resources?.level; i++) await Bun.sleep(250)
+    expect(sup.state("hog").resources).toMatchObject({ memLimit: 1024, level: "over" })
+    expect(sup.state("calm").resources).toBeUndefined()
+    const buckets = await sup.history("hog")
+    expect(buckets.length).toBeGreaterThan(0)
+    expect(buckets[0]!.mem).toBeGreaterThan(0)
+    await sup.stop("hog")
+    expect(sup.state("hog").resources).toBeUndefined()
+    await expect(sup.history("nope")).rejects.toThrow("unknown service")
+    await sup.dispose()
+  })
+
   test("starts dependencies first and stops dependents first", async () => {
     const started: string[] = []
     const sup = new Supervisor(config(

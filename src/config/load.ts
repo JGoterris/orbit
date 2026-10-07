@@ -8,6 +8,7 @@ import { missingEnvFiles, parseEnvFileRefs, type EnvFileRef } from "./envFiles.t
 export { interpolate, parseDotEnv }
 import {
   asEnv,
+  asMemSize,
   asRecord,
   asString,
   asStringList,
@@ -179,6 +180,8 @@ function parseService(
     startTimeout: parseDuration(rec.start_timeout, `${path}.start_timeout`, base?.startTimeout ?? 60_000),
     stopTimeout: parseDuration(rec.stop_timeout, `${path}.stop_timeout`, base?.stopTimeout ?? 8_000),
     autostart: rec.autostart === undefined ? (base?.autostart ?? true) : rec.autostart !== false,
+    memLimit: rec.mem_limit !== undefined ? asMemSize(rec.mem_limit, `${path}.mem_limit`) : base?.memLimit,
+    leakDetection: rec.leak_detection === undefined ? (base?.leakDetection ?? true) : rec.leak_detection !== false,
     image: asString(rec.image, `${path}.image`) ?? base?.image,
     ports,
     volumes: asStringList(rec.volumes, `${path}.volumes`).map((v) => {

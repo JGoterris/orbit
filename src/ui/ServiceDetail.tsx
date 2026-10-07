@@ -2,6 +2,8 @@ import { relative } from "node:path"
 import type { SupervisorLike } from "../core/supervisor.ts"
 import { describeHealth } from "../core/health.ts"
 import { formatBytes, formatDuration } from "../core/metrics.ts"
+import { resample, type Range } from "../core/resources.ts"
+import { useResourceHistory } from "./hooks.ts"
 import { areaChart, fit, sparkline, styleFor, theme, typeBadge } from "./theme.ts"
 
 interface Props {
@@ -14,6 +16,8 @@ interface Props {
   height?: number
   /** inner rows available; anything beyond the 7 base lines is filled with config, charts and recent events */
   rows?: number
+  /** time span of the cpu / mem charts */
+  range?: Range
   onFocus?: () => void
 }
 
@@ -65,7 +69,7 @@ function Field({ label, value, color = theme.text }: { label: string; value: str
   )
 }
 
-export function ServiceDetail({ sup, name, width, focused, expanded, height, rows, onFocus }: Props) {
+export function ServiceDetail({ sup, name, width, focused, expanded, height, rows, range = "2m", onFocus }: Props) {
   const svc = sup.service(name)
   const st = sup.state(name)
   const style = styleFor(st.status, svc.oneshot)
@@ -89,6 +93,16 @@ export function ServiceDetail({ sup, name, width, focused, expanded, height, row
   const sparkW = Math.max(10, Math.floor((inner - 36) / 2))
   const cpuNow = st.cpu.length ? st.cpu[st.cpu.length - 1]! : 0
   const memNow = st.mem.length ? st.mem[st.mem.length - 1]! : 0
+  const res = st.resources
+  const memColor = res?.level === "over" ? theme.red : res?.level === "warn" ? theme.orange : theme.text
+  const memText = res?.memLimit ? `${formatBytes(memNow)}/${formatBytes(res.memLimit)} ${Math.round((memNow / res.memLimit) * 100)}%` : formatBytes(memNow).padStart(6)
+
+  // 2m is what was sampled live; longer ranges come from the history buckets (averaged down to the chart's width)
+  const history = useResourceHistory(sup, name, range)
+  const longer = range !== "2m" && history.length > 0
+  const cpuSeries = longer ? history.map((b) => b.cpu) : st.cpu
+  const memSeries = longer ? history.map((b) => b.mem) : st.mem
+  const memTop = res?.memLimit ? Math.max(res.memLimit, ...memSeries) : undefined
 
   // ---- extra blocks, in priority order, as far as the height allows
   const extra = Math.max(0, (rows ?? 0) - BASE_ROWS)
@@ -114,8 +128,8 @@ export function ServiceDetail({ sup, name, width, focused, expanded, height, row
   const events = eventRows ? sup.logs.lines(name).filter((l) => l.stream !== "stdout").slice(-(eventRows - 1)) : []
 
   const chartW = Math.max(10, Math.floor((inner - 12) / 2))
-  const cpuChart = chartExtra ? areaChart(st.cpu, chartW, chartExtra, Math.max(100, ...st.cpu)) : []
-  const memChart = chartExtra ? areaChart(st.mem, chartW, chartExtra) : []
+  const cpuChart = chartExtra ? areaChart(resample(cpuSeries, chartW), chartW, chartExtra, Math.max(100, ...cpuSeries)) : []
+  const memChart = chartExtra ? areaChart(resample(memSeries, chartW), chartW, chartExtra, memTop) : []
 
   return (
     <box
@@ -207,7 +221,7 @@ export function ServiceDetail({ sup, name, width, focused, expanded, height, row
       <text flexShrink={0}> </text>
       {chartExtra ? (
         <>
-          <Header label="usage" width={inner} />
+          <Header label={`usage · ${range} (h)`} width={inner} />
           {cpuChart.map((row, i) => (
             <text key={`ch${i}`} flexShrink={0}>
               <span fg={theme.dim}>{i === 0 ? "cpu " : "    "}</span>
@@ -217,18 +231,18 @@ export function ServiceDetail({ sup, name, width, focused, expanded, height, row
             </text>
           ))}
           <text flexShrink={0}>
-            <span fg={theme.muted}>{`    ${fit(stats(st.cpu, (n) => `${n.toFixed(1)}%`), chartW + 4)}`}</span>
-            <span fg={theme.muted}>{`    ${fit(stats(st.mem, formatBytes), chartW)}`}</span>
+            <span fg={theme.muted}>{`    ${fit(stats(cpuSeries, (n) => `${n.toFixed(1)}%`), chartW + 4)}`}</span>
+            <span fg={theme.muted}>{`    ${fit(stats(memSeries, formatBytes), chartW)}`}</span>
           </text>
         </>
       ) : (
       <text flexShrink={0}>
         <span fg={theme.dim}>cpu </span>
-        <span fg={theme.green}>{sparkline(st.cpu, sparkW, Math.max(100, ...st.cpu))}</span>
+        <span fg={theme.green}>{sparkline(resample(cpuSeries, sparkW), sparkW, Math.max(100, ...cpuSeries))}</span>
         <span fg={theme.text}>{` ${cpuNow.toFixed(1).padStart(5)}%`}</span>
         <span fg={theme.dim}>{"     mem "}</span>
-        <span fg={theme.accent}>{sparkline(st.mem, sparkW)}</span>
-        <span fg={theme.text}>{` ${formatBytes(memNow).padStart(6)}`}</span>
+        <span fg={theme.accent}>{sparkline(resample(memSeries, sparkW), sparkW, memTop)}</span>
+        <span fg={memColor}>{` ${memText}`}</span>
       </text>
       )}
       {eventRows ? (
@@ -253,6 +267,14 @@ export function ServiceDetail({ sup, name, width, focused, expanded, height, row
           <span fg={theme.red}>{fit(`✖ ${st.error}`, inner)}</span>
         ) : st.waitingOn?.length ? (
           <span fg={theme.yellow}>{`waiting for ${st.waitingOn.filter((d) => !sup.isReady(d)).join(", ") || "dependencies"}…`}</span>
+        ) : res?.level ? (
+          <span fg={res.level === "over" ? theme.red : theme.orange}>
+            {fit(`▲ memory ${memText}${res.level === "over" ? " — over its limit" : ""}`, inner)}
+          </span>
+        ) : res?.leak ? (
+          <span fg={theme.orange}>
+            {fit(`↗ leak: +${formatBytes(res.leak.perMin)}/min for ${formatDuration(Date.now() - res.leak.since)}${res.leak.etaMs ? ` · limit in ~${formatDuration(res.leak.etaMs)}` : ""}`, inner)}
+          </span>
         ) : (
           <span fg={theme.dim}> </span>
         )}

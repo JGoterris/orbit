@@ -47,7 +47,9 @@ Built with TypeScript, [Bun](https://bun.sh) and [OpenTUI](https://github.com/an
 - **Live logs** per service or combined with color prefix, regex filter, scroll
   (wheel/PgUp/PgDn), timestamps, error/warning highlighting.
 - **CPU and memory** per process tree (via `/proc`) and per container (`docker stats`), with
-  sparklines.
+  sparklines and up to an hour of history (`h` cycles 2m · 15m · 1h).
+- **Memory alerts**: `mem_limit` turns memory orange at 85 % and red at 100 %, and a steady growth
+  (leak) shows `↗`; both raise a toast and a desktop notification.
 - **Docker / compose**: automatically imports `docker-compose.yml` (with `depends_on`, ports,
   healthchecks and `${VAR:-def}` interpolation), and re-attaches to containers that were
   already running. Those containers **are not stopped when exiting orbit** (only with explicit `x`/`X`).
@@ -273,6 +275,11 @@ services:
   docs:
     cmd: bun run docs
     autostart: false            # not started with S / --up
+
+  worker:
+    cmd: bun run worker
+    mem_limit: 1G               # alert (orange ≥85 %, red ≥100 %); 512m, 1.5G, or bytes
+    leak_detection: false       # default true: warn about sustained memory growth
 
   build-lib:                    # task: build, migration, provisioning…
     cmd: mvn -q install -pl shared-kernel -am -DskipTests

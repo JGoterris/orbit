@@ -137,3 +137,56 @@ describe("user config", () => {
     expect(readUserConfig()).toEqual({ theme: "y", notifications: false })
   })
 })
+
+describe("desktop notifier: memory", () => {
+  class ResSup extends FakeSup {
+    res: Record<string, unknown> = {}
+    state(name: string) {
+      return { ...super.state(name), resources: this.res[name] } as never
+    }
+    setRes(name: string, r: unknown) {
+      this.res[name] = r
+      this.emit("change", name)
+    }
+  }
+  const make = () => {
+    const sup = new ResSup()
+    const sent: Notice[] = []
+    let t = 0
+    attachDesktopNotifier(sup as never, { send: (n) => sent.push(n), groupMs: 10, now: () => t, enabled: () => true })
+    return { sup, sent, advance: (ms: number) => (t += ms) }
+  }
+  const MB = 1024 ** 2
+
+  test("going over the limit is urgent and reported once; warn is silent", async () => {
+    const { sup, sent } = make()
+    sup.setRes("api", { memLimit: 1024 * MB, level: "warn" })
+    await settle()
+    expect(sent).toEqual([])
+    sup.setRes("api", { memLimit: 1024 * MB, level: "over" })
+    sup.setRes("api", { memLimit: 1024 * MB, level: "over" })
+    await settle()
+    expect(sent).toEqual([{ title: "orbit · shop", body: "▲  api is over its memory limit (limit 1.0G)", urgent: true }])
+  })
+
+  test("a leak is reported once with its rate, and again only after the long throttle", async () => {
+    const { sup, sent, advance } = make()
+    const leak = { perMin: 5 * MB, since: 0, etaMs: 40 * 60_000 }
+    sup.setRes("web", { leak })
+    sup.setRes("web", { leak })
+    await settle()
+    expect(sent.length).toBe(1)
+    expect(sent[0]).toMatchObject({ urgent: false })
+    expect(sent[0]!.body).toBe("↗  web may be leaking memory: +5.0M/min, limit in ~40m00s")
+    sup.setRes("web", undefined)
+    advance(5 * 60_000)
+    sup.setRes("web", { leak })
+    await settle()
+    expect(sent.length).toBe(1)
+    sup.setRes("web", undefined)
+    advance(11 * 60_000)
+    sup.setRes("web", { leak })
+    await settle()
+    expect(sent.length).toBe(2)
+  })
+})
