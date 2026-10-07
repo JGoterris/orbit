@@ -124,7 +124,7 @@ export class ProcessRunner implements Runner {
     let proc: Subprocess<"ignore", number, number>
     try {
       const argv = isWindows
-        ? [process.execPath, WIN_WRAPPER, this.files.exit, ...shellArgv(this.svc.cmd!, this.svc.shell)]
+        ? [process.execPath, WIN_WRAPPER, this.files.exit, this.svc.cmd!, ...(this.svc.shell ? [this.svc.shell] : [])]
         : this.svc.shell
           ? [...shellArgv(WRAPPER, this.svc.shell), "orbit", this.svc.cmd!, this.files.exit]
           : ["/bin/sh", "-c", WRAPPER, "orbit", this.svc.cmd!, this.files.exit]

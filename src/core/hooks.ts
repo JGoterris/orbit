@@ -1,7 +1,7 @@
 import type { Subprocess } from "bun"
 import type { Hook } from "../config/schema.ts"
 import { pipeLines, type LogStream } from "./logs.ts"
-import { killTree, shellArgv } from "./platform/index.ts"
+import { killTree, shellCommand } from "./platform/index.ts"
 
 export type HookPhase = "pre_start" | "post_start" | "post_stop"
 
@@ -30,7 +30,9 @@ export async function runHooks(phase: HookPhase, hooks: Hook[], ctx: HookContext
     ctx.log("system", `▸ ${phase}: ${hook.cmd}`)
     let proc: Subprocess<"ignore", "pipe", "pipe">
     try {
-      proc = Bun.spawn(shellArgv(hook.cmd, ctx.shell), {
+      const sh = shellCommand(hook.cmd, ctx.shell)
+      proc = Bun.spawn(sh.argv, {
+        windowsVerbatimArguments: sh.verbatim,
         cwd: ctx.cwd,
         env: {
           ...process.env,

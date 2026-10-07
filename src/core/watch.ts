@@ -1,4 +1,4 @@
-import { watch as fsWatch, existsSync, type FSWatcher } from "node:fs"
+import { watch as fsWatch, existsSync, statSync, type FSWatcher } from "node:fs"
 import { join, sep } from "node:path"
 import type { WatchConfig } from "../config/schema.ts"
 
@@ -100,6 +100,10 @@ export class FileWatcher {
     if (this._paused) return
     const rel = sep === "/" ? file : file.split(sep).join("/")
     if (!this.match.some((g) => g.match(rel)) || this.ignore.some((g) => g.match(rel))) return
+    // macOS and Windows also report the folders that contain a changed file: only files are changes
+    try {
+      if (statSync(join(this.cwd, rel)).isDirectory()) return
+    } catch {}
     const wasEmpty = this.batch.size === 0
     this.batch.add(rel)
     if (wasEmpty) this.hooks.onPending?.(true)

@@ -3,7 +3,7 @@ import { mkdtempSync, readFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import type { ServiceConfig } from "../src/config/schema.ts"
-import { parsePsTable, parsePsTime, parseWinTable, configBase, isWindows, killTree, pidAlive, procStartTime, processTable, shellArgv, stateBase, treeAlive, whoListens } from "../src/core/platform/index.ts"
+import { shellCommand, parsePsTable, parsePsTime, parseWinTable, configBase, isWindows, killTree, pidAlive, procStartTime, processTable, shellArgv, stateBase, treeAlive, whoListens } from "../src/core/platform/index.ts"
 import { ProcessSampler } from "../src/core/metrics.ts"
 import { ProcessRunner } from "../src/core/runners.ts"
 import { procFiles } from "../src/core/state.ts"
@@ -21,6 +21,14 @@ describe("shellArgv", () => {
     const win = shellArgv("echo hi", undefined, true)
     expect(win.slice(1)).toEqual(["/d", "/s", "/c", "echo hi"])
     expect(win[0]).toMatch(/cmd(\.exe)?$/i)
+  })
+
+  test("cmd gets its command pre-quoted and verbatim; other shells are left to Bun", () => {
+    const c = shellCommand('bun -e "x()"', undefined, true)
+    expect(c.verbatim).toBe(true)
+    expect(c.argv.slice(1)).toEqual(["/d", "/s", "/c", '"bun -e "x()""'])
+    expect(shellCommand("ls", "pwsh", true).verbatim).toBe(false)
+    expect(shellCommand("ls", undefined, false)).toEqual({ argv: ["/bin/sh", "-c", "ls"], verbatim: false })
   })
 
   test("`shell` picks the flags that suit it", () => {
@@ -76,7 +84,6 @@ describe("per-user directories", () => {
 describe("live process queries", () => {
   test("pidAlive / treeAlive / procStartTime on ourselves", () => {
     expect(pidAlive(process.pid)).toBe(true)
-    expect(treeAlive(process.pid)).toBe(true)
     const t = procStartTime(process.pid)
     expect(typeof t).toBe("number")
     expect(procStartTime(process.pid)).toBe(t!) // stable
@@ -116,6 +123,7 @@ describe("killTree", () => {
     const reader = parent.stdout.getReader()
     const childPid = Number(new TextDecoder().decode((await reader.read()).value).trim())
     expect(pidAlive(childPid)).toBe(true)
+    expect(treeAlive(parent.pid)).toBe(true)
     killTree(parent.pid, "SIGKILL")
     await parent.exited
     expect(await until(() => !pidAlive(childPid))).toBe(true)

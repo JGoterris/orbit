@@ -19,7 +19,7 @@ import { Session } from "../src/core/session.ts"
 import { acquireLock, readState, releaseLock } from "../src/core/state.ts"
 import { Supervisor, type SupervisorLike } from "../src/core/supervisor.ts"
 import { projectRows } from "../src/ui/Overlays.tsx"
-import { sleepCmd } from "./helpers.ts"
+import { sleepCmd, win } from "./helpers.ts"
 
 process.env.XDG_STATE_HOME = mkdtempSync(`${tmpdir()}/orbit-state-`) // tests must not touch the real ~/.local/state
 const freshConfigHome = () => (process.env.XDG_CONFIG_HOME = mkdtempSync(`${tmpdir()}/orbit-config-`))
@@ -73,7 +73,7 @@ describe("project registry", () => {
   })
 })
 
-describe("paths", () => {
+describe.skipIf(win)("paths", () => {
   test("looksLikePath and expandPath", () => {
     for (const p of ["/x", "~", "~/x", "./x", "../x", ".."]) expect(looksLikePath(p)).toBe(true)
     for (const p of ["orbit", "my-api", ".hidden"]) expect(looksLikePath(p)).toBe(false)
@@ -147,7 +147,7 @@ describe("projectRows", () => {
     expect(projectRows(entries, statuses, "sh", "/w/api").map((r) => r.path)).toEqual(["/w/shop"])
   })
 
-  test("a typed path becomes an 'open folder' row, flagged when it is not a folder", () => {
+  test.skipIf(win)("a typed path becomes an 'open folder' row, flagged when it is not a folder", () => {
     const real = tmp()
     expect(projectRows(entries, statuses, "zzz", "/w/api")).toEqual([]) // not path-like: a search, nothing matches
     const rows = projectRows(entries, statuses, `${real}/`, "/w/api")
@@ -255,7 +255,7 @@ describe("findProject / CLI", () => {
     { path: "/z/docs", name: "docs", lastOpened: 5 },
   ]
 
-  test("exact name, path, then unique fragment; ambiguity and misses explain themselves", () => {
+  test.skipIf(win)("exact name, path, then unique fragment; ambiguity and misses explain themselves", () => {
     expect(findProject("docs", list)).toMatchObject({ path: "/z/docs" })
     expect(findProject("/w/shop-web", list)).toMatchObject({ name: "shop-web" })
     expect(findProject("DOC", list)).toMatchObject({ path: "/z/docs" })

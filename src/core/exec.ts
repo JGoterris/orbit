@@ -15,6 +15,8 @@ export async function exec(
     input?: string
     /** run in a new session, without a controlling terminal: ssh/gpg cannot prompt over the TUI, they fail instead */
     detached?: boolean
+    /** Windows: do not quote or escape the arguments (see `shellCommand`) */
+    verbatim?: boolean
   } = {},
 ): Promise<ExecResult> {
   try {
@@ -25,6 +27,7 @@ export async function exec(
       stderr: "pipe",
       stdin: opts.input === undefined ? "ignore" : Buffer.from(opts.input),
       detached: opts.detached,
+      windowsVerbatimArguments: opts.verbatim,
     })
     let timer: ReturnType<typeof setTimeout> | undefined
     if (opts.timeout) timer = setTimeout(() => proc.kill(process.platform === "win32" ? undefined : "SIGKILL"), opts.timeout)

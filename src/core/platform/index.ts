@@ -23,6 +23,18 @@ export function shellArgv(cmd: string, shell?: string, win = isWindows): string[
   return win ? [process.env.ComSpec || "cmd.exe", "/d", "/s", "/c", cmd] : ["/bin/sh", "-c", cmd]
 }
 
+/**
+ * Like `shellArgv`, plus whether Windows must get the arguments untouched. `cmd.exe /s /c "<cmd>"` strips the outer quotes
+ * itself and does not understand the `\\"` escaping that Bun applies to a normal argument, so for cmd the quoting is ours.
+ */
+export function shellCommand(cmd: string, shell?: string, win = isWindows): { argv: string[]; verbatim: boolean } {
+  const argv = shellArgv(cmd, shell, win)
+  const isCmd = /(^|[\\/])cmd(\.exe)?$/i.test(argv[0]!) && argv[3] === "/c"
+  if (!win || !isCmd) return { argv, verbatim: false }
+  argv[4] = `"${cmd}"`
+  return { argv, verbatim: true }
+}
+
 /** The interactive shell of the user. */
 export function userShell(): string {
   return isWindows ? process.env.ComSpec || "cmd.exe" : process.env.SHELL || "/bin/sh"
