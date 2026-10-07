@@ -8,5 +8,10 @@ export function sleepCmd(seconds: number): string {
   return isWindows ? `bun -e "setTimeout(()=>{},${Math.round(seconds * 1000)})"` : `sleep ${seconds}`
 }
 
+/** Prints `text`, then stays alive for `seconds`: `echo text; sleep n` on POSIX, a Bun one-liner on Windows (cmd has no `;`). */
+export function echoSleepCmd(text: string, seconds: number): string {
+  return isWindows ? `bun -e "console.log('${text}'); setTimeout(()=>{},${Math.round(seconds * 1000)})"` : `echo ${text}; sleep ${seconds}`
+}
+
 /** A temp root with a short path: some assertions read paths off a fixed-width screen, and macOS' tmpdir() is long. */
 export const shortTmp = isWindows ? (process.env.TEMP ?? "C:\\Temp") : "/tmp"

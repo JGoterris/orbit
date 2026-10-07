@@ -38,8 +38,11 @@ describe.skipIf(win)("ConsoleSession", () => {
     const session = new ConsoleSession({ argv: ["/bin/sh", "-c", "read x; echo got:$x"], env: {}, title: "t" }, 80, 24)
     const seen: string[] = []
     session.on("data", (d: Uint8Array) => seen.push(new TextDecoder().decode(d)))
+    // the program may not be reading yet when the first bytes arrive (macOS drops them): keep typing until it answers
+    const typing = setInterval(() => session.write("hi\r"), 50)
     session.write("hi\r")
     await session.exited
+    clearInterval(typing)
     expect(session.exitCode).toBe(0)
     expect(seen.join("")).toContain("got:hi")
     expect(new TextDecoder().decode(session.backlog)).toContain("got:hi")

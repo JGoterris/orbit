@@ -10,7 +10,7 @@ import { IpcServer } from "../src/core/ipc/server.ts"
 import type { Hello, Notification } from "../src/core/ipc/protocol.ts"
 import type { LogLine } from "../src/core/logs.ts"
 import { Supervisor, type ServiceState } from "../src/core/supervisor.ts"
-import { sleepCmd } from "./helpers.ts"
+import { echoSleepCmd, sleepCmd } from "./helpers.ts"
 
 process.env.XDG_STATE_HOME = mkdtempSync(`${tmpdir()}/orbit-state-`) // tests must not touch the real ~/.local/state
 
@@ -86,7 +86,7 @@ describe("ipc", () => {
   })
 
   test("subscribers receive state changes and log lines", async () => {
-    const { client } = await setup("subs", svc("a", "echo hello-ipc; sleep 30"))
+    const { client } = await setup("subs", svc("a", echoSleepCmd("hello-ipc", 30)))
     const seen: Notification[] = []
     client.on("notification", (n: Notification) => seen.push(n))
     await client.request("subscribe", { logs: true })
@@ -192,7 +192,7 @@ describe("RemoteSupervisor", () => {
   })
 
   test("a late client sees what already happened: state and log history", async () => {
-    const { server, sup } = await setup("late", svc("a", "echo before; sleep 30"))
+    const { server, sup } = await setup("late", svc("a", echoSleepCmd("before", 30)))
     await sup.start("a")
     await until(() => sup.logs.lines("a").some((l) => l.text === "before"))
     const rs = await RemoteSupervisor.connect(server.path)

@@ -95,8 +95,10 @@ export class ConsoleSession extends EventEmitter {
       this.terminal.close()
       throw err
     }
-    this.exited = this.proc.exited.then((code) => {
+    this.exited = this.proc.exited.then(async (code) => {
       this.exitCode = code
+      // the last output can still be in flight in the pty (macOS): let it through before closing it
+      await new Promise((r) => setTimeout(r, 50))
       this.terminal?.close()
       this.emit("exit", code)
     })

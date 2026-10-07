@@ -57,12 +57,16 @@ export function pidAlive(pid: number): boolean {
  */
 export function killTree(pid: number, signal: NodeJS.Signals): boolean {
   if (isWindows) {
-    const args = ["/T", ...(signal === "SIGKILL" ? ["/F"] : []), "/PID", String(pid)]
-    try {
-      return Bun.spawnSync(["taskkill", ...args], { stdin: "ignore", stdout: "ignore", stderr: "ignore" }).exitCode === 0
-    } catch {
-      return false
+    const taskkill = (force: boolean) => {
+      const args = ["/T", ...(force ? ["/F"] : []), "/PID", String(pid)]
+      try {
+        return Bun.spawnSync(["taskkill", ...args], { stdin: "ignore", stdout: "ignore", stderr: "ignore" }).exitCode === 0
+      } catch {
+        return false
+      }
     }
+    // a console program without a window cannot be asked to close ("can only be terminated forcefully"): do not wait for it
+    return signal === "SIGKILL" ? taskkill(true) : taskkill(false) || taskkill(true)
   }
   try {
     process.kill(-pid, signal)
