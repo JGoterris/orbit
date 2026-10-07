@@ -26,5 +26,6 @@ jobs:
         shell: bash
         env:
           ORBIT_IPC_DEBUG: "1"
-        run: bun test test/ipc.test.ts -t "history: buckets" 2>&1 | head -120
+        run: |
+          bun test test/ipc.test.ts -t "history: buckets" 2>&1 | head -120
       - run: bun test
