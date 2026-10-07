@@ -71,11 +71,6 @@ export const ERR = { parse: -32700, invalid: -32600, method: -32601, params: -32
 export const encode = (msg: Request | Notification | Response) => JSON.stringify(msg) + "\n"
 
 /** Splits a byte stream into JSON messages; lines that are not JSON are handed to `onBad`. */
-/** Wire trace on stderr, for diagnosing a platform: set ORBIT_IPC_DEBUG=1. */
-export function dbg(...args: unknown[]) {
-  if (process.env.ORBIT_IPC_DEBUG) console.error(`[ipc ${Date.now() % 100000}]`, ...args)
-}
-
 export class LineParser {
   private buf = ""
   constructor(

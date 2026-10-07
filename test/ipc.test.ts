@@ -75,7 +75,9 @@ describe("ipc", () => {
     expect(buckets.length).toBe(1)
     expect(buckets[0]).toMatchObject({ cpu: 5, mem: 1000 })
     expect(await client.request<unknown[]>("history", { service: "a", since: 1 })).toEqual([])
-    await expect(client.request("history", { service: "nope" })).rejects.toThrow('unknown service "nope"')
+    // not `expect(promise).rejects`: under bun test on Windows that form never sees the reply once earlier requests went through
+    const err = await client.request("history", { service: "nope" }).then(() => undefined, (e: Error) => e)
+    expect(err?.message).toContain('unknown service "nope"')
   })
 
   test("errors for unknown services and methods", async () => {

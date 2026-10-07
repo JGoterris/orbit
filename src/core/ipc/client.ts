@@ -1,6 +1,6 @@
 import { EventEmitter } from "node:events"
 import { connect, type Socket } from "node:net"
-import { dbg, encode, LineParser, type Method, type Notification, type Response } from "./protocol.ts"
+import { encode, LineParser, type Method, type Notification, type Response } from "./protocol.ts"
 
 /** Talks to an orbit supervisor over its socket. Emits "notification" (Notification) and "close". */
 export class IpcClient extends EventEmitter {
@@ -31,7 +31,6 @@ export class IpcClient extends EventEmitter {
     this.socket = socket
     socket.setEncoding("utf8")
     const parser = new LineParser((msg) => {
-      dbg("client recv", msg.id ?? msg.method)
       if (typeof msg.id === "number" && ("result" in msg || "error" in msg)) {
         const p = this.pending.get(msg.id)
         if (!p) return
@@ -41,13 +40,9 @@ export class IpcClient extends EventEmitter {
         else p.resolve(res.result)
       } else if (typeof msg.method === "string") this.emit("notification", msg as unknown as Notification)
     })
-    socket.on("data", (chunk) => {
-      dbg("client data", (chunk as string).length, "bytes")
-      parser.push(chunk as string)
-    })
-    socket.on("error", (err) => dbg("client socket error", err.message))
+    socket.on("data", (chunk) => parser.push(chunk as string))
+    socket.on("error", () => {})
     socket.on("close", () => {
-      dbg("client socket close", this.pending.size, "pending")
       this.closed = true
       for (const p of this.pending.values()) p.reject(new Error("connection to orbit closed"))
       this.pending.clear()
@@ -60,7 +55,6 @@ export class IpcClient extends EventEmitter {
     const id = this.nextId++
     return new Promise<T>((resolve, reject) => {
       this.pending.set(id, { resolve: resolve as (v: unknown) => void, reject })
-      dbg("client send", id, method)
       this.socket!.write(encode({ jsonrpc: "2.0", id, method, params }))
     })
   }
