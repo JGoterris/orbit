@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test"
 import { mkdtempSync, readFileSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
+import { fileURLToPath } from "node:url"
 import YAML from "yaml"
 import schema from "../orbit.schema.json"
 import { unknownKeys, validateFile } from "../src/config/validate.ts"
@@ -41,13 +42,13 @@ describe("orbit.schema.json", () => {
 
   test("the example in the README has no unknown keys", () => {
     const readme = readFileSync(new URL("../README.md", import.meta.url), "utf8")
-    const block = /```yaml\n(name: my-stack[\s\S]*?)```/.exec(readme)?.[1]
+    const block = /```yaml\r?\n(name: my-stack[\s\S]*?)```/.exec(readme)?.[1]
     expect(block).toBeDefined()
     expect(unknownKeys(YAML.parse(block!))).toEqual([])
   })
 
   test("the example stack fixture is valid", () => {
-    const res = validateFile({ dir: new URL("./fixtures/stack", import.meta.url).pathname })
+    const res = validateFile({ dir: fileURLToPath(new URL("./fixtures/stack", import.meta.url)) })
     expect(res.errors).toEqual([])
   })
 })

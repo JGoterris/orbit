@@ -328,13 +328,16 @@ describe("external services", () => {
     let server: ReturnType<typeof Bun.serve> | undefined = Bun.serve({ port, fetch: () => new Response("ok") })
     const sup = new Supervisor(config(external("saas", port)))
     try {
+      const until = async (status: string) => {
+        for (let i = 0; i < 50 && sup.state("saas").status !== status; i++) await Bun.sleep(100)
+      }
       await sup.init()
-      await Bun.sleep(400)
+      await until("healthy")
       expect(sup.state("saas").status).toBe("healthy")
       expect(sup.ownedRunningCount()).toBe(0) // quitting orbit has nothing to stop
       await server.stop(true)
       server = undefined
-      await Bun.sleep(1000)
+      await until("unhealthy")
       expect(sup.state("saas").status).toBe("unhealthy")
     } finally {
       await server?.stop(true)
