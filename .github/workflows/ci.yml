@@ -20,6 +20,10 @@ jobs:
           bun-version: latest
       - run: bun install --frozen-lockfile
       - run: bun run typecheck
+      - name: Named pipe repro (Windows diagnosis, temporary)
+        if: runner.os == 'Windows'
+        continue-on-error: true
+        run: bun scripts/pipe-repro.ts
       - name: IPC trace (Windows diagnosis, temporary)
         if: runner.os == 'Windows'
         continue-on-error: true
