@@ -1,6 +1,6 @@
 import { EventEmitter } from "node:events"
 import type { Subprocess } from "bun"
-import { watch as fsWatch, type FSWatcher } from "node:fs"
+import { statSync, watch as fsWatch, type FSWatcher } from "node:fs"
 import { basename, dirname, join, relative } from "node:path"
 import { diffConfig, isEmptyDiff, restartNames, type ConfigDiff } from "../config/diff.ts"
 import { readEnvFiles } from "../config/envFiles.ts"
@@ -149,6 +149,7 @@ export class Supervisor extends EventEmitter implements SupervisorLike {
   private pending?: PendingConfig
   private reloading: Promise<unknown> = Promise.resolve()
   private configWatchers: FSWatcher[] = []
+  private configPoll?: ReturnType<typeof setInterval>
   private configTimer?: ReturnType<typeof setTimeout>
   private states = new Map<string, ServiceState>()
   private rt = new Map<string, Runtime>()
@@ -620,7 +621,7 @@ export class Supervisor extends EventEmitter implements SupervisorLike {
 
   /** Watches the config files; a change is diffed against the running config and offered, never applied by itself. */
   private watchConfigFiles() {
-    if (this.disposed || this.configWatchers.length || !this.config.file) return
+    if (this.disposed || this.configWatchers.length || this.configPoll || !this.config.file) return
     const check = () => {
       clearTimeout(this.configTimer)
       this.configTimer = setTimeout(() => this.checkConfig(), 300)
@@ -640,10 +641,20 @@ export class Supervisor extends EventEmitter implements SupervisorLike {
         this.configWatchers.push(w)
       } catch {}
     }
+    // fs.watch can miss events (macOS, network or bind mounts): a cheap stat poll backs it up
+    const stamp = () => this.configFiles().map((f) => { try { const st = statSync(f); return `${st.mtimeMs}:${st.size}` } catch { return "" } }).join("|")
+    let last = stamp()
+    this.configPoll = setInterval(() => {
+      const now = stamp()
+      if (now !== last) { last = now; check() }
+    }, 1000)
+    this.configPoll.unref?.()
   }
 
   private closeConfigWatchers() {
     clearTimeout(this.configTimer)
+    clearInterval(this.configPoll)
+    this.configPoll = undefined
     for (const w of this.configWatchers) w.close()
     this.configWatchers = []
   }
