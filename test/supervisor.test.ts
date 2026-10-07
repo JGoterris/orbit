@@ -321,11 +321,18 @@ describe.skipIf(win)("supervisor", () => {
 describe("external services", () => {
   const external = (name: string, port: number, extra: Partial<ServiceConfig> = {}) =>
     svc(name, "", { type: "external", cmd: undefined, health: { http: `http://127.0.0.1:${port}/`, interval: 100, timeout: 300 }, startTimeout: 800, ...extra })
-  const freePort = () => 40000 + Math.floor(Math.random() * 20000)
+  const serve = (port = 0) => Bun.serve({ port, hostname: "127.0.0.1", fetch: () => new Response("ok") })
+  /** A port the OS just handed out and released: nothing listens on it, and it can't sit in a reserved range (Windows) */
+  const freePort = async () => {
+    const s = serve()
+    const port = s.port!
+    await s.stop(true)
+    return port
+  }
 
   test("is monitored from init(): healthy while it answers, unhealthy when it stops", async () => {
-    const port = freePort()
-    let server: ReturnType<typeof Bun.serve> | undefined = Bun.serve({ port, fetch: () => new Response("ok") })
+    let server: ReturnType<typeof Bun.serve> | undefined = serve()
+    const port = server.port!
     const sup = new Supervisor(config(external("saas", port)))
     try {
       const until = async (status: string) => {
@@ -346,13 +353,13 @@ describe("external services", () => {
   })
 
   test("a dependent waits for it; unreachable means the dependent fails", async () => {
-    const port = freePort()
+    const port = await freePort()
     const sup = new Supervisor(config(external("saas", port), svc("api", sleepCmd(30), { dependsOn: ["saas"] })))
     await sup.init()
     expect(await sup.start("api")).toBe(false)
     expect(sup.state("api").status).toBe("failed")
     expect(sup.state("api").error).toContain("dependency not ready: saas")
-    const server = Bun.serve({ port, fetch: () => new Response("ok") })
+    const server = serve(port)
     try {
       expect(await sup.start("api")).toBe(true)
       expect(sup.state("saas").status).toBe("healthy")
@@ -363,8 +370,8 @@ describe("external services", () => {
   })
 
   test("stop does nothing to it nor to its dependents; start works without init()", async () => {
-    const port = freePort()
-    const server = Bun.serve({ port, fetch: () => new Response("ok") })
+    const server = serve()
+    const port = server.port!
     const sup = new Supervisor(config(external("saas", port), svc("api", sleepCmd(30), { dependsOn: ["saas"] })))
     try {
       expect(await sup.start("api")).toBe(true)
