@@ -22,6 +22,7 @@
     "bin",
     "README.md",
     "assets/logo.svg",
+    "orbit.schema.json",
     "LICENSE",
     "THIRD_PARTY_NOTICES.md"
   ],

@@ -7,7 +7,7 @@ import pkg from "../package.json"
 import { runDaemon } from "./core/ipc/daemon.ts"
 import { acquireLock, releaseLock } from "./core/state.ts"
 import { Supervisor, type SupervisorLike } from "./core/supervisor.ts"
-import { runCtl, runDown, runGraph, runInit, runList, runLogs, runProjects, runStatus, runUp } from "./cli.ts"
+import { runCtl, runDown, runGraph, runInit, runList, runLogs, runProjects, runStatus, runUp, runValidate } from "./cli.ts"
 import { findProject } from "./core/projects.ts"
 
 const HELP = `orbit — launch, control and monitor local services
@@ -24,6 +24,7 @@ usage
   orbit graph                print the dependency graph
   orbit ls                   list services
   orbit init [dir]           generate an orbit.yaml by scanning the project
+  orbit validate [dir]       check the orbit.yaml (errors and unknown keys); exit code 1 if invalid
   orbit daemon [dir]         run the supervisor of a project in the background, without UI (the TUI starts it
                              by itself and reconnects to it, so closing the terminal does not stop anything)
 
@@ -78,15 +79,15 @@ if (values.help) {
 }
 
 const [command, ...rest] = positionals
-const SUBCOMMANDS = ["up", "down", "logs", "graph", "ls", "init", "open", "projects", "status", "ctl", "daemon"]
+const SUBCOMMANDS = ["up", "down", "logs", "graph", "ls", "init", "validate", "open", "projects", "status", "ctl", "daemon"]
 const sub = command && SUBCOMMANDS.includes(command) ? command : undefined
 if (sub === "open" && rest.length !== 1) fail("usage: orbit open <project name or path>")
 const opened = sub === "open" ? findProject(rest[0]!) : undefined
 if (typeof opened === "string") fail(opened)
-const dir = sub === "open" ? opened?.path : sub ? (sub === "init" || sub === "daemon" ? rest[0] : undefined) : command
+const dir = sub === "open" ? opened?.path : sub ? (sub === "init" || sub === "daemon" || sub === "validate" ? rest[0] : undefined) : command
 
 // Only up/logs take extra positionals (service names); init and open take one; the TUI takes one dir.
-const maxExtra = sub === "up" || sub === "logs" || sub === "ctl" ? Infinity : sub === "init" || sub === "open" || sub === "daemon" ? 1 : 0
+const maxExtra = sub === "up" || sub === "logs" || sub === "ctl" ? Infinity : sub === "init" || sub === "open" || sub === "daemon" || sub === "validate" ? 1 : 0
 if (rest.length > maxExtra) fail(`unexpected argument "${rest[maxExtra]}"`)
 if (dir !== undefined && sub !== "init") {
   const isDir = (() => {
@@ -116,6 +117,8 @@ switch (sub) {
     process.exit(runProjects())
   case "init":
     process.exit(await runInit(dir ?? process.cwd(), !!values.force))
+  case "validate":
+    process.exit(runValidate({ dir, file: values.config }))
   case "graph":
     process.exit(runGraph(load()))
   case "ls":

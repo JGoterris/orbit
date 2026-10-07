@@ -1,0 +1,183 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://unpkg.com/@jgoterris/orbit/orbit.schema.json",
+  "title": "orbit.yaml",
+  "description": "Configuration of an orbit project: the services orbit launches, controls and monitors.",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "name": { "type": "string", "description": "Project name (default: the name of the directory)." },
+    "compose": {
+      "description": "docker-compose file(s) to import as services. By default the compose file next to orbit.yaml is imported; `false` imports none.",
+      "oneOf": [{ "type": "string" }, { "type": "array", "items": { "type": "string" } }, { "const": false }]
+    },
+    "compose_project": { "type": "string", "description": "Compose project name used for the imported services." },
+    "env": { "$ref": "#/definitions/env", "description": "Variables for all services. ${VAR} and ${VAR:-def} are interpolated (also from .env)." },
+    "env_file": { "$ref": "#/definitions/envFile", "description": ".env files for all services." },
+    "shell": { "type": "string", "description": "Shell that runs cmd, hooks, health and console (default: sh, or cmd.exe on Windows)." },
+    "services": {
+      "type": "object",
+      "description": "The services of the project, by name.",
+      "additionalProperties": { "$ref": "#/definitions/service" }
+    },
+    "groups": {
+      "type": "object",
+      "description": "Named sets of services, to start or stop together.",
+      "additionalProperties": { "$ref": "#/definitions/stringList" }
+    }
+  },
+  "definitions": {
+    "stringList": {
+      "description": "A string or a list of strings.",
+      "oneOf": [{ "type": "string" }, { "type": "array", "items": { "type": "string" } }]
+    },
+    "duration": {
+      "description": "A duration: 500ms, 2s, 1m, 1h (a bare number is milliseconds).",
+      "oneOf": [{ "type": "number" }, { "type": "string" }]
+    },
+    "number": {
+      "description": "A number (a string is accepted because ${VAR} is interpolated before it is read).",
+      "oneOf": [{ "type": "number" }, { "type": "string" }]
+    },
+    "env": {
+      "description": "Environment variables: a mapping, or a list of KEY=value.",
+      "oneOf": [
+        { "type": "object", "additionalProperties": { "type": ["string", "number", "boolean", "null"] } },
+        { "type": "array", "items": { "type": "string" } }
+      ]
+    },
+    "envFile": {
+      "description": ".env file(s): a path, or { path, required: false } if optional; a list of either.",
+      "oneOf": [{ "$ref": "#/definitions/envFileEntry" }, { "type": "array", "items": { "$ref": "#/definitions/envFileEntry" } }]
+    },
+    "envFileEntry": {
+      "oneOf": [
+        { "type": "string" },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["path"],
+          "properties": {
+            "path": { "type": "string" },
+            "required": { "type": "boolean", "description": "A missing required file is an error (default true)." }
+          }
+        }
+      ]
+    },
+    "health": {
+      "description": "How orbit knows the service is up. Shortcuts: \"http://…\", \"tcp:5432\", \"container\", or a command. `false` disables the default TCP check on `port`.",
+      "oneOf": [
+        { "type": "string" },
+        { "const": false },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "http": { "type": "string", "description": "URL that must answer with a status < 500." },
+            "tcp": { "type": "string", "description": "host:port (or just port) that must accept connections." },
+            "cmd": { "type": "string", "description": "Command that must exit 0." },
+            "container": { "type": "boolean", "description": "Use the container's own Docker HEALTHCHECK." },
+            "interval": { "$ref": "#/definitions/duration", "description": "Time between checks (default 2s)." },
+            "timeout": { "$ref": "#/definitions/duration", "description": "Time a single check may take (default 2s)." }
+          }
+        }
+      ]
+    },
+    "readyWhen": {
+      "type": "object",
+      "description": "Extra readiness condition read from the service's output. With `health`, both must pass.",
+      "additionalProperties": false,
+      "required": ["log"],
+      "properties": {
+        "log": {
+          "type": "string",
+          "description": "Substring, or \"/regex/flags\", that a stdout/stderr line must match, e.g. \"Listening on\"."
+        }
+      }
+    },
+    "watch": {
+      "description": "Restart the service when matching files change: a list of globs, or { paths, ignore, debounce, cooldown }.",
+      "oneOf": [
+        { "type": "array", "items": { "type": "string" } },
+        { "type": "string" },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["paths"],
+          "properties": {
+            "paths": { "$ref": "#/definitions/stringList", "description": "Globs relative to the service's cwd." },
+            "ignore": { "$ref": "#/definitions/stringList", "description": ".git, node_modules and editor swap files are always ignored." },
+            "debounce": { "$ref": "#/definitions/duration", "description": "Quiet time needed after the last change (default 1s)." },
+            "cooldown": { "$ref": "#/definitions/duration", "description": "At most one restart per cooldown; changes in between are batched (default 10s)." }
+          }
+        }
+      ]
+    },
+    "hook": {
+      "description": "A command, { cmd, timeout }, or a list of them (run in order, stopping at the first failure).",
+      "oneOf": [{ "$ref": "#/definitions/hookEntry" }, { "type": "array", "items": { "$ref": "#/definitions/hookEntry" } }, { "const": false }]
+    },
+    "hookEntry": {
+      "oneOf": [
+        { "type": "string" },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["cmd"],
+          "properties": {
+            "cmd": { "type": "string" },
+            "timeout": { "$ref": "#/definitions/duration", "description": "Time before the hook is killed and counts as failed (default 60s)." }
+          }
+        }
+      ]
+    },
+    "service": {
+      "description": "A service: an object, or just its command as a string.",
+      "oneOf": [
+        { "type": "string" },
+        { "type": "null" },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "type": {
+              "enum": ["process", "docker", "compose", "external"],
+              "description": "process (cmd), docker (image), compose (from docker-compose.yml) or external (only health-checked). Inferred when omitted."
+            },
+            "description": { "type": "string" },
+            "cmd": { "type": "string", "description": "Command to run (process), or the command override (docker)." },
+            "command": { "type": "string", "description": "Alias of `cmd`." },
+            "shell": { "type": "string", "description": "Shell for this service's cmd, hooks, health and console." },
+            "console": { "type": "string", "description": "Interactive command for the `i` key (psql, rails console…). Process: runs in cwd/env; docker: inside the container." },
+            "cwd": { "type": "string", "description": "Working directory, relative to the project root." },
+            "env": { "$ref": "#/definitions/env", "description": "Variables for this service; they override the ones read from env_file." },
+            "environment": { "$ref": "#/definitions/env", "description": "Alias of `env`." },
+            "env_file": { "$ref": "#/definitions/envFile", "description": ".env files read every time the service starts." },
+            "depends_on": { "$ref": "#/definitions/stringList", "description": "Services that must be ready before this one starts." },
+            "dependsOn": { "$ref": "#/definitions/stringList", "description": "Alias of `depends_on`." },
+            "port": { "$ref": "#/definitions/number", "description": "Main host port: occupied-port check, default TCP health, and the `o` key." },
+            "url": { "type": "string", "description": "What the `o` key opens." },
+            "health": { "$ref": "#/definitions/health" },
+            "ready_when": { "$ref": "#/definitions/readyWhen" },
+            "oneshot": { "type": "boolean", "description": "A task that runs to completion: ready once it exits 0." },
+            "watch": { "$ref": "#/definitions/watch" },
+            "pre_start": { "$ref": "#/definitions/hook", "description": "Runs before launching; if it fails the service is `failed`." },
+            "post_start": { "$ref": "#/definitions/hook", "description": "Runs once the service is ready; a failure is only reported. Not allowed on oneshot tasks." },
+            "post_stop": { "$ref": "#/definitions/hook", "description": "Runs whenever the service goes down, however it went down." },
+            "restart": { "enum": ["no", "on-failure", "always"], "description": "Restart policy, with exponential backoff (1s → 30s). Default: no." },
+            "start_timeout": { "$ref": "#/definitions/duration", "description": "Time to wait for the service to become ready (default 60s)." },
+            "stop_timeout": { "$ref": "#/definitions/duration", "description": "Time to wait after SIGTERM before SIGKILL (default 8s)." },
+            "autostart": { "type": "boolean", "description": "Start with S / --up (default true)." },
+            "mem_limit": { "$ref": "#/definitions/number", "description": "Memory alert threshold: 512m, 1.5G, or bytes. orbit alerts; it does not enforce it." },
+            "leak_detection": { "type": "boolean", "description": "Warn about sustained memory growth (default true)." },
+            "image": { "type": "string", "description": "Docker image (makes it a docker service)." },
+            "ports": { "type": "array", "items": { "type": ["string", "number"] }, "description": "Docker port mappings, e.g. \"6379:6379\"." },
+            "volumes": { "type": "array", "items": { "type": "string" }, "description": "Docker volumes; relative host paths resolve against the project root." },
+            "docker_args": { "$ref": "#/definitions/stringList", "description": "Extra arguments for `docker run`." },
+            "service": { "type": "string", "description": "Name of the service in the compose file (makes it a compose service)." }
+          }
+        }
+      ]
+    }
+  }
+}

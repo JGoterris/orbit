@@ -2,7 +2,8 @@ import { existsSync, readdirSync, readFileSync, statSync, writeFileSync } from "
 import { basename, join, relative } from "node:path"
 import YAML from "yaml"
 import type { OrbitConfig } from "./config/schema.ts"
-import { findComposeFile } from "./config/load.ts"
+import { findComposeFile, type LoadOptions } from "./config/load.ts"
+import { validateFile } from "./config/validate.ts"
 import { parseComposeFile } from "./config/compose.ts"
 import { attachDesktopNotifier } from "./core/desktopNotify.ts"
 import { exec } from "./core/exec.ts"
@@ -400,6 +401,18 @@ function hasChildProjects(dir: string) {
   })
 }
 
+export function runValidate(opts: LoadOptions): number {
+  const { file, config, errors } = validateFile(opts)
+  if (errors.length) {
+    for (const e of errors) console.error(`${c.red("✖")} ${e}`)
+    return 1
+  }
+  const n = Object.keys(config!.services).length
+  const g = Object.keys(config!.groups).length
+  console.log(`${c.green("✓")} ${file ? basename(file) : "docker-compose"}: ${n} service${n === 1 ? "" : "s"}, ${g} group${g === 1 ? "" : "s"}`)
+  return 0
+}
+
 export async function runInit(dir: string, force: boolean): Promise<number> {
   const target = join(dir, "orbit.yaml")
   if (existsSync(target) && !force) {
@@ -428,6 +441,7 @@ export async function runInit(dir: string, force: boolean): Promise<number> {
 
   const doc: Record<string, unknown> = { name: basename(dir) }
   const header = [
+    "# yaml-language-server: $schema=https://unpkg.com/@jgoterris/orbit/orbit.schema.json",
     "# orbit.yaml — services managed by orbit",
     "# types: process (cmd), docker (image), compose (imported from docker-compose.yml)",
     "# per service: cmd, cwd, env, port, depends_on, health (http/tcp/cmd), restart (no|on-failure|always)",

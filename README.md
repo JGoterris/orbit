@@ -133,6 +133,7 @@ orbit ls             # lists services
 orbit logs [svc|group…] [-f] [-n 200] [--grep re] [--since 10m]
                      # prints recent logs without the TUI (works while orbit is open or closed)
 orbit init [dir]     # generates an orbit.yaml by scanning the project
+orbit validate [dir] # checks the orbit.yaml (errors and unknown keys, e.g. a typo like `helth:`); exit code 1 if invalid
 ```
 
 Without `orbit.yaml`, orbit opens the services from a `docker-compose.yml` directly. In a folder with
@@ -310,7 +311,7 @@ services:
     cmd: mvn -q install -pl shared-kernel -am -DskipTests
     oneshot: true               # "ready" when it finishes with exit code 0; its dependents wait
 
-  api:
+  seeded-api:
     cmd: bun run dev
     pre_start: "rm -rf tmp/*"   # before launching; if it fails the service is `failed`
     post_start:                 # once ready; a failure is only reported
@@ -321,6 +322,17 @@ services:
 groups:
   backend: [postgres, redis, api]
 ```
+
+**Editor support.** `orbit.schema.json` (shipped with the package) gives autocompletion, hover docs and
+validation in editors with the [YAML language server](https://github.com/redhat-developer/yaml-language-server)
+(VS Code's Red Hat YAML extension, Neovim, JetBrains…). `orbit init` writes the first line for you:
+
+```yaml
+# yaml-language-server: $schema=https://unpkg.com/@jgoterris/orbit/orbit.schema.json
+```
+
+or map it in VS Code's `settings.json`: `"yaml.schemas": { "https://unpkg.com/@jgoterris/orbit/orbit.schema.json": "orbit.y*ml" }`.
+`orbit validate` runs the same checks from the terminal or CI.
 
 **Lifecycle hooks.** `pre_start`, `post_start` and `post_stop` take a command, a `{ cmd, timeout }` or a
 list of them (run in order, stopping at the first failure; default timeout 60s). They run on the host in the
