@@ -4,9 +4,11 @@ go 1.27.2
 
 require (
 	github.com/UserExistsError/conpty v0.1.4
+	github.com/bmatcuk/doublestar/v4 v4.10.3
 	github.com/charmbracelet/ultraviolet v0.0.0-20260303162955-0b88c25f3fff
 	github.com/charmbracelet/x/vt v0.1.0
 	github.com/creack/pty v1.1.24
+	github.com/fsnotify/fsnotify v1.10.1
 	golang.org/x/sys v0.49.0
 	gopkg.in/yaml.v3 v3.0.1
 )

@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/JGoterris/orbit/internal/config"
+	"github.com/JGoterris/orbit/internal/platform"
 )
 
 func TestDirIsPerProject(t *testing.T) {
@@ -53,10 +54,12 @@ func TestLock(t *testing.T) {
 	if ReadLock(dir) != os.Getpid() {
 		t.Fatal("lock should name us")
 	}
-	// a lock held by a live process that is not us is respected
-	os.WriteFile(filepath.Join(dir, "orbit.lock"), []byte("1"), 0o644)
-	if holder := AcquireLock(dir); holder != 1 {
-		t.Fatalf("held by pid 1, acquire = %d", holder)
+	// a lock held by a live process that is not us is respected (pid 1 is always there on POSIX)
+	if !platform.IsWindows {
+		os.WriteFile(filepath.Join(dir, "orbit.lock"), []byte("1"), 0o644)
+		if holder := AcquireLock(dir); holder != 1 {
+			t.Fatalf("held by pid 1, acquire = %d", holder)
+		}
 	}
 	// a stale pid is taken over
 	os.WriteFile(filepath.Join(dir, "orbit.lock"), []byte("2147483646"), 0o644)

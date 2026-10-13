@@ -4,9 +4,11 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"strconv"
 
 	"github.com/JGoterris/orbit/internal/cli"
 	"github.com/JGoterris/orbit/internal/config"
+	"github.com/JGoterris/orbit/internal/core/runner"
 )
 
 // version is set at build time (-ldflags "-X main.version=...").
@@ -17,6 +19,10 @@ const red = "\x1b[31morbit:\x1b[0m"
 func main() { os.Exit(run(os.Args[1:])) }
 
 func run(args []string) int {
+	// the hidden wrapper a process service runs under on Windows (see runner.RunWrap)
+	if len(args) > 0 && args[0] == runner.WrapCommand {
+		return runner.RunWrap(args[1:])
+	}
 	inv, err := cli.Parse(args)
 	if err != nil {
 		var ue *cli.UsageError
@@ -59,6 +65,32 @@ func run(args []string) int {
 	case "ls":
 		if cfg, ok := load(); ok {
 			return cli.RunList(cfg)
+		}
+		return 1
+	case "up":
+		if cfg, ok := load(); ok {
+			return cli.RunUp(cfg, inv.Rest)
+		}
+		return 1
+	case "down":
+		if cfg, ok := load(); ok {
+			return cli.RunDown(cfg)
+		}
+		return 1
+	case "logs":
+		lines := 200
+		if inv.Options.Lines != "" {
+			n, err := strconv.Atoi(inv.Options.Lines)
+			if err != nil || n < 0 {
+				fmt.Fprintf(os.Stderr, "%s --lines expects a non-negative number\n", red)
+				return 1
+			}
+			lines = n
+		}
+		if cfg, ok := load(); ok {
+			return cli.RunLogs(cfg, inv.Rest, cli.LogsOptions{
+				Follow: inv.Options.Follow, Lines: lines, Grep: inv.Options.Grep, Since: inv.Options.Since,
+			})
 		}
 		return 1
 	}

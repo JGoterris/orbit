@@ -7,7 +7,10 @@ import (
 	"path/filepath"
 	"regexp"
 	"runtime"
+	"strconv"
 	"strings"
+	"sync"
+	"time"
 )
 
 const (
@@ -109,4 +112,43 @@ func ConfigBase() string {
 		return filepath.Join(home(), "AppData", "Roaming")
 	}
 	return filepath.Join(home(), ".config")
+}
+
+var (
+	totalMemOnce  sync.Once
+	totalMemBytes int64
+)
+
+// TotalMemory is the physical memory of the machine in bytes; 0 when it cannot be told.
+func TotalMemory() int64 {
+	totalMemOnce.Do(func() {
+		switch {
+		case IsLinux:
+			data, err := os.ReadFile("/proc/meminfo")
+			if err != nil {
+				return
+			}
+			for _, line := range strings.Split(string(data), "\n") {
+				if rest, ok := strings.CutPrefix(line, "MemTotal:"); ok {
+					fields := strings.Fields(rest)
+					if len(fields) > 0 {
+						kb, _ := strconv.ParseInt(fields[0], 10, 64)
+						totalMemBytes = kb * 1024
+					}
+					return
+				}
+			}
+		case IsMac:
+			out, err := runOutput([]string{"sysctl", "-n", "hw.memsize"}, 3*time.Second)
+			if err == nil {
+				totalMemBytes, _ = strconv.ParseInt(strings.TrimSpace(out), 10, 64)
+			}
+		case IsWindows:
+			out, err := runOutput([]string{"powershell", "-NoProfile", "-NonInteractive", "-Command", "(Get-CimInstance Win32_ComputerSystem).TotalPhysicalMemory"}, 8*time.Second)
+			if err == nil {
+				totalMemBytes, _ = strconv.ParseInt(strings.TrimSpace(out), 10, 64)
+			}
+		}
+	})
+	return totalMemBytes
 }
