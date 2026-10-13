@@ -370,6 +370,10 @@ func (r *ProcessRunner) Stop(timeoutMs int64) error {
 		platform.KillTree(pid, syscall.SIGKILL)
 		r.waitLeader(5 * time.Second)
 	}
+	// the group got SIGTERM too: give its members a moment to follow the leader before calling them leftovers
+	for i := 0; i < 20 && platform.TreeAlive(pid); i++ {
+		time.Sleep(10 * time.Millisecond)
+	}
 	if platform.TreeAlive(pid) {
 		// the main process exited but left group members behind (e.g. background jobs): the leader is already
 		// gone, so wait for the group itself to disappear

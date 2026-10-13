@@ -9,6 +9,7 @@ import (
 	"github.com/JGoterris/orbit/internal/cli"
 	"github.com/JGoterris/orbit/internal/config"
 	"github.com/JGoterris/orbit/internal/core/runner"
+	"github.com/JGoterris/orbit/internal/ipc"
 )
 
 // version is set at build time (-ldflags "-X main.version=...").
@@ -19,6 +20,7 @@ const red = "\x1b[31morbit:\x1b[0m"
 func main() { os.Exit(run(os.Args[1:])) }
 
 func run(args []string) int {
+	cli.Version = version
 	// the hidden wrapper a process service runs under on Windows (see runner.RunWrap)
 	if len(args) > 0 && args[0] == runner.WrapCommand {
 		return runner.RunWrap(args[1:])
@@ -65,6 +67,30 @@ func run(args []string) int {
 	case "ls":
 		if cfg, ok := load(); ok {
 			return cli.RunList(cfg)
+		}
+		return 1
+	case "daemon":
+		var idle float64
+		if inv.Options.Idle != "" {
+			n, err := strconv.ParseFloat(inv.Options.Idle, 64)
+			if err != nil || !(n > 0) {
+				fmt.Fprintf(os.Stderr, "%s --idle expects a number of minutes\nrun `orbit --help` for usage\n", red)
+				return 1
+			}
+			idle = n
+		}
+		if cfg, ok := load(); ok {
+			return ipc.RunDaemon(cfg, ipc.DaemonOptions{IdleMinutes: idle, Version: version})
+		}
+		return 1
+	case "status":
+		if cfg, ok := load(); ok {
+			return cli.RunStatus(cfg, inv.Options.JSON)
+		}
+		return 1
+	case "ctl":
+		if cfg, ok := load(); ok {
+			return cli.RunCtl(cfg, inv.Rest)
 		}
 		return 1
 	case "up":

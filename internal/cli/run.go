@@ -8,14 +8,19 @@ import (
 	"strings"
 	"sync"
 	"syscall"
+	"time"
 
 	"github.com/JGoterris/orbit/internal/config"
 	"github.com/JGoterris/orbit/internal/core/logs"
 	"github.com/JGoterris/orbit/internal/core/notify"
 	"github.com/JGoterris/orbit/internal/core/runner"
 	"github.com/JGoterris/orbit/internal/core/supervisor"
+	"github.com/JGoterris/orbit/internal/ipc"
 	"github.com/JGoterris/orbit/internal/state"
 )
+
+// Version is the version orbit reports to its clients over the socket; main sets it.
+var Version = "dev"
 
 var (
 	blue    = ansi("34")
@@ -71,6 +76,12 @@ var statusColor = map[supervisor.Status]func(string) string{
 	supervisor.Crashed: red, supervisor.Failed: red, supervisor.Stopped: dim,
 }
 
+func waitSignal() {
+	sigs := make(chan os.Signal, 1)
+	signal.Notify(sigs, os.Interrupt, syscall.SIGTERM)
+	<-sigs
+}
+
 func unknownTargets(cfg *config.OrbitConfig, names []string) (string, bool) {
 	for _, n := range names {
 		if cfg.Services[n] == nil && cfg.Groups[n] == nil {
@@ -103,6 +114,9 @@ func RunUp(cfg *config.OrbitConfig, names []string) int {
 	if n, bad := unknownTargets(cfg, names); bad {
 		fmt.Fprintln(os.Stderr, red(fmt.Sprintf("unknown service or group %q", n)))
 		return 1
+	}
+	if ipc.IsServed(cfg) {
+		return upRunning(cfg, names)
 	}
 	sup := supervisor.New(cfg, supervisor.Options{})
 	stopNotifier := notify.Attach(sup, notify.Options{})
@@ -145,19 +159,34 @@ func RunUp(cfg *config.OrbitConfig, names []string) int {
 	sigs := make(chan os.Signal, 2)
 	signal.Notify(sigs, os.Interrupt, syscall.SIGTERM)
 	done := make(chan struct{})
+	var srv *ipc.Server
+	var stopOnce sync.Once
+	stopAll := func() {
+		stopOnce.Do(func() {
+			printf("%s", dim("\nstopping… (ctrl+c again to force)\n"))
+			if srv != nil {
+				srv.Close()
+			}
+			sup.Dispose()
+			close(done)
+		})
+	}
 	go func() {
 		<-sigs
-		printf("%s", dim("\nstopping… (ctrl+c again to force)\n"))
 		go func() {
 			<-sigs
 			sup.KillAllSync()
 			os.Exit(130)
 		}()
-		sup.Dispose()
-		close(done)
+		stopAll()
 	}()
 
 	sup.Init()
+	srv = ipc.NewServer(sup, ipc.ServerOptions{Version: Version, OnShutdown: func(string) { go stopAll() }})
+	if started, err := srv.Start(); err != nil || !started {
+		fmt.Fprintln(os.Stderr, yellow("another orbit started serving this project meanwhile: `orbit status` / `orbit ctl` talk to that one"))
+		srv = nil
+	}
 	targets := expand(cfg, names)
 	go func() {
 		if len(targets) > 0 {
@@ -174,6 +203,30 @@ func RunUp(cfg *config.OrbitConfig, names []string) int {
 func RunDown(cfg *config.OrbitConfig) int {
 	code := 0
 	dir := state.Dir(cfg)
+	// an orbit that is running (TUI, `orbit up` or daemon) answers on its socket: ask it to stop everything and quit
+	if client := connectIPC(cfg); client != nil {
+		err := client.Call(ipc.MethodShutdown, map[string]any{"how": "stop"}, nil)
+		client.Close()
+		if err != nil {
+			fmt.Fprintln(os.Stderr, red(err.Error()))
+			return 1
+		}
+		for i := 0; i < 300; i++ {
+			again := connectIPC(cfg)
+			if again == nil {
+				break
+			}
+			again.Close()
+			time.Sleep(100 * time.Millisecond)
+		}
+		if left := connectIPC(cfg); left != nil {
+			left.Close()
+			fmt.Fprintln(os.Stderr, red("orbit is taking too long to stop"))
+			return 1
+		}
+		fmt.Println(green("orbit stopped"))
+		return 0
+	}
 	if holder := state.ReadLock(dir); holder != 0 && holder != os.Getpid() {
 		fmt.Fprintln(os.Stderr, red(fmt.Sprintf("orbit is open for this project (pid %d) but does not answer: quit it first, or stop services from there", holder)))
 		return 1
@@ -252,6 +305,16 @@ func RunLogs(cfg *config.OrbitConfig, names []string, opts LogsOptions) int {
 		text := logs.CleanLine(raw)
 		if keep(logs.Line{Service: service, Stream: stream, Text: text}) {
 			pf.print(service, stream, text)
+		}
+	}
+	// an orbit that is running has everything in memory, system lines and container output included
+	if opts.Follow {
+		if client := connectIPC(cfg); client != nil {
+			return followLive(client, targets, opts, func(l logs.Line) {
+				if keep(l) {
+					pf.print(l.Service, l.Stream, l.Text)
+				}
+			})
 		}
 	}
 	dir := state.Dir(cfg)

@@ -125,13 +125,15 @@ type runtimeInfo struct {
 	postStop chan struct{}
 }
 
-type bus[T any] struct {
+// Bus is a tiny synchronous publish / subscribe: handlers run on the goroutine that emits, so they must be quick.
+type Bus[T any] struct {
 	mu   sync.Mutex
 	next int
 	subs map[int]func(T)
 }
 
-func (b *bus[T]) on(fn func(T)) (cancel func()) {
+// On registers fn; the returned function unregisters it.
+func (b *Bus[T]) On(fn func(T)) (cancel func()) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	if b.subs == nil {
@@ -147,7 +149,8 @@ func (b *bus[T]) on(fn func(T)) (cancel func()) {
 	}
 }
 
-func (b *bus[T]) emit(v T) {
+// Emit calls every handler with v.
+func (b *Bus[T]) Emit(v T) {
 	b.mu.Lock()
 	fns := make([]func(T), 0, len(b.subs))
 	for _, f := range b.subs {
@@ -184,9 +187,9 @@ type Supervisor struct {
 
 	configWatcher *configWatch
 
-	changeBus  bus[string]
-	configBus  bus[config.ConfigDiff]
-	pendingBus bus[*PendingConfig]
+	changeBus  Bus[string]
+	configBus  Bus[config.ConfigDiff]
+	pendingBus Bus[*PendingConfig]
 }
 
 // New makes a supervisor for cfg. Nothing runs until Init / Start.
@@ -229,6 +232,9 @@ func (s *Supervisor) initRuntimeLocked(name string) {
 // ---------------------------------------------------------------- queries
 
 func (s *Supervisor) StateDir() string { return s.stateDir }
+
+// LogStore is where the services' output is kept.
+func (s *Supervisor) LogStore() *logs.Store { return s.Logs }
 
 func (s *Supervisor) Config() *config.OrbitConfig {
 	s.mu.Lock()
@@ -364,14 +370,14 @@ func (s *Supervisor) Pending() *PendingConfig {
 }
 
 // OnChange calls fn with the name of a service whose state changed ("" for a change of the whole project).
-func (s *Supervisor) OnChange(fn func(name string)) (cancel func()) { return s.changeBus.on(fn) }
+func (s *Supervisor) OnChange(fn func(name string)) (cancel func()) { return s.changeBus.On(fn) }
 
 // OnConfig calls fn after a reload was applied.
-func (s *Supervisor) OnConfig(fn func(config.ConfigDiff)) (cancel func()) { return s.configBus.on(fn) }
+func (s *Supervisor) OnConfig(fn func(config.ConfigDiff)) (cancel func()) { return s.configBus.On(fn) }
 
 // OnConfigPending calls fn when orbit.yaml changed on disk (a diff or an error), or nil when it is back in sync.
 func (s *Supervisor) OnConfigPending(fn func(*PendingConfig)) (cancel func()) {
-	return s.pendingBus.on(fn)
+	return s.pendingBus.On(fn)
 }
 
 // ServiceView adapts the state of a service for the desktop notifier.
@@ -400,7 +406,7 @@ func (s *Supervisor) apply(name string, fn func(*ServiceState)) func() {
 		for _, w := range waiters {
 			w <- true
 		}
-		s.changeBus.emit(name)
+		s.changeBus.Emit(name)
 	}
 }
 
@@ -478,14 +484,14 @@ func (s *Supervisor) Log(name, text string) { s.Logs.Append(name, logs.System, t
 // ClearLogs empties the logs of a service (or of all of them when name is "").
 func (s *Supervisor) ClearLogs(name string) {
 	s.Logs.Clear(name)
-	s.changeBus.emit(name)
+	s.changeBus.Emit(name)
 }
 
 // ---------------------------------------------------------------- lifecycle
 
 // Init re-attaches to what is already running: containers, and processes a previous orbit session left behind
 // (recorded in state.json). It starts the metrics loop and the watchers.
-func (s *Supervisor) Init() {
+func (s *Supervisor) Init() error {
 	s.mu.Lock()
 	s.stopMetric = make(chan struct{})
 	stop := s.stopMetric
@@ -573,6 +579,7 @@ func (s *Supervisor) Init() {
 	s.persist()
 	s.startWatchers()
 	s.watchConfigFiles()
+	return nil
 }
 
 // Start starts a service (and its dependencies first). It returns true once the service is ready.
@@ -1610,7 +1617,7 @@ func (s *Supervisor) applyConfig(given *config.OrbitConfig) (config.ConfigDiff, 
 	s.pending = nil
 	s.mu.Unlock()
 	if diff.IsEmpty() {
-		s.configBus.emit(diff)
+		s.configBus.Emit(diff)
 		return diff, nil
 	}
 
@@ -1699,8 +1706,8 @@ func (s *Supervisor) applyConfig(given *config.OrbitConfig) (config.ConfigDiff, 
 	s.closeConfigWatchers()
 	s.watchConfigFiles()
 	s.persist()
-	s.configBus.emit(diff)
-	s.changeBus.emit("")
+	s.configBus.Emit(diff)
+	s.changeBus.Emit("")
 
 	toStart := slices.Clone(restart)
 	for _, name := range diff.Added {
@@ -1840,6 +1847,53 @@ func (s *Supervisor) checkConfig() {
 	}
 	s.pending = pending
 	s.mu.Unlock()
-	s.pendingBus.emit(pending)
-	s.changeBus.emit("")
+	s.pendingBus.Emit(pending)
+	s.changeBus.Emit("")
 }
+
+// Like is what the UI and the socket server need from a supervisor: implemented by Supervisor (services run in
+// this process) and by ipc.Remote (they run in an `orbit daemon` and this one mirrors it over the socket).
+type Like interface {
+	Config() *config.OrbitConfig
+	LogStore() *logs.Store
+	Deps() graph.DepMap
+	Dependents() map[string][]string
+	Order() []string
+	Names() []string
+	StateDir() string
+	Service(name string) *config.ServiceConfig
+	State(name string) ServiceState
+	Snapshot() []ServiceState
+	// HistoryOf is up to an hour of cpu / memory in 10 s buckets, oldest first.
+	HistoryOf(name string, sinceMs int64) ([]resources.Bucket, error)
+	IsReady(name string) bool
+	IsUp(name string) bool
+	IsAdopted(name string) bool
+	RunningCount() int
+	// OwnedRunningCount is the running services this session started itself (the ones quitting will stop).
+	OwnedRunningCount() int
+	Init() error
+	Start(name string) bool
+	Stop(name string, opts StopOptions)
+	Restart(name string) bool
+	Toggle(name string)
+	StartMany(names []string)
+	StartAll()
+	StopAll()
+	ToggleWatch(name string) string
+	ClearLogs(name string)
+	Reload(next *config.OrbitConfig) (config.ConfigDiff, error)
+	// Pending is a change in the config file nobody applied yet (or the error that stops it from loading).
+	Pending() *PendingConfig
+	// Dispose stops everything this session owns and lets go (a remote one asks its daemon to quit).
+	Dispose()
+	// Detach quits without stopping anything.
+	Detach()
+	// KillAllSync is the last resort on process exit; a remote supervisor must not touch the daemon's processes.
+	KillAllSync()
+	OnChange(fn func(name string)) (cancel func())
+	OnConfig(fn func(config.ConfigDiff)) (cancel func())
+	OnConfigPending(fn func(*PendingConfig)) (cancel func())
+}
+
+var _ Like = (*Supervisor)(nil)

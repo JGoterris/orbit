@@ -134,13 +134,13 @@ type ServiceConfig struct {
 
 // OrbitConfig is a project. Order and GroupOrder keep the declaration order of services and groups.
 type OrbitConfig struct {
-	Name       string
-	Root       string
-	File       string
-	Services   map[string]*ServiceConfig
-	Order      []string
-	Groups     map[string][]string
-	GroupOrder []string
+	Name       string                    `json:"name"`
+	Root       string                    `json:"root"`
+	File       string                    `json:"file,omitempty"`
+	Services   map[string]*ServiceConfig `json:"services"`
+	Order      []string                  `json:"order"`
+	Groups     map[string][]string       `json:"groups"`
+	GroupOrder []string                  `json:"groupOrder"`
 }
 
 // DepMap is the dependency graph of the services, in declaration order.
