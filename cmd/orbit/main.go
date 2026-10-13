@@ -121,10 +121,15 @@ func run(args []string) int {
 		return 1
 	}
 
-	name := inv.Sub
-	if name == "" {
-		name = "tui"
+	if inv.Sub == "" {
+		cfg, err := config.LoadConfig(config.LoadOptions{Dir: inv.Dir, File: inv.Options.Config, AllowEmpty: true})
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "%s %v\n", red, err)
+			return 1
+		}
+		return cli.RunTUI(cfg, cli.TUIOptions{Up: inv.Options.Up, NoDaemon: inv.Options.NoDaemon})
 	}
+	name := inv.Sub
 	// The remaining commands are wired up by a later phase of the migration (see the plan).
 	fmt.Fprintf(os.Stderr, "%s %q is not implemented yet in this Go build (%s)\n", red, name, version)
 	return 1

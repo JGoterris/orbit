@@ -141,3 +141,35 @@ func (t *Terminal) Close() {
 		c.Close()
 	}
 }
+
+// StyledLines is the screen as rows of exactly Width columns with their colours and attributes encoded as ANSI
+// escape codes. When showCursor is true and the program has not hidden it, the cursor cell is drawn reversed.
+func (t *Terminal) StyledLines(showCursor bool) []string {
+	t.mu.RLock()
+	defer t.mu.RUnlock()
+	h, w := t.emu.Height(), t.emu.Width()
+	cur := t.emu.CursorPosition()
+	curVisible := showCursor && !t.emu.CursorHidden()
+	rows := make([]string, h)
+	for y := 0; y < h; y++ {
+		var b strings.Builder
+		for x := 0; x < w; x++ {
+			c := t.emu.CellAt(x, y)
+			content, style := " ", uv.Style{}
+			if c != nil {
+				style = c.Style
+				if c.Content != "" {
+					content = c.Content
+				} else if c.Width == 0 {
+					continue // the second half of a wide character
+				}
+			}
+			if curVisible && x == cur.X && y == cur.Y {
+				style.Attrs ^= uv.AttrReverse
+			}
+			b.WriteString(style.Styled(content))
+		}
+		rows[y] = b.String()
+	}
+	return rows
+}
