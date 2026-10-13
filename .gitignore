@@ -1,3 +1,5 @@
-node_modules/
+/orbit
+/orbit.exe
+/dist/
 *.log
 .DS_Store
