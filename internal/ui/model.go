@@ -209,8 +209,9 @@ type Model struct {
 	palette    input
 	paletteIdx int
 
-	envScroll int
-	envReveal bool
+	envScroll  int
+	helpScroll int
+	envReveal  bool
 
 	themeEntries []themeEntry
 	themeIdx     int

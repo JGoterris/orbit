@@ -310,7 +310,24 @@ func (m *Model) keyInMode(k tea.KeyMsg) tea.Cmd {
 		}
 		return nil
 	case modeHelp:
-		m.mode = modeNormal
+		_, page := helpSize(m.height)
+		clampTo := func(v int) int { return max(0, min(v, max(0, len(helpRows)-page))) }
+		switch s {
+		case "down", "j":
+			m.helpScroll = clampTo(m.helpScroll + 1)
+		case "up", "k":
+			m.helpScroll = clampTo(m.helpScroll - 1)
+		case "pgdown", "ctrl+d":
+			m.helpScroll = clampTo(m.helpScroll + page)
+		case "pgup", "ctrl+u":
+			m.helpScroll = clampTo(m.helpScroll - page)
+		case "g", "home":
+			m.helpScroll = 0
+		case "G", "end":
+			m.helpScroll = clampTo(len(helpRows))
+		default:
+			m.mode = modeNormal
+		}
 		return nil
 	case modeEnv:
 		entries, _ := m.envEntries()
@@ -448,7 +465,7 @@ func (m *Model) keyInMode(k tea.KeyMsg) tea.Cmd {
 		m.mode = modePalette
 		return nil
 	case "?":
-		m.mode = modeHelp
+		m.mode, m.helpScroll = modeHelp, 0
 		return nil
 	case "T":
 		m.openThemePicker()

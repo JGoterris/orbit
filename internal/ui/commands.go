@@ -110,7 +110,7 @@ func (m *Model) commands() []command {
 	})
 	add("toggle-time", "Toggle log timestamps", "t", func(m *Model) tea.Cmd { m.showTime = !m.showTime; return nil })
 	add("env", "Show environment variables", "e", func(m *Model) tea.Cmd { m.openEnv(); return nil })
-	add("help", "Show keyboard shortcuts", "?", func(m *Model) tea.Cmd { m.mode = modeHelp; return nil })
+	add("help", "Show keyboard shortcuts", "?", func(m *Model) tea.Cmd { m.mode, m.helpScroll = modeHelp, 0; return nil })
 	add("quit", "Quit orbit", "q", func(m *Model) tea.Cmd { return m.requestQuit() })
 	add("quit-detach", "Quit orbit and leave services running", "q d", func(m *Model) tea.Cmd {
 		if sup.OwnedRunningCount() > 0 {

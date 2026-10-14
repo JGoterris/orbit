@@ -202,18 +202,25 @@ var helpRows = [][2]string{
 
 const helpKeyW = 24
 
+// helpSize is the height of the keys modal and how many rows of it fit at a given terminal height.
+func helpSize(H int) (h, page int) {
+	h = min(len(helpRows)+3, max(5, min(H-8, 24)))
+	return h, h - 3
+}
+
 func (m *Model) renderHelp(W, H int) ([]string, int, int, int) {
 	p := theme.Active()
 	w := min(104, W-4)
-	h := min(len(helpRows)+3, max(4, H-2))
+	h, page := helpSize(H)
 	descW := max(1, w-4-helpKeyW)
+	start := min(m.helpScroll, max(0, len(helpRows)-page))
 	var content []string
-	for _, r := range helpRows[:min(len(helpRows), h-3)] {
+	for _, r := range helpRows[start:min(len(helpRows), start+page)] {
 		content = append(content, newLine(p.PanelAlt).add(p.Accent, theme.Fit(r[0], helpKeyW)).add(p.Text, theme.Fit(r[1], descW)).String())
 	}
 	foot := "press any key to close"
-	if h-3 < len(helpRows) {
-		foot = "terminal too short: enlarge it to see all keys"
+	if len(helpRows) > page {
+		foot = fmt.Sprintf("j/k scroll · esc close  (%d-%d/%d)", start+1, start+page, len(helpRows))
 	}
 	content = append(content, newLine(p.PanelAlt).add(p.Dim, foot).String())
 	x, y := center(W, H, w, h)
