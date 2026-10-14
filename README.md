@@ -84,19 +84,22 @@ A single static binary written in Go ([Bubble Tea](https://github.com/charmbrace
 ## Install
 
 ```bash
-# npm: downloads the binary of your platform (Linux, macOS, Windows; x64 and arm64)
-npm install -g @jgoterris/orbit
-# or without installing:
-npx @jgoterris/orbit
+# Homebrew (macOS and Linux)
+brew install JGoterris/tap/orbit
+
+# Debian / Ubuntu: add the repository once (Cloudsmith), then it updates with `apt upgrade`
+curl -1sLf 'https://dl.cloudsmith.io/public/jgoterris/orbit/setup.deb.sh' | sudo -E bash
+sudo apt install orbit
+# or install the .deb of a release by hand: sudo apt install ./orbit_<version>_linux_amd64.deb
 
 # Go
 go install github.com/JGoterris/orbit/cmd/orbit@latest
 
-# or grab a binary from the GitHub Releases page and put it in your PATH
+# or grab a binary from the GitHub Releases page (Linux, macOS, Windows) and put it in your PATH
 ```
 
-orbit is one self-contained executable: it needs neither Node nor Bun to run. Docker is only needed for
-`docker`/`compose` services, and [lazygit](https://github.com/jesseduffield/lazygit) only for the `L` key.
+orbit is one self-contained executable: it needs no runtime. Docker is only needed for `docker`/`compose`
+services, and [lazygit](https://github.com/jesseduffield/lazygit) only for the `L` key.
 
 ### Platforms
 
@@ -342,10 +345,10 @@ validation in editors with the [YAML language server](https://github.com/redhat-
 (VS Code's Red Hat YAML extension, Neovim, JetBrains…). `orbit init` writes the first line for you:
 
 ```yaml
-# yaml-language-server: $schema=https://unpkg.com/@jgoterris/orbit/orbit.schema.json
+# yaml-language-server: $schema=https://raw.githubusercontent.com/JGoterris/orbit/main/orbit.schema.json
 ```
 
-or map it in VS Code's `settings.json`: `"yaml.schemas": { "https://unpkg.com/@jgoterris/orbit/orbit.schema.json": "orbit.y*ml" }`.
+or map it in VS Code's `settings.json`: `"yaml.schemas": { "https://raw.githubusercontent.com/JGoterris/orbit/main/orbit.schema.json": "orbit.y*ml" }`.
 `orbit validate` runs the same checks from the terminal or CI.
 
 **Lifecycle hooks.** `pre_start`, `post_start` and `post_stop` take a command, a `{ cmd, timeout }` or a
@@ -379,7 +382,7 @@ put it in `env_file`.
 
 `orbit.yaml`, the commands and the keys are the same. What changed under the hood is the socket protocol, so an
 old daemon cannot be talked to by the new binary: run `orbit down` with the old version before
-switching, or the new one will tell you which version the daemon runs. Services the old version left running should be
+switching, or the new one will tell you which version the daemon runs. Services the old version left running are
 picked up again: the per-project `state.json`, logs and lock keep their layout.
 
 ## Structure
@@ -404,8 +407,6 @@ internal/
     theme/ term/       palettes and visual helpers; the terminal emulator widget
     graphlayout/       graph layout by layers (pure, testable)
     e2e/               the real binary driven in a pseudo-terminal
-npm/                   the npm packages (launcher + one package per platform)
-scripts/               release helpers
 ```
 
 ## Development
@@ -417,4 +418,4 @@ go test -race ./internal/...      # with the race detector
 go vet ./...
 ```
 
-A snapshot release (all platforms, no publishing): `goreleaser release --snapshot --clean`.
+A snapshot release (all platforms, `.deb` and `.rpm`, no publishing): `goreleaser release --snapshot --clean --skip=announce,publish`.

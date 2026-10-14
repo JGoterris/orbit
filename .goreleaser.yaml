@@ -36,6 +36,43 @@ archives:
       - orbit.schema.json
       - THIRD_PARTY_NOTICES.md
 
+# .deb and .rpm for Linux (attached to the GitHub release; `sudo apt install ./orbit_<version>_linux_amd64.deb`)
+nfpms:
+  - id: orbit
+    package_name: orbit
+    ids: [orbit]
+    file_name_template: "orbit_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+    vendor: Jesús Goterris
+    maintainer: Jesús Goterris <contact@jgoterris.com>
+    homepage: https://github.com/JGoterris/orbit
+    description: Terminal UI to launch, control and monitor local services
+    license: MIT
+    formats: [deb, rpm]
+    bindir: /usr/bin
+    recommends: [git]
+    suggests: [docker.io, lazygit]
+    contents:
+      - src: orbit.schema.json
+        dst: /usr/share/orbit/orbit.schema.json
+      - src: LICENSE
+        dst: /usr/share/doc/orbit/copyright
+
+# Homebrew (macOS and Linuxbrew): the formula is pushed to the JGoterris/homebrew-tap repository.
+# Pre-releases (v0.8.0-beta.1) are not pushed: `skip_upload: auto`.
+brews:
+  - name: orbit
+    repository:
+      owner: JGoterris
+      name: homebrew-tap
+      token: "{{ .Env.HOMEBREW_TAP_GITHUB_TOKEN }}"
+    directory: Formula
+    homepage: https://github.com/JGoterris/orbit
+    description: Terminal UI to launch, control and monitor local services
+    license: MIT
+    skip_upload: auto
+    test: |
+      assert_match "orbit", shell_output("#{bin}/orbit --version")
+
 checksum:
   name_template: checksums.txt
 

@@ -1,8 +1,9 @@
 name: Release
 
-# Pushing a tag vX.Y.Z builds every platform, creates a draft GitHub release and publishes the npm packages.
-# A tag with a suffix (v0.8.0-beta.1, v1.0.0-rc.1) is a pre-release: GitHub marks it so, and npm gets it under the
-# `next` dist-tag, which leaves `latest` (what `npm install -g @jgoterris/orbit` installs) untouched.
+# Pushing a tag vX.Y.Z builds every platform, creates a draft GitHub release (binaries, .deb, .rpm, checksums)
+# and, for a final release, updates the Homebrew tap and the Cloudsmith apt / rpm repository.
+# A tag with a suffix (v0.8.0-beta.1, v1.0.0-rc.1) is a pre-release: GitHub marks it so and neither the tap nor
+# Cloudsmith is touched.
 on:
   push:
     tags: ["v*"]
@@ -26,19 +27,15 @@ jobs:
           args: release --clean
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 20
-          registry-url: https://registry.npmjs.org
-      - name: Build the npm packages
-        run: node scripts/npm-packages.mjs "${GITHUB_REF_NAME#v}" dist npm-out
-      - name: Publish to npm (platform packages first, then the launcher)
-        run: |
-          VERSION="${GITHUB_REF_NAME#v}"
-          DIST_TAG=latest
-          case "$VERSION" in *-*) DIST_TAG=next ;; esac
-          echo "publishing $VERSION under the '$DIST_TAG' tag"
-          for d in npm-out/orbit-*; do npm publish "$d" --access public --tag "$DIST_TAG"; done
-          npm publish npm-out/orbit --access public --tag "$DIST_TAG"
+          # a token that can push to JGoterris/homebrew-tap (the default one only reaches this repository)
+          HOMEBREW_TAP_GITHUB_TOKEN: ${{ secrets.HOMEBREW_TAP_GITHUB_TOKEN }}
+      - name: Publish the .deb and .rpm to Cloudsmith
+        if: ${{ !contains(github.ref_name, '-') }}
         env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+          CLOUDSMITH_API_KEY: ${{ secrets.CLOUDSMITH_API_KEY }}
+          # owner/repository on Cloudsmith, e.g. jgoterris/orbit (a repository variable, not a secret)
+          CLOUDSMITH_REPO: ${{ vars.CLOUDSMITH_REPO }}
+        run: |
+          pip install --quiet cloudsmith-cli
+          for f in dist/*.deb; do cloudsmith push deb "$CLOUDSMITH_REPO/any-distro/any-version" "$f" --republish; done
+          for f in dist/*.rpm; do cloudsmith push rpm "$CLOUDSMITH_REPO/any-distro/any-version" "$f" --republish; done

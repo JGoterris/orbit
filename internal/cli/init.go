@@ -244,7 +244,7 @@ func RunInit(dir string, force bool) int {
 	doc := yamlMap("name", filepath.Base(dir), "services", services)
 
 	header := []string{
-		"# yaml-language-server: $schema=https://unpkg.com/@jgoterris/orbit/orbit.schema.json",
+		"# yaml-language-server: $schema=https://raw.githubusercontent.com/JGoterris/orbit/main/orbit.schema.json",
 		"# orbit.yaml — services managed by orbit",
 		"# types: process (cmd), docker (image), compose (imported from docker-compose.yml)",
 		"# per service: cmd, cwd, env, port, depends_on, health (http/tcp/cmd), restart (no|on-failure|always)",
