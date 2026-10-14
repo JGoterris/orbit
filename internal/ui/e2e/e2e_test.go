@@ -44,7 +44,11 @@ func start(t *testing.T, dir string, cols, rows int, args ...string) *screen {
 	state := t.TempDir()
 	s, err := console.NewSession(console.Spec{
 		Argv: append([]string{binary}, args...), Cwd: dir,
-		Env: map[string]string{"XDG_STATE_HOME": state, "XDG_CONFIG_HOME": t.TempDir(), "NO_COLOR": ""},
+		Env: map[string]string{
+			"XDG_STATE_HOME": state, "XDG_CONFIG_HOME": t.TempDir(), "NO_COLOR": "",
+			// a CI machine has no git identity of its own
+			"GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@t", "GIT_COMMITTER_NAME": "t", "GIT_COMMITTER_EMAIL": "t@t",
+		},
 	}, cols, rows)
 	if err != nil {
 		t.Fatal(err)
@@ -212,7 +216,7 @@ func TestProjectPickerOpensInABareFolderAndSwitches(t *testing.T) {
 	sc := start(t, bare, 120, 30, "--no-daemon")
 	sc.waitFor("picker", "Projects", "type a folder path")
 	sc.send(target + "/")
-	sc.waitFor("typed path", "Open folder "+target)
+	sc.waitFor("typed path", "Open folder") // the label is cut with … when the path is long
 	sc.send("\r")
 	sc.waitFor("switched", "orbit · target", "Services 0/1", "one")
 	sc.dump()

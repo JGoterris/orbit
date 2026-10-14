@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -96,6 +97,9 @@ func TestCorruptRegistryReadsAsEmpty(t *testing.T) {
 }
 
 func TestPaths(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("POSIX path assumptions")
+	}
 	for _, p := range []string{"/x", "~", "~/x", "./x", "../x", ".."} {
 		if !LooksLikePath(p) {
 			t.Errorf("%q should look like a path", p)
@@ -116,6 +120,9 @@ func TestPaths(t *testing.T) {
 }
 
 func TestCompletePath(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("POSIX path assumptions")
+	}
 	root := t.TempDir()
 	for _, d := range []string{"alpha", "alpine", "beta", ".git"} {
 		os.Mkdir(filepath.Join(root, d), 0o755)
@@ -161,7 +168,11 @@ func TestFind(t *testing.T) {
 		{Path: "/w/shop-api", Name: "shop-api"}, {Path: "/w/shop-web", Name: "shop-web"},
 		{Path: "/x/blog", Name: "blog"}, {Path: "/y/blog", Name: "blog"}, {Path: "/z/docs", Name: "docs"},
 	}
-	for q, want := range map[string]string{"docs": "/z/docs", "/w/shop-web": "/w/shop-web", "DOC": "/z/docs"} {
+	byName := map[string]string{"docs": "/z/docs", "DOC": "/z/docs"}
+	if runtime.GOOS != "windows" {
+		byName["/w/shop-web"] = "/w/shop-web" // a path: only meaningful where "/w" is absolute
+	}
+	for q, want := range byName {
 		if got, err := Find(q, list); err != nil || got.Path != want {
 			t.Errorf("Find(%q) = %+v, %v", q, got, err)
 		}

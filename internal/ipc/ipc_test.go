@@ -428,7 +428,13 @@ func TestDisposeAsksTheDaemonToQuitAndDetachLeavesItAlone(t *testing.T) {
 }
 
 func TestRefusesADaemonThatSpeaksAnotherProtocol(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "p.sock")
+	// a short directory: sockets paths are limited to ~104 bytes and macOS temp dirs plus a test name exceed it
+	dir, err := os.MkdirTemp("/tmp", "orbit")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.RemoveAll(dir) })
+	path := filepath.Join(dir, "p.sock")
 	ln, err := net.Listen("unix", path)
 	if err != nil {
 		t.Fatal(err)
