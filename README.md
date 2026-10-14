@@ -6,7 +6,7 @@
 
 TUI to launch, control and monitor local services —processes (backends, frontends,
 workers), Docker containers and `docker compose` services— respecting their dependencies.
-Built with TypeScript, [Bun](https://bun.sh) and [OpenTUI](https://github.com/anomalyco/opentui) (`@opentui/react`).
+A single static binary written in Go ([Bubble Tea](https://github.com/charmbracelet/bubbletea)): no runtime to install.
 
 ```
  ◉ orbit · demo     1 Dashboard  2 Graph  3 Logs                                ● 7 up  ○ 1
@@ -84,15 +84,19 @@ Built with TypeScript, [Bun](https://bun.sh) and [OpenTUI](https://github.com/an
 ## Install
 
 ```bash
+# npm: downloads the binary of your platform (Linux, macOS, Windows; x64 and arm64)
 npm install -g @jgoterris/orbit
-# or
-bun add -g @jgoterris/orbit
-# or, without installing:
-bunx @jgoterris/orbit
+# or without installing:
+npx @jgoterris/orbit
+
+# Go
+go install github.com/JGoterris/orbit/cmd/orbit@latest
+
+# or grab a binary from the GitHub Releases page and put it in your PATH
 ```
 
-Requires [Bun](https://bun.sh) ≥ 1.3 — orbit runs on Bun regardless of which package manager
-installed it. Docker is only needed for `docker`/`compose` services.
+orbit is one self-contained executable: it needs neither Node nor Bun to run. Docker is only needed for
+`docker`/`compose` services, and [lazygit](https://github.com/jesseduffield/lazygit) only for the `L` key.
 
 ### Platforms
 
@@ -113,7 +117,7 @@ orbit runs natively on **Linux, macOS and Windows** (and WSL2, as Linux).
 
 On Windows there are no signals: a stop is a `taskkill` that console programs usually honour only when forced, so
 `stop_timeout` mostly delays the forced kill. A tree whose leader died cannot be found afterwards, and the embedded
-console (`i`) needs a pseudo-terminal, which Bun may not offer there.
+console (`i`) needs ConPTY, which Windows 10 1809 and later provide.
 
 ## Usage
 
@@ -371,40 +375,36 @@ put it in `env_file`.
 ## Structure
 
 ```
-src/
-  index.tsx            CLI + renderer startup
-  cli.ts               up / down / status / ctl / graph / ls / init (daemon: core/ipc/daemon.ts)
-  config/              schema, orbit.yaml loading, compose import
+cmd/orbit/             the binary: argument dispatch, version
+orbit.go               embeds orbit.schema.json
+internal/
+  cli/                 argument parsing, --help, up / down / logs / status / ctl / graph / ls / init / projects, TUI startup
+  config/              orbit.yaml loading (YAML → services), compose import, env files, diff, schema validation
+  graph/               DAG: cycles, topological order, levels
   core/
-    graph.ts           DAG: cycles, topological order, levels
-    supervisor.ts      states, dependencies, healthchecks, restarts, metrics
-    watch.ts           file watcher with debounce + cooldown (watch mode)
-    runners.ts         process / docker / compose
-    userConfig.ts      ~/.config/orbit: saved theme, custom themes
-    projects.ts        project registry (projects.json), status, path completion
-    session.ts         switching the open project
-    ipc/               local socket: server (wraps a supervisor), client, JSON-RPC protocol, endpoint path,
-                       remote.ts (RemoteSupervisor: the TUI's mirror of a daemon), daemon.ts (orbit daemon + auto-start)
-    git/               status, diff parsing, operations, GitRepo (cached state + change events), multi-repo runs,
-                       repos.ts (the repos a project's services live in)
-    platform/          everything that differs per OS: shells, process trees, metrics, ports, per-user dirs (wrap.ts: Windows exit-code wrapper)
-    health.ts metrics.ts logs.ts exec.ts
-  ui/
-    App.tsx            layout, keyboard, views, overlays
-    graphLayout.ts     graph layout by layers (pure, testable)
-    ProjectHost.tsx    keeps the open project; remounts App when it changes
-    views/             view registry (Dashboard, Graph, Logs, Git): label, panes, render, hints, own keys
-    DiffPane.tsx ListPanel.tsx diffRows.ts   diff and list panels of the Git view
-    GraphView.tsx ServiceList.tsx ServiceDetail.tsx LogView.tsx Overlays.tsx theme.ts themes.ts hooks.ts
-test/                  bun test (config, graph, supervisor with real processes, TUI with test renderer)
+    supervisor/        states, dependencies, health, restarts, readiness, hooks, watchers, reload, metrics
+    runner/            process / docker / compose / external
+    health/ hooks/ watch/ logs/ resources/ metrics/ notify/ console/
+  ipc/                 local socket: JSON-RPC server and client, Remote (the TUI's mirror of a daemon), daemon
+  git/                 status, diff parsing, operations, cached repo state, multi-repo runs, repo discovery
+  platform/            everything that differs per OS: shells, process trees, metrics, ports, per-user dirs
+  projects/ session/   project registry and switching the open project
+  state/ userconfig/   per-project state dir and lock, per-user settings
+  ui/                  Bubble Tea model: views, panels, overlays, input, mouse
+    theme/ term/       palettes and visual helpers; the terminal emulator widget
+    graphlayout/       graph layout by layers (pure, testable)
+    e2e/               the real binary driven in a pseudo-terminal
+npm/                   the npm packages (launcher + one package per platform)
+scripts/               release helpers
 ```
 
 ## Development
 
 ```bash
-bun install
-bun test
-bun run typecheck
-
-bun link            # installs the `orbit` command globally from this checkout
+go build -o orbit ./cmd/orbit    # build
+go test ./...                     # the whole suite (the e2e tests run the real binary in a PTY)
+go test -race ./internal/...      # with the race detector
+go vet ./...
 ```
+
+A snapshot release (all platforms, no publishing): `goreleaser release --snapshot --clean`.

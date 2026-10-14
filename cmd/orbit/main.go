@@ -4,7 +4,9 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"runtime/debug"
 	"strconv"
+	"strings"
 
 	"github.com/JGoterris/orbit/internal/cli"
 	"github.com/JGoterris/orbit/internal/config"
@@ -20,8 +22,20 @@ const red = "\x1b[31morbit:\x1b[0m"
 
 func main() { os.Exit(run(os.Args[1:])) }
 
+// buildVersion is the version stamped by the release build, or, for `go install` / `go build`, the module
+// version Go recorded.
+func buildVersion() string {
+	if version != "dev" {
+		return version
+	}
+	if info, ok := debug.ReadBuildInfo(); ok && info.Main.Version != "" && info.Main.Version != "(devel)" {
+		return strings.TrimPrefix(info.Main.Version, "v")
+	}
+	return version
+}
+
 func run(args []string) int {
-	cli.Version = version
+	cli.Version = buildVersion()
 	// the hidden wrapper a process service runs under on Windows (see runner.RunWrap)
 	if len(args) > 0 && args[0] == runner.WrapCommand {
 		return runner.RunWrap(args[1:])
@@ -35,6 +49,10 @@ func run(args []string) int {
 		}
 		fmt.Fprintf(os.Stderr, "%s %v\n", red, err)
 		return 1
+	}
+	if inv.Options.Version {
+		fmt.Println("orbit " + buildVersion())
+		return 0
 	}
 	if inv.Options.Help {
 		fmt.Print(cli.Help + "\n")
@@ -97,7 +115,7 @@ func run(args []string) int {
 			idle = n
 		}
 		if cfg, ok := load(); ok {
-			return ipc.RunDaemon(cfg, ipc.DaemonOptions{IdleMinutes: idle, Version: version})
+			return ipc.RunDaemon(cfg, ipc.DaemonOptions{IdleMinutes: idle, Version: buildVersion()})
 		}
 		return 1
 	case "status":

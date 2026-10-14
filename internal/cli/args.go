@@ -11,6 +11,7 @@ type Options struct {
 	Config   string
 	Up       bool
 	Help     bool
+	Version  bool
 	Force    bool
 	JSON     bool
 	NoDaemon bool
@@ -31,6 +32,7 @@ var optSpecs = []optSpec{
 	{long: "config", short: "c", takesValue: true, set: func(o *Options, v string) { o.Config = v }},
 	{long: "up", short: "u", set: func(o *Options, _ string) { o.Up = true }},
 	{long: "help", short: "h", set: func(o *Options, _ string) { o.Help = true }},
+	{long: "version", short: "V", set: func(o *Options, _ string) { o.Version = true }},
 	{long: "force", set: func(o *Options, _ string) { o.Force = true }},
 	{long: "json", set: func(o *Options, _ string) { o.JSON = true }},
 	{long: "no-daemon", set: func(o *Options, _ string) { o.NoDaemon = true }},

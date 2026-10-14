@@ -30,5 +30,6 @@ options
   -u, --up                   (TUI) start all autostart services on launch
       --no-daemon            (TUI) run the services inside the TUI itself, as before
       --idle <min>           (daemon) quit after this many minutes with nothing running and nobody connected
+  -V, --version              show the version
   -h, --help                 show this help
 `

@@ -1,0 +1,38 @@
+name: Release
+
+# Pushing a tag vX.Y.Z builds every platform, creates a draft GitHub release and publishes the npm packages.
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - uses: goreleaser/goreleaser-action@v6
+        with:
+          version: "~> v2"
+          args: release --clean
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          registry-url: https://registry.npmjs.org
+      - name: Build the npm packages
+        run: node scripts/npm-packages.mjs "${GITHUB_REF_NAME#v}" dist npm-out
+      - name: Publish to npm (platform packages first, then the launcher)
+        run: |
+          for d in npm-out/orbit-*; do npm publish "$d" --access public; done
+          npm publish npm-out/orbit --access public
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}

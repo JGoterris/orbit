@@ -34,7 +34,7 @@ func Parse(args []string) (Invocation, error) {
 		return Invocation{}, &UsageError{Msg: err.Error()}
 	}
 	inv := Invocation{Options: opts}
-	if opts.Help || len(pos) == 0 {
+	if opts.Help || opts.Version || len(pos) == 0 {
 		return inv, nil
 	}
 	command, rest := pos[0], pos[1:]
