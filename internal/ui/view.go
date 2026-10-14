@@ -51,7 +51,9 @@ func (m *Model) View() string {
 		if m.reload != nil {
 			modal, mw, mx, my = m.renderReload(W, H)
 		}
-	case modeQuit, modeStopping:
+	case modeProjects:
+		modal, mw, mx, my = m.renderProjects(W, H)
+	case modeQuit, modeStopping, modeSwitch:
 		modal, mw, mx, my = m.renderConfirm(W, H)
 	case modeConsole:
 		if m.console != nil {

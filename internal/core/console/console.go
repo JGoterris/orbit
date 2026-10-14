@@ -8,6 +8,7 @@ import (
 	"io"
 	"slices"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -91,8 +92,10 @@ type Session struct {
 	subs    map[int]func([]byte)
 	nextSub int
 	code    int
-	alive   bool
-	done    chan struct{}
+	// alive is atomic so Write and Resize never wait on mu: Attach replays the backlog while holding it, and an
+	// emulator fed by that replay answers the program's queries through Write
+	alive atomic.Bool
+	done  chan struct{}
 }
 
 // NewSession starts the program with a terminal of cols x rows.
@@ -112,7 +115,8 @@ func NewSession(spec Spec, cols, rows int) (*Session, error) {
 	if err != nil {
 		return nil, err
 	}
-	s := &Session{Spec: spec, p: p, subs: map[int]func([]byte){}, alive: true, done: make(chan struct{})}
+	s := &Session{Spec: spec, p: p, subs: map[int]func([]byte){}, done: make(chan struct{})}
+	s.alive.Store(true)
 
 	readDone := make(chan struct{})
 	go func() {
@@ -137,8 +141,9 @@ func NewSession(spec Spec, cols, rows int) (*Session, error) {
 		}
 		p.Close()
 		s.mu.Lock()
-		s.code, s.alive = code, false
+		s.code = code
 		s.mu.Unlock()
+		s.alive.Store(false)
 		close(s.done)
 	}()
 	return s, nil
@@ -211,11 +216,7 @@ func (s *Session) Backlog() []byte {
 	return out
 }
 
-func (s *Session) Alive() bool {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	return s.alive
-}
+func (s *Session) Alive() bool { return s.alive.Load() }
 
 // ExitCode is only meaningful once Done is closed.
 func (s *Session) ExitCode() int {

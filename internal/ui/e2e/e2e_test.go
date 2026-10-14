@@ -205,3 +205,49 @@ func TestConsoleOverlay(t *testing.T) {
 	sc.send("i") // the live console is reused
 	sc.waitFor("console again", "from-console-42")
 }
+
+func TestProjectPickerOpensInABareFolderAndSwitches(t *testing.T) {
+	target := projectDir(t, "name: target\nservices:\n  one:\n    cmd: sleep 60\n")
+	bare := t.TempDir()
+	sc := start(t, bare, 120, 30, "--no-daemon")
+	sc.waitFor("picker", "Projects", "type a folder path")
+	sc.send(target + "/")
+	sc.waitFor("typed path", "Open folder "+target)
+	sc.send("\r")
+	sc.waitFor("switched", "orbit · target", "Services 0/1", "one")
+	sc.dump()
+}
+
+func TestProjectsAndOpenCommands(t *testing.T) {
+	cfgHome, stateHome := t.TempDir(), t.TempDir()
+	run := func(args ...string) (string, int) {
+		cmd := exec.Command(binary, args...)
+		cmd.Env = append(os.Environ(), "XDG_CONFIG_HOME="+cfgHome, "XDG_STATE_HOME="+stateHome, "NO_COLOR=1")
+		out, err := cmd.CombinedOutput()
+		code := 0
+		if ee, ok := err.(*exec.ExitError); ok {
+			code = ee.ExitCode()
+		}
+		return string(out), code
+	}
+	if out, _ := run("projects"); !strings.Contains(out, "no projects yet") {
+		t.Fatalf("empty registry: %q", out)
+	}
+	dir := projectDir(t, "name: listed\nservices: {}\n")
+	// opening it with the TUI would need a terminal: register it the way orbit does
+	os.MkdirAll(filepath.Join(cfgHome, "orbit"), 0o755)
+	os.WriteFile(filepath.Join(cfgHome, "orbit", "projects.json"),
+		[]byte(`{"projects":[{"path":"`+dir+`","name":"listed","lastOpened":1,"pinned":true}]}`), 0o644)
+	out, _ := run("projects")
+	if !strings.Contains(out, "★ listed") || !strings.Contains(out, dir) {
+		t.Fatalf("projects = %q", out)
+	}
+	out, code := run("open", "nope")
+	if code != 1 || !strings.Contains(out, `no project "nope"`) {
+		t.Fatalf("open nope: code %d %q", code, out)
+	}
+	out, code = run("open")
+	if code != 1 || !strings.Contains(out, "usage: orbit open") {
+		t.Fatalf("open: code %d %q", code, out)
+	}
+}

@@ -10,6 +10,7 @@ import (
 	"github.com/JGoterris/orbit/internal/config"
 	"github.com/JGoterris/orbit/internal/core/runner"
 	"github.com/JGoterris/orbit/internal/ipc"
+	"github.com/JGoterris/orbit/internal/projects"
 )
 
 // version is set at build time (-ldflags "-X main.version=...").
@@ -40,6 +41,20 @@ func run(args []string) int {
 		return 0
 	}
 
+	// `orbit open <project>` opens a remembered project by name or path
+	if inv.Sub == "open" {
+		entry, err := projects.Find(inv.Rest[0], projects.Read())
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "%s %v\nrun `orbit --help` for usage\n", red, err)
+			return 1
+		}
+		if st, err := os.Stat(entry.Path); err != nil || !st.IsDir() {
+			fmt.Fprintf(os.Stderr, "%s unknown command or directory %q\nrun `orbit --help` for usage\n", red, entry.Path)
+			return 1
+		}
+		inv.Dir, inv.Sub = entry.Path, ""
+	}
+
 	opts := config.LoadOptions{Dir: inv.Dir, File: inv.Options.Config}
 	load := func() (*config.OrbitConfig, bool) {
 		cfg, err := config.LoadConfig(opts)
@@ -51,6 +66,8 @@ func run(args []string) int {
 	}
 
 	switch inv.Sub {
+	case "projects":
+		return cli.RunProjects()
 	case "init":
 		dir := inv.Dir
 		if dir == "" {
@@ -127,7 +144,9 @@ func run(args []string) int {
 			fmt.Fprintf(os.Stderr, "%s %v\n", red, err)
 			return 1
 		}
-		return cli.RunTUI(cfg, cli.TUIOptions{Up: inv.Options.Up, NoDaemon: inv.Options.NoDaemon})
+		// a folder with neither orbit.yaml nor compose is not a project: the picker opens instead
+		bare := cfg.File == "" && len(cfg.Services) == 0 && inv.Dir == ""
+		return cli.RunTUI(cfg, cli.TUIOptions{Up: inv.Options.Up, NoDaemon: inv.Options.NoDaemon, Bare: bare})
 	}
 	name := inv.Sub
 	// The remaining commands are wired up by a later phase of the migration (see the plan).

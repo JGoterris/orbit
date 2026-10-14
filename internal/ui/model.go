@@ -12,6 +12,7 @@ import (
 	"github.com/JGoterris/orbit/internal/core/logs"
 	"github.com/JGoterris/orbit/internal/core/resources"
 	"github.com/JGoterris/orbit/internal/core/supervisor"
+	"github.com/JGoterris/orbit/internal/projects"
 	"github.com/JGoterris/orbit/internal/ui/graphlayout"
 	"github.com/JGoterris/orbit/internal/ui/term"
 	"github.com/JGoterris/orbit/internal/ui/theme"
@@ -31,6 +32,8 @@ const (
 	modeTheme
 	modeConsole
 	modeReload
+	modeProjects
+	modeSwitch
 )
 
 // pane is a focusable panel.
@@ -99,6 +102,13 @@ type Options struct {
 	Notifications    func() bool
 	// Started gets the program once it exists: the owner can ask it to quit from the outside
 	Started func(p *tea.Program)
+	// OpenProject switches to the project in dir ("stop" or "detach" the services of the current one). It blocks
+	// and runs off the UI loop; on error nothing changed. Nil means switching is not available.
+	OpenProject func(dir, how string) (supervisor.Like, *Relaunch, error)
+	// Rebind is called with the new supervisor after a switch, so the owner can follow its events
+	Rebind func(sup supervisor.Like)
+	// StartWithPicker opens the project picker right away (orbit was started in a folder that is not a project)
+	StartWithPicker bool
 }
 
 // Relaunch is an orbit.yaml on disk that differs from what the running orbit has.
@@ -232,6 +242,12 @@ type Model struct {
 	historyAt  time.Time
 	historyRng resources.Range
 
+	projEntries  []projects.Entry
+	projStatuses map[string]projects.Status
+	projQuery    input
+	projIdx      int
+	pendingDir   string
+
 	lastStatus  map[string]supervisor.Status
 	lastRes     map[string]resReport
 	pendingSeen string
@@ -310,6 +326,11 @@ type exportDoneMsg struct {
 	err   error
 }
 type consoleDataMsg struct{}
+type projectSwitchedMsg struct {
+	sup      supervisor.Like
+	relaunch *Relaunch
+}
+type projectSwitchFailedMsg struct{ err error }
 type consoleExitMsg struct {
 	name string
 	code int

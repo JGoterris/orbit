@@ -14,7 +14,10 @@ import (
 // Init starts the clock and shows what is waiting for the user at startup.
 func (m *Model) Init() tea.Cmd {
 	cmds := []tea.Cmd{tickEvery(250 * time.Millisecond)}
-	if r := m.opts.Relaunch; r != nil {
+	switch r := m.opts.Relaunch; {
+	case m.opts.StartWithPicker:
+		m.openProjects()
+	case r != nil:
 		m.reload = &reloadOffer{diff: r.Diff, cfg: r.Config}
 		m.mode = modeReload
 	}
@@ -223,6 +226,12 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		}
 		return m, nil
+	case projectSwitchFailedMsg:
+		m.pendingDir = ""
+		m.mode = modeNormal
+		return m, m.notify(msg.err.Error(), theme.Active().Red)
+	case projectSwitchedMsg:
+		return m.switched(msg)
 	case tea.KeyMsg:
 		return m.handleKey(msg)
 	case tea.MouseMsg:
@@ -307,6 +316,10 @@ func (m *Model) keyInMode(k tea.KeyMsg) tea.Cmd {
 			m.mode = modeNormal
 		}
 		return nil
+	case modeProjects:
+		return m.keyInProjects(k)
+	case modeSwitch:
+		return m.keyInSwitch(k)
 	case modeReload:
 		switch s {
 		case "y", "Y", "enter":
@@ -403,6 +416,9 @@ func (m *Model) keyInMode(k tea.KeyMsg) tea.Cmd {
 		return nil
 	case "U":
 		return m.openReload()
+	case "P":
+		m.openProjects()
+		return nil
 	case "tab", "shift+tab":
 		panes := m.viewDef().panes
 		i := 0
@@ -771,4 +787,32 @@ func (m *Model) handleMouse(e tea.MouseMsg) (tea.Model, tea.Cmd) {
 		}
 	}
 	return m, nil
+}
+
+// switched replaces the model with a fresh one for the new project: every piece of per-project interface state
+// (selection, filters, scroll) starts over, as if orbit had been opened there.
+func (m *Model) switched(msg projectSwitchedMsg) (tea.Model, tea.Cmd) {
+	m.consoles.CloseAll()
+	if m.console != nil {
+		m.closeConsole()
+	}
+	opts := m.opts
+	opts.Sup = msg.sup
+	opts.Relaunch = msg.relaunch
+	opts.StartWithPicker = false
+	opts.ThemeErrors = nil
+	opts.InitialTheme = m.themeName
+	if opts.Rebind != nil {
+		opts.Rebind(msg.sup)
+	}
+	next := New(opts)
+	next.width, next.height = m.width, m.height
+	next.tick = m.tick
+	var cmds []tea.Cmd
+	if msg.relaunch != nil {
+		next.reload = &reloadOffer{diff: msg.relaunch.Diff, cfg: msg.relaunch.Config}
+		next.mode = modeReload
+	}
+	cmds = append(cmds, next.notify("opened "+msg.sup.Config().Name, theme.Active().Accent))
+	return next, tea.Batch(cmds...)
 }

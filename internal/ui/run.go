@@ -14,8 +14,19 @@ import (
 func Run(opts Options) error {
 	m := New(opts)
 	p := tea.NewProgram(m, tea.WithAltScreen(), tea.WithMouseCellMotion())
+	var mu sync.Mutex
 	stop := Attach(p, opts)
-	defer stop()
+	defer func() { mu.Lock(); stop(); mu.Unlock() }()
+	// after a project switch the events to follow are the new supervisor's
+	opts.Rebind = func(sup supervisor.Like) {
+		mu.Lock()
+		defer mu.Unlock()
+		stop()
+		o := opts
+		o.Sup = sup
+		stop = Attach(p, o)
+	}
+	m.opts.Rebind = opts.Rebind
 	if opts.Started != nil {
 		opts.Started(p)
 	}

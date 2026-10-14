@@ -7,6 +7,7 @@ import (
 	"os"
 	"reflect"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -151,3 +152,34 @@ func TestManagerReusesLiveSessionsAndKillEndsThem(t *testing.T) {
 }
 
 func TestMain(m *testing.M) { os.Exit(m.Run()) }
+
+// An emulator fed by Attach's replay answers the program's queries through Write, from another goroutine, while
+// the replay is still running: Write must not wait for what Attach holds.
+func TestAttachReplayMayWaitForAWriteFromAnotherGoroutine(t *testing.T) {
+	s, err := NewSession(Spec{Argv: []string{"/bin/sh", "-c", "printf hello; sleep 5"}, Env: map[string]string{}}, 80, 24)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(s.Kill)
+	deadline := time.Now().Add(5 * time.Second)
+	for !strings.Contains(string(s.Backlog()), "hello") && time.Now().Before(deadline) {
+		time.Sleep(10 * time.Millisecond)
+	}
+	replied := make(chan struct{})
+	var once sync.Once
+	done := make(chan struct{})
+	go func() {
+		s.Attach(func([]byte) {
+			once.Do(func() {
+				go func() { s.Write([]byte("x")); close(replied) }()
+				<-replied // the replay cannot go on until the write has gone through
+			})
+		})
+		close(done)
+	}()
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("Attach and Write deadlocked")
+	}
+}

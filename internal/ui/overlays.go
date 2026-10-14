@@ -184,7 +184,7 @@ var helpRows = [][2]string{
 	{"n · N", "next (newer) · previous (older) search match"},
 	{"v (logs focused)", "copy mode: j k ctrl+u/d move, v select, enter/space on a trace opens it, y copy"},
 	{"Y · E", "copy all visible logs · export them to a file"},
-	{"U", "apply orbit.yaml edits (restarts only what changed)"},
+	{"P · U", "open another project · apply orbit.yaml edits (restarts only what changed)"},
 	{"T", "change color theme (live preview, enter saves)"},
 	{"h", "dashboard: cpu / memory chart range 2m ⇄ 15m ⇄ 1h (memory turns orange/red near its limit, ↗ = leak)"},
 	{"e", "environment variables of the selected service"},
@@ -279,6 +279,10 @@ func (m *Model) renderConfirm(W, H int) ([]string, int, int, int) {
 	p := theme.Active()
 	w := min(60, W-4)
 	busy := m.mode == modeStopping
+	verb, title0 := "quit", "Quit"
+	if m.pendingDir != "" {
+		verb, title0 = "switch project", "Switch project"
+	}
 	msg := fmt.Sprintf("%d service(s) running.", m.sup.OwnedRunningCount())
 	for _, n := range m.names() {
 		if m.sup.IsAdopted(n) {
@@ -286,7 +290,7 @@ func (m *Model) renderConfirm(W, H int) ([]string, int, int, int) {
 			break
 		}
 	}
-	title, h := "Quit", 7
+	title, h := title0, 7
 	var content []string
 	if busy {
 		title, h = "Stopping", 6
@@ -297,8 +301,8 @@ func (m *Model) renderConfirm(W, H int) ([]string, int, int, int) {
 	} else {
 		content = []string{
 			newLine(p.PanelAlt).add(p.Text, msg).String(),
-			newLine(p.PanelAlt).add(p.Green, "s").add(p.Dim, " stop all & quit").String(),
-			newLine(p.PanelAlt).add(p.Accent, "d").add(p.Dim, " leave running & quit (reopen that project to resume them)").String(),
+			newLine(p.PanelAlt).add(p.Green, "s").add(p.Dim, " stop all & "+verb).String(),
+			newLine(p.PanelAlt).add(p.Accent, "d").add(p.Dim, " leave running & "+verb+" (reopen that project to resume them)").String(),
 			newLine(p.PanelAlt).add(p.Red, "n / esc").add(p.Dim, " cancel").String(),
 		}
 	}
