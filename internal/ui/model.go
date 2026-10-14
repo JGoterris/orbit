@@ -59,6 +59,7 @@ var views = []viewDef{
 	{id: "dashboard", label: "Dashboard", panes: []pane{paneServices, paneDetail, paneLogs}, defaultPane: paneServices},
 	{id: "graph", label: "Graph", panes: []pane{paneServices, paneGraph}, defaultPane: paneGraph, compactSidebar: true},
 	{id: "logs", label: "Logs", panes: []pane{paneServices, paneLogs}, defaultPane: paneLogs},
+	{id: "git", label: "Git", panes: []pane{paneRepos, paneChanges, paneBranches, paneCommits, paneStash, paneGitDiff, paneGitLog}, defaultPane: paneRepos},
 }
 
 func viewByID(id string) viewDef {
@@ -247,6 +248,9 @@ type Model struct {
 	projQuery    input
 	projIdx      int
 	pendingDir   string
+
+	git        *gitState
+	pendingGit bool
 
 	lastStatus  map[string]supervisor.Status
 	lastRes     map[string]resReport

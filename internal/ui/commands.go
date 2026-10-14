@@ -8,6 +8,7 @@ import (
 
 	"github.com/JGoterris/orbit/internal/core/resources"
 	"github.com/JGoterris/orbit/internal/core/supervisor"
+	"github.com/JGoterris/orbit/internal/git"
 	"github.com/JGoterris/orbit/internal/ui/theme"
 )
 
@@ -74,6 +75,9 @@ func (m *Model) commands() []command {
 			m.focus = paneLogs
 			return nil
 		})
+		if git.FindRoot(svc.Cwd) != "" {
+			add("git-"+n, "Open "+n+" in lazygit", "L", func(m *Model) tea.Cmd { return m.serviceLazygit(n) })
+		}
 		if svc.Port != 0 || svc.URL != "" {
 			h := svc.URL
 			if h == "" {

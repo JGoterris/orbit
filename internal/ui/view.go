@@ -36,6 +36,11 @@ func (m *Model) View() string {
 
 	var modal []string
 	var mw, mx, my int
+	if m.view == "git" && m.mode == modeNormal {
+		if gm, gw, gx, gy, ok := m.renderGitModal(W, H); ok {
+			modal, mw, mx, my = gm, gw, gx, gy
+		}
+	}
 	switch m.mode {
 	case modeTheme:
 		modal, mw, mx, my = m.renderThemePicker(W, H)
@@ -151,6 +156,8 @@ func (m *Model) renderBody(W, H int) []string {
 		m.geo.mu.Lock()
 		m.geo.logX, m.geo.logY = listW, 1
 		m.geo.mu.Unlock()
+	case "git":
+		right = m.renderGit(rightW, H)
 	default:
 		right = m.renderDashboard(rightW, H, listW)
 	}
@@ -220,8 +227,11 @@ func (m *Model) renderFooter(W int) string {
 		l.add(m.toast.color, m.toast.text)
 	} else {
 		hints := defaultHints
-		if m.mode == modeCopy {
+		switch {
+		case m.mode == modeCopy:
 			hints = copyHints
+		case m.view == "git":
+			hints = m.gitHints()
 		}
 		for _, h := range hints {
 			l.add(p.Accent, h[0]).add(p.Dim, " "+h[1]+"   ")

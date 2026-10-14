@@ -70,6 +70,10 @@ func (m *Model) setView(id string) {
 	m.focus = viewByID(id).defaultPane
 	m.zoomed = false
 	m.scrollBack = 0
+	if id == "git" {
+		// the Git view opens on the repo of the service you were looking at, and reads every repo right away
+		m.pendingGit = true
+	}
 }
 
 func (m *Model) toggleWatch(name string) tea.Cmd {

@@ -251,3 +251,50 @@ func TestProjectsAndOpenCommands(t *testing.T) {
 		t.Fatalf("open: code %d %q", code, out)
 	}
 }
+
+func gitIn(t *testing.T, dir string, args ...string) {
+	t.Helper()
+	cmd := exec.Command("git", args...)
+	cmd.Dir = dir
+	cmd.Env = append(os.Environ(), "GIT_CONFIG_GLOBAL=/dev/null", "GIT_CONFIG_SYSTEM=/dev/null",
+		"GIT_AUTHOR_NAME=t", "GIT_AUTHOR_EMAIL=t@t", "GIT_COMMITTER_NAME=t", "GIT_COMMITTER_EMAIL=t@t")
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("git %v: %v\n%s", args, err, out)
+	}
+}
+
+func TestGitViewStagesCommitsAndShowsDiffs(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git is not installed")
+	}
+	dir := projectDir(t, "name: gitdemo\nservices:\n  app:\n    cmd: sleep 60\n")
+	gitIn(t, dir, "init", "-q", "-b", "main")
+	os.WriteFile(filepath.Join(dir, "a.txt"), []byte("one\n"), 0o644)
+	gitIn(t, dir, "add", "-A")
+	gitIn(t, dir, "commit", "-q", "-m", "first commit")
+	os.WriteFile(filepath.Join(dir, "a.txt"), []byte("one\ntwo\n"), 0o644)
+	os.MkdirAll(filepath.Join(dir, "sub"), 0o755)
+	os.WriteFile(filepath.Join(dir, "sub", "b.txt"), []byte("new\n"), 0o644)
+
+	sc := start(t, dir, 140, 40, "--no-daemon")
+	sc.waitFor("dashboard", "Services 0/1")
+	sc.send("4")
+	sc.waitFor("git view", "Repos · 1", "Changes · main", "a.txt", "first commit")
+	sc.send("\r") // repos: enter → changes
+	sc.send("\r") // on the folder `sub` (folders first): fold it
+	time.Sleep(200 * time.Millisecond)
+	sc.dump()
+
+	// select a.txt and look at its diff, then stage it and commit
+	sc.send("j")
+	sc.waitFor("a.txt diff", "Diff · a.txt · unstaged", "+two")
+	sc.send(" ")
+	sc.waitFor("staged", "staged a.txt", "1 staged")
+	sc.send("c")
+	sc.waitFor("prompt", "Commit · ")
+	sc.send("add two")
+	sc.send("\r")
+	sc.waitFor("committed", "committed: add two")
+	sc.waitFor("commands", "git commit -F -", "add two")
+	sc.dump()
+}

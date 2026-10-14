@@ -142,8 +142,22 @@ func (m *Model) pendingChanged() tea.Cmd {
 	return nil
 }
 
-// Update handles every message of the program.
+// Update handles every message of the program, then asks for the diff of whatever the Git view has selected.
 func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	next, cmd := m.update(msg)
+	if nm, ok := next.(*Model); ok {
+		if nm.pendingGit {
+			nm.pendingGit = false
+			cmd = tea.Batch(cmd, nm.gitEnter(nm.selected))
+		}
+		if sync := nm.gitSync(); sync != nil {
+			cmd = tea.Batch(cmd, sync)
+		}
+	}
+	return next, cmd
+}
+
+func (m *Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
 		m.width, m.height = msg.Width, msg.Height
@@ -156,7 +170,22 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 	case tickMsg:
 		m.tick++
-		return m, tea.Batch(tickEvery(250*time.Millisecond), m.afterRefresh(), m.pendingChanged())
+		return m, tea.Batch(tickEvery(250*time.Millisecond), m.afterRefresh(), m.pendingChanged(), m.gitTick())
+	case gitDiffMsg:
+		m.gitOnDiff(msg)
+		return m, nil
+	case gitOpMsg:
+		return m, tea.Batch(m.gitOnOp(msg), m.gitRefresh(false))
+	case gitBatchMsg:
+		return m, m.gitOnBatch(msg)
+	case gitRefreshedMsg:
+		return m, nil
+	case lazygitDoneMsg:
+		cmds := []tea.Cmd{m.gitRefresh(true)}
+		if msg.err != nil {
+			cmds = append(cmds, m.notify("lazygit: "+msg.err.Error(), theme.Active().Red))
+		}
+		return m, tea.Batch(cmds...)
 	case refreshMsg:
 		return m, tea.Batch(m.afterRefresh(), m.pendingChanged())
 	case stateMsg:
@@ -400,6 +429,16 @@ func (m *Model) keyInMode(k tea.KeyMsg) tea.Cmd {
 	}
 
 	// ---- normal mode
+	// a text prompt or a question inside the Git view takes every key, except the way out
+	if m.view == "git" {
+		if g := m.gs(); g.prompt != nil || g.confirm != nil {
+			if s == "ctrl+c" {
+				return m.requestQuit()
+			}
+			cmd, _ := m.gitKeys(k)
+			return cmd
+		}
+	}
 	switch s {
 	case "ctrl+c", "q":
 		return m.requestQuit()
@@ -460,6 +499,11 @@ func (m *Model) keyInMode(k tea.KeyMsg) tea.Cmd {
 			m.setView(views[i].id)
 			return m.loadHistory()
 		}
+	}
+	if m.view == "git" {
+		// the view's own keys; the service shortcuts do not apply in a view with no service list
+		cmd, _ := m.gitKeys(k)
+		return cmd
 	}
 	if s == "h" && m.view == "dashboard" {
 		return m.cycleRange()
@@ -556,6 +600,8 @@ func (m *Model) keyInMode(k tea.KeyMsg) tea.Cmd {
 		return m.openConsole(sel)
 	case "o":
 		return m.openService(sel)
+	case "L":
+		return m.serviceLazygit(sel)
 	case "enter", "l":
 		m.logScope = "selected"
 		m.scrollBack = 0
