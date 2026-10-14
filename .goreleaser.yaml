@@ -1,0 +1,89 @@
+# yaml-language-server: $schema=https://goreleaser.com/static/schema.json
+version: 2
+
+project_name: orbit
+
+before:
+  hooks:
+    - go mod tidy
+    - go test ./...
+
+builds:
+  - id: orbit
+    main: ./cmd/orbit
+    binary: orbit
+    env:
+      - CGO_ENABLED=0
+    goos: [linux, darwin, windows]
+    goarch: [amd64, arm64]
+    ignore:
+      - goos: windows
+        goarch: arm64
+    flags: [-trimpath]
+    ldflags:
+      - -s -w -X main.version={{ .Version }}
+
+archives:
+  - id: orbit
+    formats: [tar.gz]
+    format_overrides:
+      - goos: windows
+        formats: [zip]
+    name_template: "orbit_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+    files:
+      - LICENSE
+      - README.md
+      - orbit.schema.json
+      - THIRD_PARTY_NOTICES.md
+
+# .deb and .rpm for Linux (attached to the GitHub release; `sudo apt install ./orbit_<version>_linux_amd64.deb`)
+nfpms:
+  - id: orbit
+    package_name: orbit
+    ids: [orbit]
+    file_name_template: "orbit_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+    vendor: Jesús Goterris
+    maintainer: Jesús Goterris <contact@jgoterris.com>
+    homepage: https://github.com/JGoterris/orbit
+    description: Terminal UI to launch, control and monitor local services
+    license: MIT
+    formats: [deb, rpm]
+    bindir: /usr/bin
+    recommends: [git]
+    suggests: [docker.io, lazygit]
+    contents:
+      - src: orbit.schema.json
+        dst: /usr/share/orbit/orbit.schema.json
+      - src: LICENSE
+        dst: /usr/share/doc/orbit/copyright
+
+# Homebrew (macOS and Linuxbrew): the formula is pushed to the JGoterris/homebrew-tap repository.
+# Pre-releases (v0.8.0-beta.1) are not pushed: `skip_upload: auto`.
+brews:
+  - name: orbit
+    repository:
+      owner: JGoterris
+      name: homebrew-tap
+      token: "{{ .Env.HOMEBREW_TAP_GITHUB_TOKEN }}"
+    directory: Formula
+    homepage: https://github.com/JGoterris/orbit
+    description: Terminal UI to launch, control and monitor local services
+    license: MIT
+    skip_upload: auto
+    test: |
+      assert_match "orbit", shell_output("#{bin}/orbit --version")
+
+checksum:
+  name_template: checksums.txt
+
+changelog:
+  use: github
+  filters:
+    exclude:
+      - "^chore"
+      - "^docs"
+
+release:
+  draft: true
+  # a tag with a suffix (v0.8.0-beta.1) is marked as a pre-release
+  prerelease: auto

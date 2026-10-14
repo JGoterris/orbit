@@ -1,5 +1,24 @@
 # Third-party notices
 
+## Go modules
+
+orbit is built from the following third-party Go modules (direct dependencies; the full list with exact versions
+is in `go.mod` and `go.sum`, and `go-licenses report ./cmd/orbit` regenerates the licenses of the whole graph).
+Each is distributed under its own license, reproduced in its repository.
+
+| Module | License |
+| --- | --- |
+| github.com/charmbracelet/bubbletea, lipgloss, x/ansi, x/vt, x/cellbuf, ultraviolet | MIT |
+| github.com/creack/pty | MIT |
+| github.com/UserExistsError/conpty | MIT |
+| github.com/Microsoft/go-winio | MIT |
+| github.com/bmatcuk/doublestar | MIT |
+| github.com/fsnotify/fsnotify | BSD-3-Clause |
+| gopkg.in/yaml.v3 | MIT and Apache-2.0 |
+| golang.org/x/sys, golang.org/x/sync, golang.org/x/text | BSD-3-Clause |
+
+## Color themes
+
 orbit's built-in color themes use color values from the projects below. Only the palettes
 (hex values) are used. orbit is not affiliated with or endorsed by any of them.
 
