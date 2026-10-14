@@ -48,3 +48,5 @@ changelog:
 
 release:
   draft: true
+  # a tag with a suffix (v0.8.0-beta.1) is marked as a pre-release
+  prerelease: auto

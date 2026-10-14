@@ -1,6 +1,8 @@
 name: Release
 
 # Pushing a tag vX.Y.Z builds every platform, creates a draft GitHub release and publishes the npm packages.
+# A tag with a suffix (v0.8.0-beta.1, v1.0.0-rc.1) is a pre-release: GitHub marks it so, and npm gets it under the
+# `next` dist-tag, which leaves `latest` (what `npm install -g @jgoterris/orbit` installs) untouched.
 on:
   push:
     tags: ["v*"]
@@ -32,7 +34,11 @@ jobs:
         run: node scripts/npm-packages.mjs "${GITHUB_REF_NAME#v}" dist npm-out
       - name: Publish to npm (platform packages first, then the launcher)
         run: |
-          for d in npm-out/orbit-*; do npm publish "$d" --access public; done
-          npm publish npm-out/orbit --access public
+          VERSION="${GITHUB_REF_NAME#v}"
+          DIST_TAG=latest
+          case "$VERSION" in *-*) DIST_TAG=next ;; esac
+          echo "publishing $VERSION under the '$DIST_TAG' tag"
+          for d in npm-out/orbit-*; do npm publish "$d" --access public --tag "$DIST_TAG"; done
+          npm publish npm-out/orbit --access public --tag "$DIST_TAG"
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}

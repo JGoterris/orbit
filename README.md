@@ -122,6 +122,7 @@ console (`i`) needs ConPTY, which Windows 10 1809 and later provide.
 ## Usage
 
 ```bash
+orbit --version      # prints the version
 orbit [dir]          # TUI using the orbit.yaml from dir (or a parent directory)
 orbit open <project> # TUI for a remembered project, by name (or unique fragment) or path
 orbit projects       # lists remembered projects (pinned first) and what is running in them
@@ -162,7 +163,7 @@ recent unpinned ones are kept; pinned ones are never dropped).
 | `s` `x` `r` | start / stop / restart the selected one |
 | `S` `X` `R` | start / stop / restart everything |
 | `W` | pause / resume file watching of the selected service |
-| `1` `2` `3` | Dashboard / Graph / Logs |
+| `1` `2` `3` `4` | Dashboard / Graph / Logs / Git |
 | `tab` / `shift+tab` | move focus between panels |
 | `z` · `esc` | zoom the focused panel to full screen · back |
 | `+` `-` `=` | grow / shrink the focused panel · reset sizes |
@@ -194,15 +195,17 @@ and drive it from outside: `~/.local/state/orbit/<project>/orbit.sock` (a shorte
 `orbit status --json`, `orbit ctl` and `orbit logs -f` are clients of it, and so is the TUI. The daemon writes
 its own messages to `daemon.log` next to the socket.
 
-Protocol: JSON-RPC 2.0, one JSON message per line (see `src/core/ipc/protocol.ts`).
+Protocol: JSON-RPC 2.0, one JSON message per line, version 4 (see `internal/ipc/protocol.go`; `hello` reports it and a client
+should refuse a server that speaks another one).
 
 ```bash
 echo '{"jsonrpc":"2.0","id":1,"method":"snapshot"}' | socat - UNIX-CONNECT:$SOCK
 ```
 
 Requests: `hello`, `snapshot`, `logs`, `start` / `stop` / `restart` / `toggle` (`{"services": [...]}`, groups expand),
-`startAll`, `stopAll`, `toggleWatch`, `clearLogs`, `subscribe` (`{"logs": true}` to receive `state` and `log`
-notifications) and `shutdown`. Linux, macOS and WSL2 use Unix sockets; Windows uses a named pipe
+`startAll`, `stopAll`, `toggleWatch`, `clearLogs`, `history` (cpu / memory buckets), `reload`, `subscribe`
+(`{"logs": true}` to receive `state` and `log` notifications; `config` and `configPending` come with `states`) and
+`shutdown`. Linux, macOS and WSL2 use Unix sockets; Windows uses a named pipe
 (`\\.\pipe\orbit-<hash>`).
 
 ## Git
@@ -371,6 +374,13 @@ in the configuration, just like in docker compose. It is not injected into the s
 put it in `env_file`.
 
 `health` accepts shortcuts: `"http://…"`, `"tcp:5432"`, `"container"` or a command (`"pg_isready"`).
+
+## Upgrading from the TypeScript version (0.x)
+
+`orbit.yaml`, the commands and the keys are the same. What changed under the hood is the socket protocol, so an
+old daemon cannot be talked to by the new binary: run `orbit down` with the old version before
+switching, or the new one will tell you which version the daemon runs. Services the old version left running should be
+picked up again: the per-project `state.json`, logs and lock keep their layout.
 
 ## Structure
 
