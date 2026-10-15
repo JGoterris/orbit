@@ -1264,6 +1264,7 @@ func (s *Supervisor) onExit(name string, r runner.Runner, code *int, signal stri
 	}
 	rt.runner = nil
 	rt.gen++
+	gen := rt.gen
 	if rt.healthTimer != nil {
 		rt.healthTimer.Stop()
 	}
@@ -1300,9 +1301,12 @@ func (s *Supervisor) onExit(name string, r runner.Runner, code *int, signal stri
 	if ok {
 		status, errMsg = Exited, ""
 	}
-	s.update(name, func(st *ServiceState) {
+	// a Stop (or Dispose) that came in meanwhile already settled the status: it must not turn back into crashed
+	if !s.updateIfGen(name, gen, func(st *ServiceState) {
 		st.Status, st.ExitCode, st.Pid, st.StoppedAt, st.Resources, st.Error = status, code, 0, time.Now().UnixMilli(), nil, errMsg
-	})
+	}) {
+		return
+	}
 	s.flushWaiters(name, false)
 
 	// post_stop also runs when the service went down on its own; a restart waits for it (see Start)
@@ -1325,21 +1329,34 @@ func (s *Supervisor) onExit(name string, r runner.Runner, code *int, signal stri
 	// a oneshot that succeeded is finished, whatever the restart policy says
 	restart := (svc.Restart == config.RestartAlways && !(svc.Oneshot && ok)) || (svc.Restart == config.RestartOnFailure && !ok)
 	if restart {
+		// the timer is set under the lock, so a Stop either finds it or has already bumped the generation
 		s.mu.Lock()
+		if rt.gen != gen || s.disposed {
+			s.mu.Unlock()
+			return
+		}
 		if uptime > 30*time.Second {
 			rt.backoff = time.Second
 		}
 		delay := rt.backoff
 		rt.backoff = min(rt.backoff*2, 30*time.Second)
-		s.mu.Unlock()
-		s.Log(name, fmt.Sprintf("restarting in %gs (restart: %s)", delay.Seconds(), svc.Restart))
-		timer := time.AfterFunc(delay, func() {
-			s.update(name, func(st *ServiceState) { st.Restarts++ })
-			s.Start(name)
+		var timer *time.Timer
+		timer = time.AfterFunc(delay, func() {
+			// a Stop that came while this was already firing cleared it: the service stays stopped
+			s.mu.Lock()
+			current := rt.restartTimer == timer && !s.disposed
+			if current {
+				rt.restartTimer = nil
+			}
+			s.mu.Unlock()
+			if current {
+				s.update(name, func(st *ServiceState) { st.Restarts++ })
+				s.Start(name)
+			}
 		})
-		s.mu.Lock()
 		rt.restartTimer = timer
 		s.mu.Unlock()
+		s.Log(name, fmt.Sprintf("restarting in %gs (restart: %s)", delay.Seconds(), svc.Restart))
 	}
 }
 
