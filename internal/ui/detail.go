@@ -3,7 +3,6 @@ package ui
 import (
 	"fmt"
 	"path/filepath"
-	"slices"
 	"strings"
 	"time"
 
@@ -438,5 +437,3 @@ func (m *Model) renderDetail(name string, w, h int, focused, expanded bool, rows
 	}
 	return panel(panelOpts{title: name, focused: focused, padX: 1}, w, h, out)
 }
-
-func hasDep(list []string, n string) bool { return slices.Contains(list, n) }

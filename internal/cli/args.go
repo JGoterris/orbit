@@ -87,18 +87,18 @@ func ParseArgs(args []string) (Options, []string, error) {
 			name, value, hasValue := strings.Cut(a[2:], "=")
 			spec := findLong(name)
 			if spec == nil {
-				return opts, nil, fmt.Errorf("Unknown option '--%s'", name)
+				return opts, nil, fmt.Errorf("unknown option '--%s'", name)
 			}
 			if !spec.takesValue {
 				if hasValue {
-					return opts, nil, fmt.Errorf("Option '%s' does not take an argument", spec.describe())
+					return opts, nil, fmt.Errorf("option '%s' does not take an argument", spec.describe())
 				}
 				spec.set(&opts, "")
 				continue
 			}
 			if !hasValue {
 				if i+1 >= len(args) {
-					return opts, nil, fmt.Errorf("Option '%s' argument missing", spec.describe())
+					return opts, nil, fmt.Errorf("option '%s' argument missing", spec.describe())
 				}
 				i++
 				value = args[i]
@@ -109,7 +109,7 @@ func ParseArgs(args []string) (Options, []string, error) {
 			for j := 1; j < len(a); j++ {
 				spec := findShort(string(a[j]))
 				if spec == nil {
-					return opts, nil, fmt.Errorf("Unknown option '-%c'", a[j])
+					return opts, nil, fmt.Errorf("unknown option '-%c'", a[j])
 				}
 				if !spec.takesValue {
 					spec.set(&opts, "")
@@ -121,7 +121,7 @@ func ParseArgs(args []string) (Options, []string, error) {
 					i++
 					spec.set(&opts, args[i])
 				} else {
-					return opts, nil, fmt.Errorf("Option '%s' argument missing", spec.describe())
+					return opts, nil, fmt.Errorf("option '%s' argument missing", spec.describe())
 				}
 				break
 			}

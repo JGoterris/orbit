@@ -166,8 +166,7 @@ func run(args []string) int {
 		bare := cfg.File == "" && len(cfg.Services) == 0 && inv.Dir == ""
 		return cli.RunTUI(cfg, cli.TUIOptions{Up: inv.Options.Up, NoDaemon: inv.Options.NoDaemon, Bare: bare})
 	}
-	name := inv.Sub
-	// The remaining commands are wired up by a later phase of the migration (see the plan).
-	fmt.Fprintf(os.Stderr, "%s %q is not implemented yet in this Go build (%s)\n", red, name, version)
+	// cli.Parse only accepts the commands handled above
+	fmt.Fprintf(os.Stderr, "%s unknown command %q\nrun `orbit --help` for usage\n", red, inv.Sub)
 	return 1
 }

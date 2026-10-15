@@ -254,7 +254,6 @@ type Model struct {
 
 	layout    *graphlayout.Layout
 	layoutKey int
-	layoutVer int
 
 	history    []resources.Bucket
 	historyFor string
@@ -347,7 +346,6 @@ type exportDoneMsg struct {
 	lines int
 	err   error
 }
-type consoleDataMsg struct{}
 type projectSwitchedMsg struct {
 	sup      supervisor.Like
 	relaunch *Relaunch

@@ -1,8 +1,6 @@
 package ui
 
 import (
-	"strings"
-
 	tea "github.com/charmbracelet/bubbletea"
 )
 
@@ -109,12 +107,4 @@ func (in *input) viewWithPlaceholder(width int, placeholder, fg, dim, bg string,
 	}
 	l.add(dim, string(ph))
 	return l.String()
-}
-
-func trimTo(s string, n int) string {
-	r := []rune(s)
-	if len(r) <= n {
-		return s
-	}
-	return strings.TrimRight(string(r[:n]), " ")
 }

@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"strings"
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -449,12 +448,4 @@ func (m *Model) memToast(name string, st supervisor.ServiceState, prev resReport
 type resReport struct {
 	level resources.MemLevel
 	leak  bool
-}
-
-func tail(s string, n int) string {
-	r := []rune(s)
-	if len(r) <= n {
-		return s
-	}
-	return strings.TrimSpace(string(r[len(r)-n:]))
 }

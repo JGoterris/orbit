@@ -89,7 +89,6 @@ type gitState struct {
 	askedVer  int
 	diffVer   int
 	token     int
-	mu        sync.Mutex
 	lastFetch time.Time
 	lastAll   time.Time
 	cmdVer    int

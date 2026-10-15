@@ -49,9 +49,9 @@ func TestParseArgsErrors(t *testing.T) {
 		args []string
 		want string
 	}{
-		{[]string{"--nope"}, "Unknown option '--nope'"},
-		{[]string{"-x"}, "Unknown option '-x'"},
-		{[]string{"--config"}, "Option '-c, --config <value>' argument missing"},
+		{[]string{"--nope"}, "unknown option '--nope'"},
+		{[]string{"-x"}, "unknown option '-x'"},
+		{[]string{"--config"}, "option '-c, --config <value>' argument missing"},
 		{[]string{"--json=1"}, "does not take an argument"},
 	} {
 		_, _, err := ParseArgs(tc.args)
