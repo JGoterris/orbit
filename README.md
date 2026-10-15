@@ -21,65 +21,18 @@ A single static binary written in Go ([Bubble Tea](https://github.com/charmbrace
 
 ## Features
 
-- **Dependency graph** by layers (level 0 on the left), colored by status; selecting
-  a node highlights its dependencies (cyan) and its dependents (purple).
-  Navigable with arrow keys and mouse.
-- **External services** (`type: external`): a SaaS API or managed database you do not run. It only needs a
-  `health`; it shows up in the graph and dashboard as healthy/unhealthy and works as a `depends_on` target
-  (dependents wait until it answers). `start` re-checks it, `stop` does nothing, and `i` still opens its `console:`.
-- **Desktop notifications** when a service crashes or turns unhealthy, even with the terminal closed.
-  On by default; toggle it from the command palette (`:`).
-- **Ordered startup**: `start` brings up dependencies first and waits for them to be *ready*
-  (healthcheck OK, or running if they don't have one); `stop` stops dependents first.
-- **Readiness by log line**: `ready_when: { log: "Listening on" }` keeps a service in `starting` until its
-  output matches (a substring, or `"/regex/i"`). For workers and queues with no health endpoint; combined
-  with `health`, both must pass.
-- **Healthchecks**: HTTP, TCP, command, or Docker's `HEALTHCHECK`. If you set `port` without
-  `health`, a TCP check to that port is used.
-- **Restart policy** `no | on-failure | always` with exponential backoff (1s → 30s).
-- **Embedded console**: `i` opens `psql`, `rails console` or a container shell in a floating
-  terminal (PTY + terminal emulator) without leaving orbit; it survives hiding the modal.
-- **Watch mode**: `watch:` globs restart a service when its files change (for stacks without
-  hot-reload: Go, Rust, plain backends). Changes are debounced and rate-limited (`cooldown`), so
-  editing never causes a restart storm; `W` pauses it. Never starts a service you stopped.
-  On WSL2, edits made from Windows tools to files under `/mnt/c` don't trigger inotify: keep the project in the Linux filesystem.
-- **Long log lines wrap** (`w` toggles), the view stays put while you scroll up, and copy mode
-  (`v`) selects across scrolling and copies whole lines via OSC 52 (or `wl-copy`/`xclip`/`pbcopy`/`clip.exe`).
-- **Stack traces fold** (`b` toggles): Java, Node and Python traces collapse into one row
-  (`▸ TypeError: … ⋯ +12 lines`). `b` folds/unfolds them all; to open just one, enter copy mode (`v`), move to its row and press `enter` or `space`. Copying and exporting keep every line.
-- **Live logs** per service or combined with color prefix, regex filter, scroll
-  (wheel/PgUp/PgDn), timestamps, error/warning highlighting.
-- **CPU and memory** per process tree (via `/proc`) and per container (`docker stats`), with
-  sparklines and up to an hour of history (`h` cycles 2m · 15m · 1h).
-- **Memory alerts**: `mem_limit` turns memory orange at 85 % and red at 100 %, and a steady growth
-  (leak) shows `↗`; both raise a toast and a desktop notification.
-- **Docker / compose**: automatically imports `docker-compose.yml` (with `depends_on`, ports,
-  healthchecks and `${VAR:-def}` interpolation), and re-attaches to containers that were
-  already running. Those containers **are not stopped when exiting orbit** (only with explicit `x`/`X`).
-- **Daemon**: the TUI is only a client. The services of a project run in an `orbit daemon` that the
-  first `orbit` starts by itself (one per project, in its own session), so you can close the terminal, open
-  another one (or tmux, or two at once) and find everything as it was, logs included. Health checks, restart
-  policies, watchers and hooks keep working with no UI open. Closing the terminal never stops anything:
-  on `q` choose *stop all* (the daemon quits too) or *leave running* (it keeps supervising).
-  `orbit down` stops everything from outside. `orbit --no-daemon` runs the services inside the TUI instead:
-  then *leave running* keeps the processes (own process group, output in
-  `~/.local/state/orbit/<project>/logs/`) but nobody supervises them until the next `orbit` re-attaches.
-- **`oneshot` tasks** (builds, migrations, provisioning): count as ready once they finish with
-  exit code 0, are shown as `✓ done`, and aren't re-run when another dependent starts.
-- Detects **occupied ports** before starting (and tells you which process is using them).
-- Kills **entire process trees** (its own process group): no orphaned
-  `vite`/`esbuild` processes hogging ports.
-- Command palette with fuzzy search, service groups, open in browser.
-- **Git at a glance** (`4`): one row per repo your services live in (branch, ahead/behind, changes, stashes, last
-  commit, services, and how the last action went), with the selected repo's changes, branches, graph and a
-  read-only diff below. **Multi-repo actions** (`m`): fetch, pull, push, create a branch or switch branch in
-  several repos at once. Stage files and commit quickly from here; everything else (rebase, amend, stash,
-  hunks, conflicts…) is [lazygit](https://github.com/jesseduffield/lazygit), one key away (`L`).
-- **Several projects, one orbit**: press `P` to switch to another project (pinned and recent ones, or
-  type a folder path and `tab` to complete it). Services of the project you leave can be stopped or left
-  running; opening it again re-attaches. Starting `orbit` in a folder that is not a project opens the picker.
-- Press `L` to open the service's git repo in [lazygit](https://github.com/jesseduffield/lazygit)
-  (if installed); orbit resumes when you quit it and services keep running meanwhile.
+- **Dependency-aware startup**: dependencies first, waiting until they are ready (healthcheck, log line or
+  finished `oneshot` task); stop goes in reverse.
+- **Processes, Docker containers and `docker compose` services**, plus `external` ones you only health-check.
+  Your `docker-compose.yml` is imported automatically.
+- **Live dependency graph**, logs (filter, search, folded stack traces, copy mode), CPU and memory with history.
+- **Runs in a daemon**: close the terminal and everything keeps running and supervised; reopen to resume.
+- **Healthchecks, restart policies, watch mode, lifecycle hooks** and desktop notifications on crashes.
+- **Embedded console** (`psql`, `rails console`, a container shell) without leaving orbit.
+- **Git view** across all your service repos with multi-repo fetch / pull / push, and [lazygit](https://github.com/jesseduffield/lazygit) one key away.
+- Several projects, themes, and a local socket to script it from outside.
+
+See [all the features](docs/features.md).
 
 ## Install
 
@@ -101,323 +54,39 @@ go install github.com/JGoterris/orbit/cmd/orbit@latest
 orbit is one self-contained executable: it needs no runtime. Docker is only needed for `docker`/`compose`
 services, and [lazygit](https://github.com/jesseduffield/lazygit) only for the `L` key.
 
-### Platforms
+Linux, macOS and Windows (and WSL2) are supported natively; see [platforms](docs/platforms.md) for the differences.
 
-orbit runs natively on **Linux, macOS and Windows** (and WSL2, as Linux).
-
-| | Linux / WSL2 | macOS | Windows |
-| --- | --- | --- | --- |
-| `cmd:`, hooks, `health.cmd`, `console:` run through | `sh -c` | `sh -c` | `cmd.exe /d /s /c` |
-| Stop a service | `SIGTERM` to its process group, then `SIGKILL` | same | `taskkill /T` on its process tree, then `/F` |
-| CPU / memory of process trees | `/proc` | `ps` | `Get-CimInstance Win32_Process` (PowerShell) |
-| `orbit` socket | Unix socket | Unix socket | named pipe |
-| State (logs, pids) | `~/.local/state/orbit` | `~/.local/state/orbit` | `%LOCALAPPDATA%\orbit` |
-| User config (themes) | `~/.config/orbit` | `~/.config/orbit` | `%APPDATA%\orbit` |
-
-`$XDG_STATE_HOME` / `$XDG_CONFIG_HOME` win on every platform. To pick another shell, set `shell:` at the top of
-`orbit.yaml` (or per service): `shell: pwsh`, `shell: bash` (Git Bash on Windows)… PowerShell gets
-`-NoProfile -Command`, everything else `-c`.
-
-On Windows there are no signals: a stop is a `taskkill` that console programs usually honour only when forced, so
-`stop_timeout` mostly delays the forced kill. A tree whose leader died cannot be found afterwards, and the embedded
-console (`i`) needs ConPTY, which Windows 10 1809 and later provide.
-
-## Usage
+## Quick start
 
 ```bash
-orbit --version      # prints the version
-orbit [dir]          # TUI using the orbit.yaml from dir (or a parent directory)
-orbit open <project> # TUI for a remembered project, by name (or unique fragment) or path
-orbit projects       # lists remembered projects (pinned first) and what is running in them
-orbit --up           # TUI starting all autostart services
-orbit --no-daemon    # TUI that runs the services itself (nothing keeps supervising after you quit)
-orbit daemon [dir]   # the background supervisor on its own (the TUI starts it when needed; --idle <min> to auto-quit)
-orbit up [svc|group] # without TUI: starts and shows logs (ctrl+c to stop)
-orbit down           # stops whatever orbit left running; also quits an orbit that is open (TUI or `up`)
-orbit status [--json]          # state of the services of a running orbit (TUI or `orbit up`)
-orbit ctl start|stop|restart|toggle [svc|group…]   # drives a running orbit from another terminal
-orbit ctl reload     # applies the edits made to orbit.yaml to a running orbit
-orbit graph          # prints the dependency graph
-orbit ls             # lists services
-orbit logs [svc|group…] [-f] [-n 200] [--grep re] [--since 10m]
-                     # prints recent logs without the TUI (works while orbit is open or closed)
-orbit init [dir]     # generates an orbit.yaml by scanning the project
-orbit validate [dir] # checks the orbit.yaml (errors and unknown keys, e.g. a typo like `helth:`); exit code 1 if invalid
+cd my-project
+orbit init      # scans the project and writes an orbit.yaml
+orbit           # opens the TUI; press ? for help
 ```
 
-Without `orbit.yaml`, orbit opens the services from a `docker-compose.yml` directly. In a folder with
-neither, the TUI opens with no services and the project picker (other commands report an error).
-
-### Editing `orbit.yaml` while running
-
-When `orbit.yaml` changes, the header shows `⟳ orbit.yaml changed · U`; `U` shows the diff and applies it on `y`.
-Like `docker compose up`, only what changed is touched: modified services restart (dependents don't), removed
-ones stop, added ones start if `autostart`. `orbit` / `orbit up` on a running project and `orbit ctl reload` do the same.
-
-Projects are remembered in `~/.config/orbit/projects.json` the first time orbit opens them (the 30 most
-recent unpinned ones are kept; pinned ones are never dropped).
-
-### Keys
-
-| Key | Action |
-| --- | --- |
-| `↑↓` / `j k` | select service (in the graph, `←↑↓→` move spatially) |
-| `space` | start / stop the selected one (with dependencies) |
-| `s` `x` `r` | start / stop / restart the selected one |
-| `S` `X` `R` | start / stop / restart everything |
-| `W` | pause / resume file watching of the selected service |
-| `1` `2` `3` `4` | Dashboard / Graph / Logs / Git |
-| `tab` / `shift+tab` | move focus between panels |
-| `z` · `esc` | zoom the focused panel to full screen · back |
-| `+` `-` `=` | grow / shrink the focused panel · reset sizes |
-| `j k` `ctrl+u/d` `g G` (logs focused) | scroll logs by line / half page / top / bottom |
-| `enter` / `l` | logs of the selected one · `a` toggles selected ⇄ all |
-| `/` | filter logs (regex) · `tab` switches to search (highlight, keep all lines) · `esc` clears |
-| `n` · `N` | next (newer) · previous (older) search match |
-| `f` · `PgUp PgDn` · wheel | follow / scroll logs |
-| `t` · `w` · `c` | timestamps · line wrap · clear logs |
-| `b` | fold / unfold all stack traces |
-| `v` (logs focused) | copy mode: `j k` `ctrl+u/d` `g G` move, `v` start/clear selection, `enter`/`space` on a trace row opens/closes it, `y` copy, `esc` cancel |
-| `Y` · `E` | copy all visible logs · export them to `~/.local/state/orbit/<project>/exports/` (the path is copied) |
-| `o` | open `http://localhost:<port>` (or `url`) in the browser |
-| `i` | interactive console of the selected service in a floating terminal (`console:` command, or `$SHELL` (`%ComSpec%` on Windows) / the container's shell). `ctrl+]` hides it and keeps it running; `i` brings it back |
-| `e` | environment variables of the selected service (secrets masked, `v` reveals) |
-| `L` | open the selected service's git repo in [lazygit](https://github.com/jesseduffield/lazygit) (if installed) |
-| `4` | Git view, see [Git](#git) |
-| `P` | open another project: `enter` opens, `tab` completes a typed path, `ctrl+f` pins, `ctrl+x` forgets |
-| `T` | change color theme (live preview, `enter` saves, `esc` cancels) |
-| `:` / `ctrl+p` | command palette |
-| `?` | help |
-| `q` | quit: `s` stops everything, `d` leaves services running (reopen `orbit` to resume them) |
-
-## Scripting & editors (socket)
-
-While a project is running (its daemon, a TUI with `--no-daemon`, or `orbit up`) it listens on a local socket, so scripts and editor extensions can query
-and drive it from outside: `~/.local/state/orbit/<project>/orbit.sock` (a shorter path under `$XDG_RUNTIME_DIR` or
-`$TMPDIR` when that one would exceed the kernel's socket-path limit). The socket is `0600` inside a `0700` directory.
-`orbit status --json`, `orbit ctl` and `orbit logs -f` are clients of it, and so is the TUI. The daemon writes
-its own messages to `daemon.log` next to the socket.
-
-Protocol: JSON-RPC 2.0, one JSON message per line, version 4 (see `internal/ipc/protocol.go`; `hello` reports it and a client
-should refuse a server that speaks another one).
-
-```bash
-echo '{"jsonrpc":"2.0","id":1,"method":"snapshot"}' | socat - UNIX-CONNECT:$SOCK
-```
-
-Requests: `hello`, `snapshot`, `logs`, `start` / `stop` / `restart` / `toggle` (`{"services": [...]}`, groups expand),
-`startAll`, `stopAll`, `toggleWatch`, `clearLogs`, `history` (cpu / memory buckets), `reload`, `subscribe`
-(`{"logs": true}` to receive `state` and `log` notifications; `config` and `configPending` come with `states`) and
-`shutdown`. Linux, macOS and WSL2 use Unix sockets; Windows uses a named pipe
-(`\\.\pipe\orbit-<hash>`).
-
-## Git
-
-The Git view (`4`) is for seeing the state of every repository your services live in; the heavy lifting
-is [lazygit](https://github.com/jesseduffield/lazygit)'s. Each service's working directory is looked up, the
-project folder's own repo is included if it has one, and every repo appears once.
-
-The **Repos** table on top has a row per repo: a mark, a dot (green clean, orange with changes), name, branch
-(yellow when it differs from the most common one, which the title sums up: `main ×3 · feat/login ×1`),
-ahead/behind or `no upstream`, `✎` changed files, `⚑` stashes, last commit, the services living there and
-the outcome of the last action on it (`✓ pulled`, `✗ <git's message>`). Below, the selected repo: **Changes**,
-**Branches** (with tracking and age), the commit **Graph** and **Stash** on the left, a read-only **Diff** (the
-biggest panel) and the **Commands** log on the right; the diff follows whatever is selected (a file, a branch against `HEAD`, a commit, a stash). The view
-opens on the repo of the service you had selected and refreshes every few seconds and after each action.
-Pull is fast-forward only, and network operations never ask for a password (they fail instead; use an
-agent or a credential helper).
-
-Multi-repo actions work on the **marked** repos (`space` in the table; `a` marks all / none), or on all of
-them when none is marked. Press `m`, then the action; they run at the same time, a toast sums them up and
-each row shows its own result. Pull, push, new branch and switch branch ask first, listing the repos.
-
-| Panel | Keys |
-| --- | --- |
-| everywhere | `L` open the selected repo in lazygit (orbit resumes when you quit it) · `f` `p` `u` fetch / pull / push the selected repo · `m` multi-repo mode · `j k` move · `g G` first / last · `z` zoom |
-| Repos | `j k` pick the repo · `space` mark · `a` mark all / none · `enter` go to its changes (like `tab`) · `L` lazygit |
-| multi-repo (`m`, then…) | `f` fetch · `p` pull · `u` push · `b` new branch (asks for the name) · `s` switch to a branch (asks for the name; repos without it report the error) · `esc` cancel |
-| Changes | shown as a tree (folders first; a folder holding only another folder is merged: `src/ui/views`) · `space` stage / unstage the file, or everything under the folder · `enter` open the diff, or fold / unfold the folder · `a` stage / unstage all · `c` commit · `v` staged ⇄ unstaged side · `y` / `Y` copy the path (relative / absolute) |
-| Branches | `enter` switch · `n` new branch (this repo) |
-| Graph, Stash | `j k` pick one, the diff follows · `enter` focus the diff |
-| Commands | `j k` move · `y` copy the command · `c` clear · `G` follow the latest. Lists every git command orbit ran for you (stage, commit, fetch, pull, push, branches), per repo, with ✓/✗, duration and git's message; the polling reads are not listed |
-| Diff | `esc` back · `{` `}` previous / next file in Changes (folders skipped) · `[` `]` previous / next hunk · `y` / `Y` copy the path · `j k` `ctrl+u/d` `g G` scroll · `s` side-by-side (mouse wheel scrolls) |
-
-Commit messages are one line; amend, discard, stash, hunk staging, branch deletion and the like live in lazygit.
-
-## Themes
-
-Press `T` (or `: Change theme…`) to pick one; the choice is saved in `~/.config/orbit/config.json` and applies to every project.
-
-Built in: `orbit` (default), `catppuccin-mocha`, `catppuccin-macchiato`, `catppuccin-frappe`, `catppuccin-latte` (light), `tokyo-night`, `dracula`, `nord`, `gruvbox`, `rose-pine`, `one-dark`. Palettes come from the upstream projects (all MIT, see [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)); orbit is not affiliated with them.
-
-Your own themes are JSON files in `~/.config/orbit/themes/<name>.json` (`$XDG_CONFIG_HOME` is respected). They extend a built-in one (default `orbit`) and override any color:
-
-```json
-{
-  "extends": "catppuccin-mocha",
-  "colors": { "accent": "#ff79c6", "services": ["#ff79c6", "#8be9fd", "#50fa7b"] }
-}
-```
-
-Colors are `#rrggbb`. Keys: `bg panel panelAlt selection cursor match border borderFocus text muted dim accent accent2 cyan green yellow orange red edge upstream downstream`, plus `services` (list used for log prefixes). Broken files are skipped and reported on startup.
-
-## orbit.yaml
+A minimal `orbit.yaml`:
 
 ```yaml
 name: my-stack
-compose: ./docker-compose.yml   # optional; by default the compose in this directory is imported. false = don't import
-env:                            # variables for all services. ${VAR} and ${VAR:-def} are interpolated (+ .env)
-  LOG_LEVEL: info
-env_file: .env.shared           # .env files for all services (optional)
-shell: pwsh                     # optional: shell for cmd, hooks, health and console (default: sh, or cmd.exe on Windows)
-
 services:
-  api:                          # type: process (default if there is a cmd)
-    cmd: bun run dev
+  postgres:
+    image: postgres:16
+    ports: ["5432:5432"]
+  api:
+    cmd: npm run dev
     cwd: ./api
-    env: { PORT: "3000" }
-    env_file:                   # path, list of paths, or { path, required: false } if optional
-      - ./api/.env
-      - { path: ./api/.env.local, required: false }
-    port: 3000                  # checks for occupied port, TCP health by default, `o` key
-    depends_on: [postgres, redis]
-    health: { http: "http://localhost:3000/health", interval: 2s, timeout: 2s }
-    ready_when: { log: "Listening on" }   # not ready until a stdout/stderr line matches ("/regex/i" also works)
-    restart: on-failure         # no | on-failure | always
-    watch: ["src/**", "package.json"]   # restart on change; globs relative to `cwd`
-    # long form:
-    # watch:
-    #   paths: ["**/*.go", "go.mod"]
-    #   ignore: ["**/*_test.go"]   # .git, node_modules and editor swap files are always ignored
-    #   debounce: 1s               # quiet time needed after the last change (default 1s)
-    #   cooldown: 10s              # at most one restart per cooldown; changes in between are batched (default 10s)
-    shell: bash                 # optional, overrides the global one for this service
-    console: bin/rails console  # `i` opens it in a terminal (process: in cwd/env; docker: inside the container)
-    start_timeout: 60s
-    stop_timeout: 8s
-
-  redis:                        # type: docker (if there is an image)
-    image: redis:7-alpine
-    ports: ["6379:6379"]
-    volumes: ["./data:/data"]
-    cmd: redis-server --appendonly yes
-    console: redis-cli          # `docker exec -it`; without `console:` you get bash/sh
-
-  auth0:                        # type: external — orbit does not run it, only health-checks it
-    type: external
-    health: "https://my-tenant.eu.auth0.com/.well-known/openid-configuration"
-    url: https://manage.auth0.com   # `o` opens it
-  managed-db:
-    type: external
-    health: "tcp:db.example.com:5432"
-    console: psql "$DATABASE_URL"   # `i` opens it on the host (with the service's env / env_file)
-
-  postgres:                     # defined in docker-compose.yml: only fields overridden here
-    restart: always
-
-  docs:
-    cmd: bun run docs
-    autostart: false            # not started with S / --up
-
-  worker:
-    cmd: bun run worker
-    mem_limit: 1G               # alert (orange ≥85 %, red ≥100 %); 512m, 1.5G, or bytes
-    leak_detection: false       # default true: warn about sustained memory growth
-
-  build-lib:                    # task: build, migration, provisioning…
-    cmd: mvn -q install -pl shared-kernel -am -DskipTests
-    oneshot: true               # "ready" when it finishes with exit code 0; its dependents wait
-
-  seeded-api:
-    cmd: bun run dev
-    pre_start: "rm -rf tmp/*"   # before launching; if it fails the service is `failed`
-    post_start:                 # once ready; a failure is only reported
-      - ./scripts/check-seed.sh
-      - { cmd: "curl -fsS localhost:3000/warmup", timeout: 10s }
-    post_stop: "echo cleaned"   # after it goes down, however it went down
-
-groups:
-  backend: [postgres, redis, api]
+    port: 3000
+    depends_on: [postgres]
 ```
 
-**Editor support.** `orbit.schema.json` (shipped with the package) gives autocompletion, hover docs and
-validation in editors with the [YAML language server](https://github.com/redhat-developer/yaml-language-server)
-(VS Code's Red Hat YAML extension, Neovim, JetBrains…). `orbit init` writes the first line for you:
+## Documentation
 
-```yaml
-# yaml-language-server: $schema=https://raw.githubusercontent.com/JGoterris/orbit/main/orbit.schema.json
-```
+- [Usage](docs/usage.md): commands and live reload of `orbit.yaml`
+- [Keys](docs/keys.md)
+- [Configuration](docs/configuration.md): full `orbit.yaml` reference, editor support, hooks, env vars
+- [Git](docs/git.md) · [Themes](docs/themes.md) · [Scripting & editors](docs/scripting.md)
+- [Platforms](docs/platforms.md) · [Upgrading from 0.x](docs/upgrading.md)
 
-or map it in VS Code's `settings.json`: `"yaml.schemas": { "https://raw.githubusercontent.com/JGoterris/orbit/main/orbit.schema.json": "orbit.y*ml" }`.
-`orbit validate` runs the same checks from the terminal or CI.
-
-**Lifecycle hooks.** `pre_start`, `post_start` and `post_stop` take a command, a `{ cmd, timeout }` or a
-list of them (run in order, stopping at the first failure; default timeout 60s). They run on the host in the
-service's `cwd`, with its environment plus `ORBIT_SERVICE`, `ORBIT_HOOK` and, in `post_stop` after the
-service exited on its own, `ORBIT_EXIT_CODE`; their output goes to the service's log. They work on
-`process`, `docker` and `compose` services.
-
-- `pre_start` runs before every start (restarts included). If it fails, the service is `failed` and doesn't start.
-- `post_start` runs once the service is ready and never blocks its dependents; if it fails it is logged and
-  shown as the service's error, but the service stays up. Not allowed on `oneshot` tasks.
-- `post_stop` runs whenever the service goes down: stopped, restarted, crashed or a finished `oneshot`. A
-  restart waits for it. It doesn't run when orbit detaches or leaves an adopted container running.
-
-**Environment variables.** A service receives, from lowest to highest priority: your shell's
-environment, the global `env_file`s, the service's `env_file`s (in order: the last one wins), and then the global
-`env` and the service's `env` (inline values always win over files). Paths are relative to
-`orbit.yaml`. Files are **re-read on every startup**, so after editing an `.env`
-it's enough to restart the service (`r`). A required file that doesn't exist is an error when loading
-the config and when starting. The service detail shows which files it uses and the log indicates how many
-variables were loaded. In `compose` services, the environment is managed by compose itself (`env_file`
-inside the `docker-compose.yml`).
-
-The `.env` next to `orbit.yaml` (and the one next to each compose) is used to interpolate `${VAR}`
-in the configuration, just like in docker compose. It is not injected into the services unless you
-put it in `env_file`.
-
-`health` accepts shortcuts: `"http://…"`, `"tcp:5432"`, `"container"` or a command (`"pg_isready"`).
-
-## Upgrading from the TypeScript version (0.x)
-
-`orbit.yaml`, the commands and the keys are the same. What changed under the hood is the socket protocol, so an
-old daemon cannot be talked to by the new binary: run `orbit down` with the old version before
-switching, or the new one will tell you which version the daemon runs. Services the old version left running are
-picked up again: the per-project `state.json`, logs and lock keep their layout.
-
-## Structure
-
-```
-cmd/orbit/             the binary: argument dispatch, version
-orbit.go               embeds orbit.schema.json
-internal/
-  cli/                 argument parsing, --help, up / down / logs / status / ctl / graph / ls / init / projects, TUI startup
-  config/              orbit.yaml loading (YAML → services), compose import, env files, diff, schema validation
-  graph/               DAG: cycles, topological order, levels
-  core/
-    supervisor/        states, dependencies, health, restarts, readiness, hooks, watchers, reload, metrics
-    runner/            process / docker / compose / external
-    health/ hooks/ watch/ logs/ resources/ metrics/ notify/ console/
-  ipc/                 local socket: JSON-RPC server and client, Remote (the TUI's mirror of a daemon), daemon
-  git/                 status, diff parsing, operations, cached repo state, multi-repo runs, repo discovery
-  platform/            everything that differs per OS: shells, process trees, metrics, ports, per-user dirs
-  projects/ session/   project registry and switching the open project
-  state/ userconfig/   per-project state dir and lock, per-user settings
-  ui/                  Bubble Tea model: views, panels, overlays, input, mouse
-    theme/ term/       palettes and visual helpers; the terminal emulator widget
-    graphlayout/       graph layout by layers (pure, testable)
-    e2e/               the real binary driven in a pseudo-terminal
-```
-
-## Development
-
-```bash
-go build -o orbit ./cmd/orbit    # build
-go test ./...                     # the whole suite (the e2e tests run the real binary in a PTY)
-go test -race ./internal/...      # with the race detector
-go vet ./...
-```
-
-A snapshot release (all platforms, `.deb` and `.rpm`, no publishing): `goreleaser release --snapshot --clean --skip=announce,publish`.
+## Contributing
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) to send changes and [SECURITY.md](SECURITY.md) to report a vulnerability.

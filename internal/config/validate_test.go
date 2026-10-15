@@ -82,17 +82,17 @@ func TestSchemaCoversEveryKeyTheLoaderReads(t *testing.T) {
 	}
 }
 
-func TestReadmeExampleHasNoUnknownKeys(t *testing.T) {
-	data, err := os.ReadFile("../../README.md")
+func TestDocsExampleHasNoUnknownKeys(t *testing.T) {
+	data, err := os.ReadFile("../../docs/configuration.md")
 	if err != nil {
 		t.Fatal(err)
 	}
 	m := regexp.MustCompile("(?s)```yaml\\r?\\n(name: my-stack.*?)```").FindSubmatch(data)
 	if m == nil {
-		t.Fatal("README example not found")
+		t.Fatal("docs/configuration.md example not found")
 	}
 	if got := UnknownKeys(yamlDoc(t, string(m[1]))); len(got) != 0 {
-		t.Fatalf("unknown keys in the README example: %+v", got)
+		t.Fatalf("unknown keys in the docs/configuration.md example: %+v", got)
 	}
 }
 

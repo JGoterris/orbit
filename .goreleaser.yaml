@@ -30,6 +30,7 @@ archives:
     files:
       - LICENSE
       - README.md
+      - docs/*.md
       - orbit.schema.json
       - THIRD_PARTY_NOTICES.md
 

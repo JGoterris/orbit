@@ -5,5 +5,5 @@
 ## Checklist
 
 - [ ] Tests cover the change (`go test ./...` passes)
-- [ ] `README.md` / `orbit.schema.json` updated if commands, keys or `orbit.yaml` changed
+- [ ] `docs/` / `README.md` / `orbit.schema.json` updated if commands, keys or `orbit.yaml` changed
 - [ ] Tried on: <!-- Linux / WSL2 / macOS / Windows -->
