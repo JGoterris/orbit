@@ -12,12 +12,18 @@ import (
 // listRow draws one row of a list panel on the given background.
 type listRow func(bg string) *line
 
+// listStart is the index of the first row a listPanel of height h shows: the selection stays centred.
+func listStart(n, selected, h int) int {
+	visible := max(1, h-2)
+	return max(0, min(selected-visible/2, n-visible))
+}
+
 // listPanel is a bordered, scrolling list of one-line rows with a selection bar.
 func listPanel(title string, rows []listRow, selected int, focused bool, empty, footer string, w, h int) []string {
 	p := theme.Active()
 	inner := w - 2
 	visibleRows := max(1, h-2)
-	start := max(0, min(selected-visibleRows/2, len(rows)-visibleRows))
+	start := listStart(len(rows), selected, h)
 	var content []string
 	if len(rows) == 0 {
 		content = append(content, newLine(p.Panel).add(p.Dim, empty).String())
@@ -256,6 +262,7 @@ func (m *Model) renderGit(W, H int) []string {
 	}
 	var out []string
 	if show(paneRepos) {
+		m.hit(paneRepos, 0, 1, W, repoH, len(repoRows), listStart(len(repoRows), index, repoH))
 		out = append(out, listPanel(repoTitle, repoRows, index, m.focus == paneRepos, "",
 			targetNote+" · m multi-repo · L lazygit", W, repoH)...)
 	}
@@ -263,6 +270,7 @@ func (m *Model) renderGit(W, H int) []string {
 		return out
 	}
 	rest2 := H - len(out)
+	top := 1 + len(out)
 
 	// ---- left column
 	var left []string
@@ -284,8 +292,23 @@ func (m *Model) renderGit(W, H int) []string {
 		}
 		heights := distribute(rest2, ws, 3)
 		status := v.snap.Status
+		y := top
 		for i, pn := range vis {
 			h := heights[i]
+			sel, count := 0, 0
+			switch pn {
+			case paneChanges:
+				count = len(v.tree)
+			case paneBranches:
+				count = len(v.snap.Branches)
+			case paneCommits:
+				count = len(v.snap.Commits)
+			case paneStash:
+				count = len(v.snap.Stashes)
+			}
+			sel = g.at(pn, count)
+			m.hit(pn, 0, y, lw, h, count, listStart(count, sel, h))
+			y += h
 			switch pn {
 			case paneChanges:
 				branch := "…"
@@ -416,6 +439,17 @@ func (m *Model) renderGit(W, H int) []string {
 		}
 		if zoomed == string(paneGitDiff) {
 			diffH, cmdH = rest2, 0
+		}
+		rx := 0
+		if showLeft && zoomed == "" {
+			rx = leftW
+		}
+		if diffH > 0 && show(paneGitDiff) {
+			m.hit(paneGitDiff, rx, top, rw, diffH, 0, 0)
+		}
+		if cmdH > 0 && show(paneGitLog) {
+			n := len(v.cmds)
+			m.hit(paneGitLog, rx, top+max(0, diffH), rw, cmdH, n, listStart(n, v.logAt, cmdH))
 		}
 		if diffH > 0 && show(paneGitDiff) {
 			right = append(right, m.renderGitDiff(v, rw, diffH)...)

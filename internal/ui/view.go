@@ -16,6 +16,9 @@ func (m *Model) View() string {
 		return "orbit needs a bigger terminal"
 	}
 	p := theme.Active()
+	m.geo.mu.Lock()
+	m.geo.hits = nil
+	m.geo.mu.Unlock()
 
 	rows := make([]string, 0, H)
 	rows = append(rows, clamp(m.renderHeader(W), W, p.PanelAlt))
@@ -176,6 +179,7 @@ func (m *Model) renderDashboard(w, H, x int) []string {
 	detailRows := m.detailRows()
 	switch {
 	case m.zoomed && m.focus == paneDetail:
+		m.hit(paneDetail, x, 1, w, H, 0, 0)
 		return m.renderDetail(m.selected, w, H, true, true, m.height-6)
 	case m.zoomed && m.focus == paneLogs:
 		m.geo.mu.Lock()
@@ -187,6 +191,7 @@ func (m *Model) renderDashboard(w, H, x int) []string {
 	}
 	detailH := min(detailRows, H-3)
 	detail := m.renderDetail(m.selected, w, detailH, m.focus == paneDetail, false, detailH-2)
+	m.hit(paneDetail, x, 1, w, detailH, 0, 0)
 	m.geo.mu.Lock()
 	m.geo.logX, m.geo.logY = x, 1+detailH
 	m.geo.mu.Unlock()

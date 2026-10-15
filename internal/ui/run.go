@@ -1,10 +1,13 @@
 package ui
 
 import (
+	"os"
 	"sync"
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
+	"github.com/muesli/termenv"
 
 	"github.com/JGoterris/orbit/internal/core/logs"
 	"github.com/JGoterris/orbit/internal/core/supervisor"
@@ -13,6 +16,11 @@ import (
 // Run opens the interface and blocks until the user quits. It returns the final model's error, if any.
 func Run(opts Options) error {
 	m := New(opts)
+	// the palettes are #rrggbb: without this, terminals that do not announce COLORTERM (WSL, tmux, ssh) get them
+	// cut down to the 256-colour cube and every theme looks washed out
+	if _, plain := os.LookupEnv("NO_COLOR"); !plain {
+		lipgloss.SetColorProfile(termenv.TrueColor)
+	}
 	p := tea.NewProgram(m, tea.WithAltScreen(), tea.WithMouseCellMotion())
 	var mu sync.Mutex
 	stop := Attach(p, opts)

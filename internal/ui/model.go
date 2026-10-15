@@ -165,8 +165,25 @@ type geoData struct {
 	graphOffX, graphOffY           int
 	// header tabs: x ranges
 	tabs []tabHit
+	// clickable panels of the last render (the git view and the service detail)
+	hits []hitRegion
 	// log window of the last render: indexes into the displayed lines
 	first, end int
+}
+
+// hitRegion is a panel the mouse can focus: its box, and for lists the first content row and the item shown there.
+type hitRegion struct {
+	x, y, w, h int
+	pane       pane
+	items      int // rows the list holds (0: not a list)
+	first      int
+}
+
+// hit records a clickable panel while rendering; the content rows start under the top border.
+func (m *Model) hit(p pane, x, y, w, h, items, first int) {
+	m.geo.mu.Lock()
+	m.geo.hits = append(m.geo.hits, hitRegion{x: x, y: y, w: w, h: h, pane: p, items: items, first: first})
+	m.geo.mu.Unlock()
 }
 
 type tabHit struct {

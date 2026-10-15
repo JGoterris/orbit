@@ -803,8 +803,15 @@ func (m *Model) handleMouse(e tea.MouseMsg) (tea.Model, tea.Cmd) {
 		case inList:
 			m.moveSelection(-delta / 3)
 			return m, m.loadHistory()
+		default:
+			if r, ok := regionAt(g.hits, e.X, e.Y); ok && m.mode == modeNormal {
+				return m, m.wheelRegion(r, delta)
+			}
 		}
 	case tea.MouseButtonLeft:
+		if m.mode == modeCopy && inLog {
+			return m, m.copyDrag(e, g)
+		}
 		if e.Action != tea.MouseActionPress || m.mode != modeNormal {
 			return m, nil
 		}
@@ -847,9 +854,96 @@ func (m *Model) handleMouse(e tea.MouseMsg) (tea.Model, tea.Cmd) {
 					return m, m.loadHistory()
 				}
 			}
+		default:
+			if r, ok := regionAt(g.hits, e.X, e.Y); ok {
+				return m, m.clickRegion(r, e.Y)
+			}
 		}
 	}
 	return m, nil
+}
+
+func regionAt(hits []hitRegion, x, y int) (hitRegion, bool) {
+	for _, r := range hits {
+		if x >= r.x && x < r.x+r.w && y >= r.y && y < r.y+r.h {
+			return r, true
+		}
+	}
+	return hitRegion{}, false
+}
+
+// clickRegion focuses the panel under the mouse and, in a list, selects the row that was clicked.
+func (m *Model) clickRegion(r hitRegion, y int) tea.Cmd {
+	m.focus = r.pane
+	if r.items == 0 {
+		return nil
+	}
+	row := y - r.y - 1
+	idx := r.first + row
+	if row < 0 || idx >= r.items {
+		return nil
+	}
+	g := m.gs()
+	switch {
+	case r.pane == paneRepos:
+		g.index = idx
+		g.sel = map[pane]int{}
+	case r.pane == paneGitLog:
+		g.logSel = idx
+	case isGitList(r.pane):
+		g.sel[r.pane] = idx
+		g.lastList = r.pane
+	}
+	return m.gitSync()
+}
+
+// wheelRegion scrolls the panel under the mouse: lists move their selection, the diff scrolls.
+func (m *Model) wheelRegion(r hitRegion, delta int) tea.Cmd {
+	g := m.gs()
+	step := -delta / 3
+	switch {
+	case r.pane == paneGitDiff:
+		g.scroll = max(0, g.scroll+step*3)
+		return nil
+	case r.items == 0:
+		return nil
+	case r.pane == paneRepos:
+		g.index = max(0, min(r.items-1, g.index+step))
+		g.sel = map[pane]int{}
+	case r.pane == paneGitLog:
+		v, ok := m.gitView()
+		if !ok {
+			return nil
+		}
+		at := max(0, min(r.items-1, v.logAt+step))
+		g.logSel = at
+		if at == r.items-1 {
+			g.logSel = -1
+		}
+	case isGitList(r.pane):
+		g.sel[r.pane] = max(0, min(r.items-1, g.at(r.pane, r.items)+step))
+		g.lastList = r.pane
+	}
+	return m.gitSync()
+}
+
+// copyDrag selects log lines with the mouse in copy mode: a press sets the cursor, dragging extends from there.
+func (m *Model) copyDrag(e tea.MouseMsg, g geoData) tea.Cmd {
+	row := e.Y - g.logY - 1
+	if row < 0 || row >= len(g.logRows) {
+		return nil
+	}
+	seq := g.logRows[row]
+	switch e.Action {
+	case tea.MouseActionPress:
+		m.copyCursor, m.copyAnchor = seq, 0
+	case tea.MouseActionMotion:
+		if m.copyAnchor == 0 {
+			m.copyAnchor = m.copyCursor
+		}
+		m.copyCursor = seq
+	}
+	return nil
 }
 
 // switched replaces the model with a fresh one for the new project: every piece of per-project interface state

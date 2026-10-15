@@ -388,3 +388,54 @@ func TestMultiRuneKeyChunkIsSplit(t *testing.T) {
 		t.Fatalf("selected = %q", m.selected)
 	}
 }
+
+func click(m *Model, x, y int) {
+	m.Update(tea.MouseMsg{X: x, Y: y, Button: tea.MouseButtonLeft, Action: tea.MouseActionPress})
+}
+
+func TestMouseFocusesPanelsAndSelectsRows(t *testing.T) {
+	m, _ := newModel(t)
+	m.View()
+	// service rows start under the header and the panel border
+	click(m, 2, 3)
+	if m.selected != "api" || m.focus != paneServices {
+		t.Fatalf("selected = %q focus = %s", m.selected, m.focus)
+	}
+	// the detail panel sits right of the sidebar
+	click(m, m.sidebarW()+4, 2)
+	if m.focus != paneDetail {
+		t.Fatalf("click on the detail: focus = %s", m.focus)
+	}
+	// the tabs of the header switch view
+	m.geo.mu.Lock()
+	tab := m.geo.tabs[2]
+	m.geo.mu.Unlock()
+	click(m, tab.x0+1, 0)
+	if m.view != "logs" {
+		t.Fatalf("view = %s", m.view)
+	}
+}
+
+func TestMouseOnGitListsSelectsAndScrolls(t *testing.T) {
+	m, _ := newModel(t)
+	m.view, m.focus = "git", paneRepos
+	hits := []hitRegion{
+		{x: 0, y: 1, w: 40, h: 12, pane: paneBranches, items: 5, first: 1},
+		{x: 40, y: 1, w: 80, h: 12, pane: paneGitDiff},
+	}
+	m.geo.mu.Lock()
+	m.geo.hits = hits
+	m.geo.mu.Unlock()
+	click(m, 3, 4) // border at y=1, so y=4 is the third row: item first+2
+	if m.focus != paneBranches || m.gs().sel[paneBranches] != 3 || m.gs().lastList != paneBranches {
+		t.Fatalf("focus = %s sel = %v", m.focus, m.gs().sel)
+	}
+	m.Update(tea.MouseMsg{X: 3, Y: 4, Button: tea.MouseButtonWheelDown, Action: tea.MouseActionPress})
+	if got := m.gs().sel[paneBranches]; got != 4 {
+		t.Fatalf("wheel down: sel = %d", got)
+	}
+	m.Update(tea.MouseMsg{X: 50, Y: 4, Button: tea.MouseButtonWheelDown, Action: tea.MouseActionPress})
+	if m.gs().scroll != 3 {
+		t.Fatalf("diff scroll = %d", m.gs().scroll)
+	}
+}
