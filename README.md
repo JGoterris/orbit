@@ -81,6 +81,8 @@ services:
 
 ## Documentation
 
+The full documentation is at **[jgoterris.github.io/orbit](https://jgoterris.github.io/orbit/)** (sources in [`docs/`](docs/)):
+
 - [Usage](docs/usage.md): commands and live reload of `orbit.yaml`
 - [Keys](docs/keys.md)
 - [Configuration](docs/configuration.md): full `orbit.yaml` reference, editor support, hooks, env vars

@@ -1,5 +1,6 @@
 /orbit
 /orbit.exe
 /dist/
+/site/
 *.log
 .DS_Store

@@ -10,4 +10,4 @@
 - [Platforms](platforms.md): differences between Linux, macOS and Windows.
 - [Upgrading from 0.x](upgrading.md): moving from the TypeScript version.
 
-To contribute, see [CONTRIBUTING.md](../CONTRIBUTING.md).
+To contribute, see [CONTRIBUTING.md](https://github.com/JGoterris/orbit/blob/main/CONTRIBUTING.md).
