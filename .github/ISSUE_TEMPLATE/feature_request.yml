@@ -1,0 +1,16 @@
+name: Feature request
+description: Suggest an idea for orbit
+labels: [enhancement]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: The problem
+      description: What you are trying to do and why it is hard today.
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: What you would like
+      description: How orbit could help. Config snippets or key bindings are welcome.

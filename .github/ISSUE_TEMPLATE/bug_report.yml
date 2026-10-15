@@ -1,0 +1,42 @@
+name: Bug report
+description: Something does not work as it should
+labels: [bug]
+body:
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened
+      description: What you did, what you expected and what happened instead.
+    validations:
+      required: true
+  - type: textarea
+    id: repro
+    attributes:
+      label: How to reproduce
+      description: The smallest `orbit.yaml` and steps that show it.
+      render: yaml
+  - type: input
+    id: version
+    attributes:
+      label: orbit version
+      description: Output of `orbit --version`
+    validations:
+      required: true
+  - type: dropdown
+    id: os
+    attributes:
+      label: Platform
+      options: [Linux, WSL2, macOS, Windows]
+    validations:
+      required: true
+  - type: input
+    id: install
+    attributes:
+      label: Installed with
+      placeholder: Homebrew, apt, .deb/.rpm, go install, release binary…
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs
+      description: Relevant output, or the daemon log from the project's state directory (`daemon.log`).
+      render: text

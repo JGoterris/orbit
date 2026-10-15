@@ -419,3 +419,5 @@ go vet ./...
 ```
 
 A snapshot release (all platforms, `.deb` and `.rpm`, no publishing): `goreleaser release --snapshot --clean --skip=announce,publish`.
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) to send changes and [SECURITY.md](SECURITY.md) to report a vulnerability.
