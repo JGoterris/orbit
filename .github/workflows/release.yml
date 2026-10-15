@@ -1,7 +1,8 @@
 name: Release
 
-# Pushing a tag vX.Y.Z builds every platform, creates a draft GitHub release (binaries, .deb, .rpm, checksums)
-# and, for a final release, updates the Homebrew tap and the Cloudsmith apt / rpm repository.
+# Pushing a tag vX.Y.Z runs the CI on the tagged commit, builds every platform, publishes a GitHub release
+# (binaries, .deb, .rpm, checksums, build provenance) and, for a final release, updates the Homebrew tap and the
+# Cloudsmith apt / rpm repository.
 # A tag with a suffix (v0.8.0-beta.1, v1.0.0-rc.1) is a pre-release: GitHub marks it so and neither the tap nor
 # Cloudsmith is touched.
 on:
@@ -9,19 +10,28 @@ on:
     tags: ["v*"]
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
+  ci:
+    uses: ./.github/workflows/ci.yml
+
   release:
+    needs: ci
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      # build provenance attestations
+      id-token: write
+      attestations: write
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           fetch-depth: 0
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
         with:
           go-version-file: go.mod
-      - uses: goreleaser/goreleaser-action@v6
+      - uses: goreleaser/goreleaser-action@e435ccd777264be153ace6237001ef4d979d3a7a # v6
         with:
           version: "~> v2"
           args: release --clean
@@ -29,6 +39,13 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           # a token that can push to JGoterris/homebrew-tap (the default one only reaches this repository)
           HOMEBREW_TAP_GITHUB_TOKEN: ${{ secrets.HOMEBREW_TAP_GITHUB_TOKEN }}
+      - uses: actions/attest-build-provenance@e8998f949152b193b063cb0ec769d69d929409be # v2
+        with:
+          subject-path: |
+            dist/*.tar.gz
+            dist/*.zip
+            dist/*.deb
+            dist/*.rpm
       - name: Publish the .deb and .rpm to Cloudsmith
         if: ${{ !contains(github.ref_name, '-') }}
         env:
@@ -36,6 +53,6 @@ jobs:
           # owner/repository on Cloudsmith, e.g. jgoterris/orbit (a repository variable, not a secret)
           CLOUDSMITH_REPO: ${{ vars.CLOUDSMITH_REPO }}
         run: |
-          pip install --quiet cloudsmith-cli
+          pip install --quiet cloudsmith-cli==1.29.0
           for f in dist/*.deb; do cloudsmith push deb "$CLOUDSMITH_REPO/any-distro/any-version" "$f" --republish; done
           for f in dist/*.rpm; do cloudsmith push rpm "$CLOUDSMITH_REPO/any-distro/any-version" "$f" --republish; done

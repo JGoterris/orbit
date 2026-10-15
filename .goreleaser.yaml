@@ -3,10 +3,7 @@ version: 2
 
 project_name: orbit
 
-before:
-  hooks:
-    - go mod tidy
-    - go test ./...
+# go mod tidy, the tests and the linters run in the CI job the release workflow waits for
 
 builds:
   - id: orbit
@@ -84,6 +81,7 @@ changelog:
       - "^docs"
 
 release:
-  draft: true
+  # published right away: the Homebrew formula points at these assets, which a draft would keep private
+  draft: false
   # a tag with a suffix (v0.8.0-beta.1) is marked as a pre-release
   prerelease: auto
