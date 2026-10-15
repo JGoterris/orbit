@@ -48,26 +48,41 @@ func TestFilesNames(t *testing.T) {
 
 func TestLock(t *testing.T) {
 	dir := t.TempDir()
+	file := filepath.Join(dir, "orbit.lock")
 	if holder := AcquireLock(dir); holder != 0 {
 		t.Fatalf("first acquire = %d", holder)
 	}
 	if ReadLock(dir) != os.Getpid() {
 		t.Fatal("lock should name us")
 	}
-	// a lock held by a live process that is not us is respected (pid 1 is always there on POSIX)
+	if holder := AcquireLock(dir); holder != 0 {
+		t.Fatalf("acquiring again from the holder = %d", holder)
+	}
+	// the OS lock keeps anyone else out, whatever the file says
+	other, err := os.OpenFile(file, os.O_RDWR, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ok, _ := platform.TryLockFile(other); ok {
+		t.Fatal("another open file got the lock")
+	}
+	other.Close()
+	ReleaseLock(dir)
+	if ReadLock(dir) != 0 {
+		t.Fatal("released lock should name nobody")
+	}
+
+	// a lock file written by a live process that is not us is respected (pid 1 is always there on POSIX)
 	if !platform.IsWindows {
-		os.WriteFile(filepath.Join(dir, "orbit.lock"), []byte("1"), 0o644)
+		os.WriteFile(file, []byte("1"), 0o644)
 		if holder := AcquireLock(dir); holder != 1 {
 			t.Fatalf("held by pid 1, acquire = %d", holder)
 		}
 	}
 	// a stale pid is taken over
-	os.WriteFile(filepath.Join(dir, "orbit.lock"), []byte("2147483646"), 0o644)
+	os.WriteFile(file, []byte("2147483646"), 0o644)
 	if holder := AcquireLock(dir); holder != 0 {
 		t.Fatalf("stale lock, acquire = %d", holder)
 	}
 	ReleaseLock(dir)
-	if _, err := os.Stat(filepath.Join(dir, "orbit.lock")); err == nil {
-		t.Fatal("lock should be gone")
-	}
 }

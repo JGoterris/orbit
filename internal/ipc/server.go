@@ -96,22 +96,37 @@ func (s *Server) ClientCount() int {
 
 // Start begins listening. It returns false when another orbit already answers on this socket.
 func (s *Server) Start() (bool, error) {
+	dir := socketDir(s.path)
+	if dir != "" {
+		if err := os.MkdirAll(dir, 0o700); err != nil {
+			return false, err
+		}
+		if err := checkSocketDir(dir); err != nil {
+			return false, err
+		}
+		// two orbits starting at once must not both find the socket dead: the second would remove the first one's
+		unlock, err := lockSocket(s.path)
+		if err != nil {
+			return false, err
+		}
+		defer unlock()
+	}
 	if c, err := Connect(s.path, 500*time.Millisecond); err == nil {
 		c.Close()
 		return false, nil
 	}
-	if dir := socketDir(s.path); dir != "" {
-		if err := os.MkdirAll(dir, 0o700); err != nil {
-			return false, err
-		}
+	if dir != "" {
 		os.Remove(s.path) // leftover of a process that did not clean up
 	}
 	ln, err := listen(s.path)
 	if err != nil {
 		return false, err
 	}
-	if socketDir(s.path) != "" {
-		os.Chmod(s.path, 0o600)
+	if dir != "" {
+		if err := os.Chmod(s.path, 0o600); err != nil {
+			ln.Close()
+			return false, err
+		}
 	}
 	s.mu.Lock()
 	s.listener = ln

@@ -259,6 +259,58 @@ func TestASecondServerRefusesALiveSocketAndAStaleOneIsReplaced(t *testing.T) {
 	replacement.Close()
 }
 
+func TestServersStartingTogetherServeOnlyOnce(t *testing.T) {
+	sup := supervisor.New(cfgOf("race", svc("a", "sleep 30")), supervisor.Options{StateDir: t.TempDir()})
+	t.Cleanup(sup.Dispose)
+	const n = 8
+	var wg sync.WaitGroup
+	var mu sync.Mutex
+	var winners []*Server
+	for range n {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			srv := NewServer(sup, ServerOptions{})
+			if started, err := srv.Start(); err == nil && started {
+				mu.Lock()
+				winners = append(winners, srv)
+				mu.Unlock()
+			}
+		}()
+	}
+	wg.Wait()
+	for _, w := range winners {
+		t.Cleanup(w.Close)
+	}
+	if len(winners) != 1 {
+		t.Fatalf("%d servers started on the same socket", len(winners))
+	}
+	c, err := Connect(winners[0].Path(), 2*time.Second)
+	if err != nil {
+		t.Fatalf("the winner does not answer: %v", err)
+	}
+	c.Close()
+}
+
+func TestRefusesASocketDirOthersCanWrite(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "shared")
+	if err := os.Mkdir(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := checkSocketDir(dir); err != nil {
+		t.Fatalf("private dir refused: %v", err)
+	}
+	os.Chmod(dir, 0o777)
+	if err := checkSocketDir(dir); err == nil {
+		t.Fatal("world-writable dir accepted")
+	}
+	link := filepath.Join(t.TempDir(), "link")
+	os.Symlink(t.TempDir(), link)
+	if err := checkSocketDir(link); err == nil {
+		t.Fatal("symlinked dir accepted")
+	}
+}
+
 func TestMalformedInputGetsAParseErrorAndKeepsTheConnection(t *testing.T) {
 	e := setup(t, "bad", svc("a", "sleep 30"))
 	raw, err := net.Dial("unix", e.server.Path())

@@ -11,6 +11,8 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"sync"
+	"time"
 
 	"github.com/JGoterris/orbit/internal/config"
 	"github.com/JGoterris/orbit/internal/platform"
@@ -85,31 +87,93 @@ func Write(dir string, s Saved) {
 
 // ReadLock is the pid of the live orbit that holds the project, or 0.
 func ReadLock(dir string) int {
-	data, err := os.ReadFile(filepath.Join(dir, "orbit.lock"))
+	if pid := lockPid(dir); platform.PidAlive(pid) {
+		return pid
+	}
+	return 0
+}
+
+var (
+	locksMu sync.Mutex
+	// locks are the orbit.lock files this process holds, by state directory
+	locks = map[string]*os.File{}
+)
+
+// UnknownHolder is what AcquireLock returns when the lock is held but its holder has not written its pid yet.
+const UnknownHolder = -1
+
+// AcquireLock takes the per-project lock. It returns the pid of the orbit that already holds it, or 0 when we got it.
+//
+// The lock is an OS file lock on orbit.lock (so two orbits starting at once cannot both get it, and it goes away
+// with its holder); the file also carries the holder's pid so others can name it. It is best effort: when the
+// state directory cannot be written or locked, orbit runs without it.
+func AcquireLock(dir string) int {
+	locksMu.Lock()
+	defer locksMu.Unlock()
+	if locks[dir] != nil {
+		return 0
+	}
+	if os.MkdirAll(dir, 0o755) != nil {
+		return 0
+	}
+	f, err := os.OpenFile(filepath.Join(dir, "orbit.lock"), os.O_RDWR|os.O_CREATE, 0o644)
 	if err != nil {
 		return 0
 	}
-	pid, err := strconv.Atoi(strings.TrimSpace(string(data)))
-	if err != nil || !platform.PidAlive(pid) {
-		return 0
+	for attempt := 0; ; attempt++ {
+		ok, err := platform.TryLockFile(f)
+		if err != nil {
+			f.Close()
+			return 0
+		}
+		if ok {
+			break
+		}
+		// held: the holder writes its pid right after locking
+		if pid := lockPid(dir); pid > 0 && pid != os.Getpid() {
+			f.Close()
+			return pid
+		}
+		if attempt == 20 {
+			f.Close()
+			return UnknownHolder
+		}
+		time.Sleep(50 * time.Millisecond)
 	}
-	return pid
-}
-
-// AcquireLock takes the per-project lock. It returns the pid of the orbit that already holds it, or 0 when we got it.
-func AcquireLock(dir string) int {
+	// an orbit that only writes its pid (an older build) still holds the project while it lives
 	if holder := ReadLock(dir); holder != 0 && holder != os.Getpid() {
+		platform.UnlockFile(f)
+		f.Close()
 		return holder
 	}
-	if os.MkdirAll(dir, 0o755) == nil {
-		os.WriteFile(filepath.Join(dir, "orbit.lock"), []byte(strconv.Itoa(os.Getpid())), 0o644)
+	if f.Truncate(0) == nil {
+		f.WriteAt([]byte(strconv.Itoa(os.Getpid())), 0)
 	}
+	locks[dir] = f
 	return 0
 }
 
 // ReleaseLock gives the lock back, if it is ours.
 func ReleaseLock(dir string) {
-	if ReadLock(dir) == os.Getpid() {
-		os.Remove(filepath.Join(dir, "orbit.lock"))
+	locksMu.Lock()
+	defer locksMu.Unlock()
+	f := locks[dir]
+	if f == nil {
+		return
 	}
+	delete(locks, dir)
+	// emptied, not removed: an orbit waiting on the old file would lock one nobody else can find any more
+	f.Truncate(0)
+	platform.UnlockFile(f)
+	f.Close()
+}
+
+// lockPid is the pid written in orbit.lock, alive or not, or 0.
+func lockPid(dir string) int {
+	data, err := os.ReadFile(filepath.Join(dir, "orbit.lock"))
+	if err != nil {
+		return 0
+	}
+	pid, _ := strconv.Atoi(strings.TrimSpace(string(data)))
+	return pid
 }
