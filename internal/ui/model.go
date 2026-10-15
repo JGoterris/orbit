@@ -110,6 +110,10 @@ type Options struct {
 	Rebind func(sup supervisor.Like)
 	// StartWithPicker opens the project picker right away (orbit was started in a folder that is not a project)
 	StartWithPicker bool
+	// Splash plays the animated logo before the app shows up
+	Splash bool
+	// Version is orbit's, shown on the splash
+	Version string
 }
 
 // Relaunch is an orbit.yaml on disk that differs from what the running orbit has.
@@ -196,6 +200,8 @@ type Model struct {
 	opts Options
 	sup  supervisor.Like
 	geo  *geometry
+	// splash is the intro animation while it plays
+	splash *splashState
 
 	width, height int
 	tick          int

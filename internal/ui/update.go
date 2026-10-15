@@ -14,6 +14,10 @@ import (
 // Init starts the clock and shows what is waiting for the user at startup.
 func (m *Model) Init() tea.Cmd {
 	cmds := []tea.Cmd{tickEvery(250 * time.Millisecond)}
+	if m.opts.Splash {
+		m.splash = newSplash()
+		cmds = append(cmds, splashTick())
+	}
 	switch r := m.opts.Relaunch; {
 	case m.opts.StartWithPicker:
 		m.openProjects()
@@ -158,6 +162,11 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 func (m *Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	if m.splash != nil {
+		if cmd, handled := m.splashUpdate(msg); handled {
+			return m, cmd
+		}
+	}
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
 		m.width, m.height = msg.Width, msg.Height

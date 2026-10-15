@@ -11,6 +11,16 @@ import (
 
 // View draws the whole screen.
 func (m *Model) View() string {
+	if m.splash != nil {
+		if s, ok := m.renderSplash(); ok {
+			return s
+		}
+	}
+	return m.viewApp()
+}
+
+// viewApp draws the app itself.
+func (m *Model) viewApp() string {
 	W, H := m.width, m.height
 	if W < 20 || H < 6 {
 		return "orbit needs a bigger terminal"

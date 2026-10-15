@@ -19,10 +19,15 @@ type Config struct {
 	Theme string `json:"theme,omitempty"`
 	// Notifications: desktop notifications when a service goes down (on unless false)
 	Notifications *bool `json:"notifications,omitempty"`
+	// Splash: the animated logo when the TUI opens (on unless false)
+	Splash *bool `json:"splash,omitempty"`
 }
 
 // NotificationsEnabled is whether desktop notifications are on.
 func (c Config) NotificationsEnabled() bool { return c.Notifications == nil || *c.Notifications }
+
+// SplashEnabled is whether the TUI opens with its animated logo.
+func (c Config) SplashEnabled() bool { return c.Splash == nil || *c.Splash }
 
 // Read returns the saved settings; an empty Config when there are none or the file is unreadable.
 func Read() Config {
@@ -33,6 +38,7 @@ func Read() Config {
 	var raw struct {
 		Theme         any `json:"theme"`
 		Notifications any `json:"notifications"`
+		Splash        any `json:"splash"`
 	}
 	if json.Unmarshal(data, &raw) != nil {
 		return Config{}
@@ -43,6 +49,9 @@ func Read() Config {
 	}
 	if b, ok := raw.Notifications.(bool); ok {
 		c.Notifications = &b
+	}
+	if b, ok := raw.Splash.(bool); ok {
+		c.Splash = &b
 	}
 	return c
 }
@@ -76,6 +85,9 @@ func Write(patch Config) bool {
 	}
 	if patch.Notifications != nil {
 		cur.Notifications = patch.Notifications
+	}
+	if patch.Splash != nil {
+		cur.Splash = patch.Splash
 	}
 	return WriteJSONAtomic(filepath.Join(Dir(), "config.json"), cur)
 }

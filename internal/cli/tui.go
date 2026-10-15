@@ -161,6 +161,8 @@ func RunTUI(cfg *config.OrbitConfig, opts TUIOptions) int {
 		Sup: first, OnQuit: quit,
 		Themes: themes, ThemeOrder: order, CustomThemes: customNames, InitialTheme: initial, ThemeErrors: themeErrors,
 		Relaunch: relaunch, StartWithPicker: opts.Bare,
+		// without colours the splash is only noise
+		Splash: userconfig.Read().SplashEnabled() && os.Getenv("NO_COLOR") == "", Version: Version,
 		SaveTheme:        func(name string) bool { return userconfig.Write(userconfig.Config{Theme: name}) },
 		Notifications:    func() bool { return userconfig.Read().NotificationsEnabled() },
 		SetNotifications: func(on bool) bool { return userconfig.Write(userconfig.Config{Notifications: &on}) },

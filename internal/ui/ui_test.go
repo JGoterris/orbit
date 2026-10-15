@@ -6,6 +6,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/x/ansi"
@@ -437,5 +438,37 @@ func TestMouseOnGitListsSelectsAndScrolls(t *testing.T) {
 	m.Update(tea.MouseMsg{X: 50, Y: 4, Button: tea.MouseButtonWheelDown, Action: tea.MouseActionPress})
 	if m.gs().scroll != 3 {
 		t.Fatalf("diff scroll = %d", m.gs().scroll)
+	}
+}
+
+func TestSplashSkipsWithKeys(t *testing.T) {
+	m, _ := newModel(t)
+	m.opts.Splash = true
+	m.Init()
+	m.splash.start = time.Now().Add(-time.Second)
+	if m.splash == nil || !strings.Contains(screen(m), "▀") {
+		t.Fatal("the splash should be showing")
+	}
+	press(m, "j")
+	if m.splash == nil || m.splash.closing.IsZero() {
+		t.Fatal("a key should start closing the splash")
+	}
+	press(m, "j")
+	if m.splash != nil {
+		t.Fatal("a second key should end it")
+	}
+	if !strings.Contains(screen(m), "Services") {
+		t.Fatalf("the app should show after the splash:\n%s", screen(m))
+	}
+}
+
+func TestSplashSkippedOnTinyTerminals(t *testing.T) {
+	m, _ := newModel(t)
+	m.opts.Splash = true
+	m.Init()
+	m.Update(tea.WindowSizeMsg{Width: 30, Height: 8})
+	m.Update(splashTickMsg{})
+	if m.splash != nil {
+		t.Fatal("no splash on a terminal too small for it")
 	}
 }

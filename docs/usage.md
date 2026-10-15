@@ -24,6 +24,8 @@ orbit validate [dir] # checks the orbit.yaml (errors and unknown keys, e.g. a ty
 Without `orbit.yaml`, orbit opens the services from a `docker-compose.yml` directly. In a folder with
 neither, the TUI opens with no services and the project picker (other commands report an error).
 
+The TUI opens with a short animation of the logo; any key skips it. To turn it off, set `"splash": false` in
+`~/.config/orbit/config.json` (it is also left out with `NO_COLOR`).
 
 See [keys.md](keys.md) for the keyboard shortcuts.
 

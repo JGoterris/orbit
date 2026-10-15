@@ -41,11 +41,14 @@ type screen struct {
 
 func start(t *testing.T, dir string, cols, rows int, args ...string) *screen {
 	t.Helper()
-	state := t.TempDir()
+	state, cfgHome := t.TempDir(), t.TempDir()
+	// the splash would take the first keys
+	os.MkdirAll(filepath.Join(cfgHome, "orbit"), 0o755)
+	os.WriteFile(filepath.Join(cfgHome, "orbit", "config.json"), []byte(`{"splash":false}`), 0o644)
 	s, err := console.NewSession(console.Spec{
 		Argv: append([]string{binary}, args...), Cwd: dir,
 		Env: map[string]string{
-			"XDG_STATE_HOME": state, "XDG_CONFIG_HOME": t.TempDir(), "NO_COLOR": "",
+			"XDG_STATE_HOME": state, "XDG_CONFIG_HOME": cfgHome, "NO_COLOR": "",
 			// a CI machine has no git identity of its own
 			"GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@t", "GIT_COMMITTER_NAME": "t", "GIT_COMMITTER_EMAIL": "t@t",
 		},
