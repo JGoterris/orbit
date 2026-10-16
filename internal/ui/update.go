@@ -190,7 +190,8 @@ func (m *Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case gitRefreshedMsg:
 		return m, nil
 	case lazygitDoneMsg:
-		cmds := []tea.Cmd{m.gitRefresh(true)}
+		// Bubble Tea turns the mouse off to hand the terminal to lazygit and does not turn it back on
+		cmds := []tea.Cmd{m.gitRefresh(true), tea.EnableMouseCellMotion}
 		if msg.err != nil {
 			cmds = append(cmds, m.notify("lazygit: "+msg.err.Error(), theme.Active().Red))
 		}

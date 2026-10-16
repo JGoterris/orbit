@@ -394,6 +394,22 @@ func TestSwitchProjectModalSaysWhatHappensToServices(t *testing.T) {
 	}
 }
 
+func TestMouseComesBackAfterLazygit(t *testing.T) {
+	m, _ := newModel(t)
+	_, cmd := m.Update(lazygitDoneMsg{})
+	batch, ok := cmd().(tea.BatchMsg)
+	if !ok {
+		t.Fatal("expected a batch of commands")
+	}
+	want := fmt.Sprintf("%T", tea.EnableMouseCellMotion())
+	for _, c := range batch {
+		if c != nil && fmt.Sprintf("%T", c()) == want {
+			return
+		}
+	}
+	t.Fatal("the mouse is not enabled again after lazygit exits")
+}
+
 func TestViewFitsTheTerminal(t *testing.T) {
 	m, sup := newModel(t)
 	sup.Start("db")
