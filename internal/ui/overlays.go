@@ -243,32 +243,71 @@ func (m *Model) envEntries() ([]config.EnvEntry, []string) {
 	return config.ResolveEnv(svc.Env, svc.EnvFiles, m.sup.Config().Root)
 }
 
+// envRow is one screen row of the env overlay; a long value takes several, the continuation ones with no key.
+type envRow struct {
+	key, val, src string
+	secret        bool
+}
+
+type envLayout struct {
+	rows             []envRow
+	keyW, srcW, valW int
+}
+
+// envLayoutFor lays the variables out for a terminal width: values are wrapped, never cut.
+func (m *Model) envLayoutFor(W int) (envLayout, []string) {
+	entries, missing := m.envEntries()
+	w := min(100, W-4)
+	l := envLayout{keyW: 8, srcW: 6}
+	for _, e := range entries {
+		l.keyW = max(l.keyW, min(32, len([]rune(e.Key))))
+		l.srcW = max(l.srcW, min(24, len([]rune(e.Source))))
+	}
+	l.valW = max(8, w-4-l.keyW-l.srcW-2)
+	flat := strings.NewReplacer("\r\n", "\\n", "\n", "\\n", "\r", "\\r")
+	for _, e := range entries {
+		if !m.envReveal && isSecretKey(e.Key) {
+			l.rows = append(l.rows, envRow{key: e.Key, val: "••••••", src: e.Source, secret: true})
+			continue
+		}
+		val := []rune(flat.Replace(e.Value))
+		first := true
+		for {
+			n := min(len(val), l.valW)
+			row := envRow{val: string(val[:n])}
+			if first {
+				row.key, row.src = e.Key, e.Source
+			}
+			l.rows = append(l.rows, row)
+			val, first = val[n:], false
+			if len(val) == 0 {
+				break
+			}
+		}
+	}
+	return l, missing
+}
+
 func (m *Model) renderEnv(W, H int) ([]string, int, int, int) {
 	p := theme.Active()
-	entries, missing := m.envEntries()
+	l, missing := m.envLayoutFor(W)
+	entries, _ := m.envEntries()
 	w := min(100, W-4)
 	h := min(H-4, 30)
 	page := envPageSize(H)
-	start := min(m.envScroll, max(0, len(entries)-page))
-	shown := entries[start:min(len(entries), start+page)]
-	keyW, srcW := 8, 6
-	for _, e := range entries {
-		keyW = max(keyW, min(32, len([]rune(e.Key))))
-		srcW = max(srcW, min(24, len([]rune(e.Source))))
-	}
-	valW := max(8, w-4-keyW-srcW-2)
+	start := min(m.envScroll, max(0, len(l.rows)-page))
+	shown := l.rows[start:min(len(l.rows), start+page)]
 	var content []string
-	if len(shown) == 0 {
+	if len(entries) == 0 {
 		content = append(content, newLine(p.PanelAlt).add(p.Dim, "no variables defined for this service").String())
 	}
-	for _, e := range shown {
-		val := e.Value
+	for _, r := range shown {
 		color := p.Text
-		if !m.envReveal && isSecretKey(e.Key) {
-			val, color = "••••••", p.Dim
+		if r.secret {
+			color = p.Dim
 		}
-		content = append(content, newLine(p.PanelAlt).add(p.Accent, theme.Fit(e.Key, keyW+1)).
-			add(color, theme.Fit(val, valW+1)).add(p.Dim, theme.Fit(e.Source, srcW)).String())
+		content = append(content, newLine(p.PanelAlt).add(p.Accent, theme.Fit(r.key, l.keyW+1)).
+			add(color, theme.Fit(r.val, l.valW+1)).add(p.Dim, theme.Fit(r.src, l.srcW)).String())
 	}
 	for len(content) < h-2-2 {
 		content = append(content, blank(w-4, p.PanelAlt))
@@ -281,8 +320,8 @@ func (m *Model) renderEnv(W, H int) ([]string, int, int, int) {
 		verb = "hide"
 	}
 	foot := fmt.Sprintf("j/k scroll · v %s secrets · esc close", verb)
-	if len(entries) > page {
-		foot += fmt.Sprintf("  (%d-%d/%d)", start+1, start+len(shown), len(entries))
+	if len(l.rows) > page {
+		foot += fmt.Sprintf("  (%d-%d/%d)", start+1, start+len(shown), len(l.rows))
 	}
 	content = append(content, newLine(p.PanelAlt).add(p.Dim, foot).String())
 	x, y := center(W, H, w, h)

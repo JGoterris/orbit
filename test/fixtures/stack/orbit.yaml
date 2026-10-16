@@ -22,7 +22,13 @@ services:
   api:
     cmd: bun --watch services/http.ts api
     port: 4100
-    env: { PORT: "4100", DATABASE_URL: "postgres://postgres:orbit@localhost:55432/demo" }
+    env:
+      PORT: "4100"
+      DATABASE_URL: "postgres://postgres:orbit@localhost:55432/demo"
+      # long values, to try how the env overlay (e) wraps them
+      ALLOWED_ORIGINS: "http://localhost:4200,http://localhost:4400,https://demo.example.com,https://admin.demo.example.com,https://staging.demo.example.com,https://preview-1234.demo.example.com"
+      FEATURE_FLAGS: "new-dashboard=on,beta-search=off,audit-log=on,rate-limit-v2=on,dark-mode-default=off,export-csv=on,webhooks-retry=on"
+      JWT_PUBLIC_KEY: "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAu1SU1LfVLPHCozMxH2Mo4lgOEePzNm0tRgeLezV6ffAt0gunVTLw7onLRnrq0"
     depends_on: [postgres, redis, auth]
     health: { http: "http://localhost:4100/health", interval: 2s }
     restart: on-failure

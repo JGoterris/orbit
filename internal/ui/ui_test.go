@@ -410,6 +410,32 @@ func TestMouseComesBackAfterLazygit(t *testing.T) {
 	t.Fatal("the mouse is not enabled again after lazygit exits")
 }
 
+func TestEnvOverlayWrapsLongValues(t *testing.T) {
+	m, sup := newModel(t)
+	long := strings.Repeat("0123456789", 20)
+	sup.Service("db").Env["LONG_VALUE"] = long
+	press(m, "e")
+	if m.mode != modeEnv {
+		t.Fatalf("mode = %v", m.mode)
+	}
+	var got strings.Builder
+	for _, r := range screen(m) {
+		got.WriteRune(r)
+	}
+	// every character of the value is on screen, spread over continuation rows
+	rows, _ := m.envLayoutFor(m.width)
+	var joined strings.Builder
+	for _, r := range rows.rows {
+		joined.WriteString(r.val)
+	}
+	if !strings.Contains(joined.String(), long) {
+		t.Fatalf("the value is cut: %q", joined.String())
+	}
+	if strings.Contains(got.String(), "…") {
+		t.Fatalf("the overlay still truncates:\n%s", got.String())
+	}
+}
+
 func TestViewFitsTheTerminal(t *testing.T) {
 	m, sup := newModel(t)
 	sup.Start("db")

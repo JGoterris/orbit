@@ -340,9 +340,9 @@ func (m *Model) keyInMode(k tea.KeyMsg) tea.Cmd {
 		}
 		return nil
 	case modeEnv:
-		entries, _ := m.envEntries()
+		l, _ := m.envLayoutFor(m.width)
 		page := envPageSize(m.height)
-		clampTo := func(v int) int { return max(0, min(v, max(0, len(entries)-page))) }
+		clampTo := func(v int) int { return max(0, min(v, max(0, len(l.rows)-page))) }
 		switch s {
 		case "esc", "e", "q":
 			m.mode = modeNormal
@@ -359,7 +359,7 @@ func (m *Model) keyInMode(k tea.KeyMsg) tea.Cmd {
 		case "g", "home":
 			m.envScroll = 0
 		case "G", "end":
-			m.envScroll = clampTo(len(entries))
+			m.envScroll = clampTo(len(l.rows))
 		}
 		return nil
 	case modeQuit:
