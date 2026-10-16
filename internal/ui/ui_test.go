@@ -596,6 +596,41 @@ func TestFitHintsKeepsHelpAndQuit(t *testing.T) {
 	}
 }
 
+func TestServiceListKeepsColumnsAroundLongNames(t *testing.T) {
+	m, sup := newModel(t)
+	sup.Service("db").Port = 5432
+	list := func(w int, compact bool) string {
+		return ansi.Strip(strings.Join(m.renderServiceList(w, 8, true, compact), "\n"))
+	}
+	// short names: the whole table fits in the default sidebar
+	if out := list(52, false); !strings.Contains(out, ":5432") || !strings.Contains(out, "proc") {
+		t.Fatalf("short names must leave room for every column:\n%s", out)
+	}
+	// a very long name is cut in the middle and the port stays
+	long := strings.Repeat("long-", 8) + "tail"
+	cwd, _ := os.Getwd()
+	cfg := &config.OrbitConfig{Name: "t", Root: cwd, Services: map[string]*config.ServiceConfig{}, Groups: map[string][]string{}}
+	s := svc(long, "sleep 30")
+	s.Port = 5432
+	cfg.Services[long] = s
+	cfg.Order = []string{long}
+	sup2 := supervisor.New(cfg, supervisor.Options{StateDir: t.TempDir()})
+	t.Cleanup(func() { sup2.Dispose() })
+	m2 := New(Options{Sup: sup2, OnQuit: func(string) {}})
+	m2.Update(tea.WindowSizeMsg{Width: 120, Height: 36})
+	out := ansi.Strip(strings.Join(m2.renderServiceList(40, 8, true, false), "\n"))
+	if !strings.Contains(out, "…") || strings.Contains(out, long) || !strings.Contains(out, "tail") {
+		t.Fatalf("the name must be cut in the middle, keeping its end:\n%s", out)
+	}
+	if !strings.Contains(out, ":5432") {
+		t.Fatalf("a long name must not push the port out:\n%s", out)
+	}
+	// the compact list shows the port and nothing else
+	if out := list(30, true); strings.Contains(out, "proc") {
+		t.Fatalf("compact has no type badge:\n%s", out)
+	}
+}
+
 func TestViewFitsTheTerminal(t *testing.T) {
 	m, sup := newModel(t)
 	sup.Start("db")
