@@ -614,6 +614,17 @@ func (m *Model) gitKeys(k tea.KeyMsg) (cmd tea.Cmd, handled bool) {
 	if g.selOn && m.focus == paneGitDiff {
 		return m.gitDiffSelectKeys(s), true
 	}
+	// esc steps back out of a section: the diff to the list it came from, a list to the repos
+	if s == "esc" {
+		switch {
+		case m.focus == paneGitDiff:
+			m.focus = g.lastList
+			return nil, true
+		case isGitList(m.focus):
+			m.focus = paneRepos
+			return nil, true
+		}
+	}
 	v, ok := m.gitView()
 	if !ok {
 		return nil, false
@@ -640,8 +651,6 @@ func (m *Model) gitKeys(k tea.KeyMsg) (cmd tea.Cmd, handled bool) {
 		switch s {
 		case "v":
 			return m.gitDiffSelectStart(), true
-		case "esc":
-			m.focus = g.lastList
 		case "down", "j":
 			g.scroll++
 		case "up", "k":

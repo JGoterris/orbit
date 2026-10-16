@@ -536,6 +536,11 @@ func (m *Model) keyInMode(k tea.KeyMsg) tea.Cmd {
 		m.resetSize()
 		return nil
 	case "esc":
+		if m.view == "git" {
+			if cmd, handled := m.gitKeys(k); handled {
+				return cmd
+			}
+		}
 		if m.search != "" || m.filter != "" {
 			m.clearLogQueries()
 			return nil

@@ -550,6 +550,24 @@ func TestDiffLineSelectionCopiesTheRange(t *testing.T) {
 	}
 }
 
+func TestEscStepsBackOutOfGitSections(t *testing.T) {
+	m, _ := newModel(t)
+	m.view, m.focus = "git", paneGitDiff
+	m.gs().lastList = paneBranches
+	press(m, "esc")
+	if m.focus != paneBranches {
+		t.Fatalf("esc in the diff goes back to the list it came from, focus = %s", m.focus)
+	}
+	press(m, "esc")
+	if m.focus != paneRepos {
+		t.Fatalf("esc in a list goes back to the repos, focus = %s", m.focus)
+	}
+	press(m, "esc")
+	if m.focus != paneRepos || m.view != "git" {
+		t.Fatalf("esc on the repos stays put, focus = %s view = %s", m.focus, m.view)
+	}
+}
+
 func TestViewFitsTheTerminal(t *testing.T) {
 	m, sup := newModel(t)
 	sup.Start("db")
