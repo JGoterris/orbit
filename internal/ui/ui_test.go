@@ -487,6 +487,69 @@ func TestEnvOverlayCopiesValuesAndRanges(t *testing.T) {
 	}
 }
 
+func TestDiffLineSelectionCopiesTheRange(t *testing.T) {
+	m, _ := newModel(t)
+	g := m.gs()
+	g.rows = diffRows{rows: []diffRow{
+		{kind: rowFile, text: "a.go", hunk: -1},
+		{kind: rowHunk, text: "@@ -1,2 +1,2 @@", hunk: 0},
+		{kind: rowCtx, text: "keep", hunk: 0},
+		{kind: rowDel, text: "old", hunk: 0},
+		{kind: rowAdd, text: "new", hunk: 0},
+	}}
+	g.pageRows = 3
+	var copied string
+	old := clipboardCopy
+	clipboardCopy = func(text string) copyResult { copied = text; return copyResult{ok: true, via: "test"} }
+	t.Cleanup(func() { clipboardCopy = old })
+
+	// the first v only shows the cursor
+	g.scroll = 2
+	m.gitDiffSelectStart()
+	if !g.selOn || g.selAnchor != -1 || g.selCur != 2 {
+		t.Fatalf("on = %v anchor = %d cursor = %d", g.selOn, g.selAnchor, g.selCur)
+	}
+	// the second one starts the range
+	m.gitDiffSelectKeys("v")
+	if g.selAnchor != 2 {
+		t.Fatalf("anchor = %d", g.selAnchor)
+	}
+	m.gitDiffSelectKeys("j")
+	m.gitDiffSelectKeys("j")
+	if g.selCur != 4 || g.scroll != 2 {
+		t.Fatalf("cursor = %d scroll = %d (the cursor must stay on screen)", g.selCur, g.scroll)
+	}
+	msg := m.gitDiffSelectKeys("y")()
+	done, ok := msg.(copyDoneMsg)
+	if !ok || done.n != 3 || copied != " keep\n-old\n+new" {
+		t.Fatalf("copied %q (%+v)", copied, msg)
+	}
+	if g.selOn {
+		t.Fatal("copying ends copy mode")
+	}
+	// with no range, y copies the line under the cursor
+	g.selOn, g.selAnchor, g.selCur = true, -1, 3
+	if done, ok := m.gitDiffSelectKeys("y")().(copyDoneMsg); !ok || done.n != 1 || copied != "-old" {
+		t.Fatalf("copied %q", copied)
+	}
+	// esc only exits
+	g.selOn, g.selAnchor, g.selCur = true, 0, 1
+	if m.gitDiffSelectKeys("esc") != nil || g.selOn || g.selAnchor != -1 {
+		t.Fatal("esc must exit without copying")
+	}
+	// through the real key path: esc exits, and q / digits do not reach the global shortcuts meanwhile
+	m.view, m.focus = "git", paneGitDiff
+	g.selOn, g.selAnchor, g.selCur = true, -1, 1
+	press(m, "q", "1")
+	if m.mode != modeNormal || m.view != "git" || !g.selOn {
+		t.Fatalf("copy mode must keep the keys: mode = %v view = %s on = %v", m.mode, m.view, g.selOn)
+	}
+	press(m, "esc")
+	if g.selOn {
+		t.Fatal("esc must leave copy mode")
+	}
+}
+
 func TestViewFitsTheTerminal(t *testing.T) {
 	m, sup := newModel(t)
 	sup.Start("db")

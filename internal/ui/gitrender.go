@@ -558,8 +558,21 @@ func (m *Model) renderGitDiff(v gitView, w, h int) []string {
 			content = append(content, l.String())
 		}
 	default:
+		selLo, selHi := -1, -1
+		if g.selOn {
+			selLo, selHi = g.selCur, g.selCur
+			if g.selAnchor >= 0 {
+				selLo, selHi = min(g.selAnchor, g.selCur), max(g.selAnchor, g.selCur)
+			}
+		}
 		for i, r := range rows.rows[top:min(len(rows.rows), top+height)] {
-			_ = i
+			// lines being selected for a copy
+			selBg := ""
+			if at := top + i; at == g.selCur && g.selOn {
+				selBg = p.Cursor
+			} else if at >= selLo && at <= selHi {
+				selBg = p.Selection
+			}
 			mark := " "
 			if r.hunk >= 0 && r.hunk == cur {
 				mark = "▌"
@@ -567,11 +580,15 @@ func (m *Model) renderGitDiff(v gitView, w, h int) []string {
 			l := newLine(p.Panel)
 			switch r.kind {
 			case rowFile:
-				l.addStyled(p.Accent, p.PanelAlt, true, theme.Fit(" "+r.text, width))
+				bg := p.PanelAlt
+				if selBg != "" {
+					bg = selBg
+				}
+				l.addStyled(p.Accent, bg, true, theme.Fit(" "+r.text, width))
 			case rowNote:
-				l.add(p.Dim, "  "+r.text)
+				l.addStyled(p.Dim, selBg, false, theme.Fit("  "+r.text, width))
 			case rowHunk:
-				l.add(p.Accent, mark).add(p.Accent2, theme.Fit(" "+r.text, width-1))
+				l.add(p.Accent, mark).addStyled(p.Accent2, selBg, false, theme.Fit(" "+r.text, width-1))
 			default:
 				bg, fg, sign := "", p.Text, " "
 				switch r.kind {
@@ -585,6 +602,9 @@ func (m *Model) renderGitDiff(v gitView, w, h int) []string {
 				text := sign + tabs(r.text)
 				if r.kind == rowMarker {
 					text = r.text
+				}
+				if selBg != "" {
+					bg = selBg
 				}
 				l.add(p.Accent, mark).add(p.Dim, num(r.oldNo)+" "+num(r.newNo)+" ").addStyled(fg, bg, false, theme.Fit(text, textW))
 			}
@@ -614,6 +634,11 @@ func (m *Model) renderGitDiff(v gitView, w, h int) []string {
 	}
 	if g.split {
 		parts = append(parts, "split")
+	}
+	if g.selAnchor >= 0 {
+		parts = append(parts, fmt.Sprintf("%d selected", max(g.selCur-g.selAnchor, g.selAnchor-g.selCur)+1))
+	} else if g.selOn {
+		parts = append(parts, "copy mode")
 	}
 	return panel(panelOpts{title: "Diff · " + titleTarget, bottom: strings.Join(parts, " · "), focused: m.focus == paneGitDiff, padX: 1}, w, h, content)
 }
@@ -678,13 +703,21 @@ func (m *Model) gitHints() [][2]string {
 	case paneChanges:
 		return join([][2]string{{"space", "stage"}, {"a", "all"}, {"c", "commit"}, {"y", "copy path"}, {"enter", "diff/fold"}, net, lazy, {"m", "multi"}}, common)
 	case paneBranches:
-		return join([][2]string{{"enter", "switch"}, {"n", "new"}, net, lazy, {"m", "multi"}}, common)
-	case paneCommits, paneStash:
-		return join([][2]string{{"enter", "diff"}, net, lazy, {"m", "multi"}}, common)
+		return join([][2]string{{"enter", "switch"}, {"n", "new"}, {"y", "copy name"}, net, lazy, {"m", "multi"}}, common)
+	case paneCommits:
+		return join([][2]string{{"enter", "diff"}, {"y", "copy hash"}, net, lazy, {"m", "multi"}}, common)
+	case paneStash:
+		return join([][2]string{{"enter", "diff"}, {"y", "copy ref"}, net, lazy, {"m", "multi"}}, common)
 	case paneGitLog:
 		return join([][2]string{{"j/k", "move"}, {"G", "latest"}, {"y", "copy command"}, {"c", "clear"}, lazy, {"m", "multi"}}, common)
 	}
-	hints := [][2]string{{"esc", "back"}, {"j/k", "scroll"}, {"[ ]", "hunk"}}
+	if g.selOn {
+		if g.selAnchor >= 0 {
+			return join([][2]string{{"j/k", "extend"}, {"y", "copy lines"}, {"v", "unmark"}, {"esc", "exit"}}, common)
+		}
+		return join([][2]string{{"j/k", "move"}, {"v", "start selecting"}, {"y", "copy line"}, {"esc", "exit"}}, common)
+	}
+	hints := [][2]string{{"esc", "back"}, {"j/k", "scroll"}, {"[ ]", "hunk"}, {"v", "copy mode"}}
 	if v, ok := m.gitView(); ok && v.source == paneChanges {
 		n := 0
 		for _, r := range v.tree {

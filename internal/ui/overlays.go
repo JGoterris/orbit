@@ -190,6 +190,8 @@ var helpRows = [][2]string{
 	{"(git repos) space a", "mark a repo for multi-repo actions · mark all / none"},
 	{"(git) m then f p u b s", "multi-repo on the marked repos (all if none): fetch · pull · push · new branch · switch branch"},
 	{"(git diff) [ ] { } s", "previous/next hunk · previous/next file · split view"},
+	{"(git) y · Y", "copy: branch name · commit hash (Y: with subject) · stash ref · path"},
+	{"(git diff) v", "copy mode: a cursor (j k) · v again starts the range · y copies with +/- · esc exits"},
 	{"(git commands)", "j k move · y copy the command · c clear"},
 	{"P · U", "open another project · apply orbit.yaml edits (restarts only what changed)"},
 	{"T", "change color theme (live preview, enter saves)"},

@@ -75,6 +75,9 @@ type gitState struct {
 	split      bool
 	scroll     int
 	hunkIdx    int
+	selOn      bool // the diff has a cursor to pick lines to copy
+	selCur     int  // diff row under that cursor
+	selAnchor  int  // diff row where a range started (v again), -1 for none
 	prompt     *gitPrompt
 	confirm    *gitConfirm
 	lastList   pane
@@ -96,13 +99,14 @@ type gitState struct {
 
 func newGitState() *gitState {
 	return &gitState{
-		sel:      map[pane]int{},
-		logSel:   -1,
-		folded:   map[string]bool{},
-		marked:   map[string]bool{},
-		results:  map[string]gitOutcome{},
-		lastList: paneChanges,
-		pageRows: 20,
+		sel:       map[pane]int{},
+		logSel:    -1,
+		selAnchor: -1,
+		folded:    map[string]bool{},
+		marked:    map[string]bool{},
+		results:   map[string]gitOutcome{},
+		lastList:  paneChanges,
+		pageRows:  20,
 	}
 }
 
@@ -330,6 +334,7 @@ func (m *Model) gitOnDiff(msg gitDiffMsg) {
 		return
 	}
 	g.diffKey, g.patch = msg.key, msg.patch
+	g.selOn, g.selAnchor = false, -1
 	g.rows = buildRows(git.ParseDiff(msg.patch))
 }
 
@@ -606,6 +611,9 @@ func (m *Model) gitKeys(k tea.KeyMsg) (cmd tea.Cmd, handled bool) {
 		}
 		return nil, true
 	}
+	if g.selOn && m.focus == paneGitDiff {
+		return m.gitDiffSelectKeys(s), true
+	}
 	v, ok := m.gitView()
 	if !ok {
 		return nil, false
@@ -630,6 +638,8 @@ func (m *Model) gitKeys(k tea.KeyMsg) (cmd tea.Cmd, handled bool) {
 	case paneGitDiff:
 		page := g.pageRows
 		switch s {
+		case "v":
+			return m.gitDiffSelectStart(), true
 		case "esc":
 			m.focus = g.lastList
 		case "down", "j":
@@ -833,6 +843,11 @@ func (m *Model) gitKeys(k tea.KeyMsg) (cmd tea.Cmd, handled bool) {
 			}
 			name := v.branch.Name
 			return m.gitAct("switch to "+name, func() git.OpResult { return git.Checkout(root, name) }, "on "+name), true
+		case "y", "Y":
+			if v.branch == nil {
+				return nil, true
+			}
+			return m.gitCopy(v.branch.Name), true
 		case "n":
 			g.prompt = &gitPrompt{kind: "branch", title: "New branch · " + v.entry.Name, hint: "enter create and switch · esc cancel"}
 			return nil, true
@@ -842,8 +857,105 @@ func (m *Model) gitKeys(k tea.KeyMsg) (cmd tea.Cmd, handled bool) {
 			m.focus = paneGitDiff
 			return nil, true
 		}
+		if s == "y" || s == "Y" {
+			switch {
+			case m.focus == paneCommits && v.commit != nil:
+				if s == "Y" {
+					return m.gitCopy(v.commit.Hash + " " + v.commit.Subject), true
+				}
+				return m.gitCopy(v.commit.Hash), true
+			case m.focus == paneStash && v.stash != nil:
+				if s == "Y" {
+					return m.gitCopy(v.stash.Message), true
+				}
+				return m.gitCopy(v.stash.Ref), true
+			}
+			return nil, true
+		}
 	}
 	return nil, false
+}
+
+// gitDiffSelectStart is the first v in the diff: a cursor on the top row (a second v starts the range).
+func (m *Model) gitDiffSelectStart() tea.Cmd {
+	g := m.gs()
+	if g.split {
+		return m.notify("copy mode works in the unified diff (s switches back)", theme.Active().Yellow)
+	}
+	if len(g.rows.rows) > 0 {
+		g.selCur, g.selOn, g.selAnchor = m.gitTop(), true, -1
+	}
+	return nil
+}
+
+// gitDiffSelectKeys moves and copies while lines of the diff are being selected: the unified diff, one row at a time.
+func (m *Model) gitDiffSelectKeys(s string) tea.Cmd {
+	g := m.gs()
+	last := len(g.rows.rows) - 1
+	page := max(1, g.pageRows)
+	move := func(to int) {
+		g.selCur = max(0, min(to, last))
+		top := m.gitTop()
+		if g.selCur < top {
+			g.scroll = g.selCur
+		} else if g.selCur >= top+page {
+			g.scroll = g.selCur - page + 1
+		}
+	}
+	switch s {
+	case "esc", "s":
+		g.selOn, g.selAnchor = false, -1
+		if s == "s" {
+			g.split = !g.split
+			g.scroll = 0
+		}
+	case "v", " ":
+		// the first v showed the cursor; this one starts the range there
+		if g.selAnchor < 0 {
+			g.selAnchor = g.selCur
+		} else {
+			g.selAnchor = -1
+		}
+	case "down", "j":
+		move(g.selCur + 1)
+	case "up", "k":
+		move(g.selCur - 1)
+	case "ctrl+d":
+		move(g.selCur + page/2)
+	case "ctrl+u":
+		move(g.selCur - page/2)
+	case "pgdown":
+		move(g.selCur + page)
+	case "pgup":
+		move(g.selCur - page)
+	case "g", "home":
+		move(0)
+	case "G", "end":
+		move(last)
+	case "y", "Y", "enter":
+		lo, hi := g.selCur, g.selCur
+		if g.selAnchor >= 0 {
+			lo, hi = min(g.selAnchor, g.selCur), max(g.selAnchor, g.selCur)
+		}
+		var lines []string
+		for _, r := range g.rows.rows[lo : min(hi, last)+1] {
+			switch r.kind {
+			case rowAdd:
+				lines = append(lines, "+"+r.text)
+			case rowDel:
+				lines = append(lines, "-"+r.text)
+			case rowCtx:
+				lines = append(lines, " "+r.text)
+			default:
+				lines = append(lines, r.text)
+			}
+		}
+		g.selOn, g.selAnchor = false, -1
+		text, n := strings.Join(lines, "\n"), len(lines)
+		what := "diff"
+		return func() tea.Msg { return copyDoneMsg{res: clipboardCopy(text), what: what, n: n} }
+	}
+	return nil
 }
 
 func (m *Model) gitTop() int {

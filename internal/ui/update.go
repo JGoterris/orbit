@@ -476,9 +476,13 @@ func (m *Model) keyInMode(k tea.KeyMsg) tea.Cmd {
 	}
 
 	// ---- normal mode
-	// a text prompt or a question inside the Git view takes every key, except the way out
+	// a text prompt, a question or the diff's copy mode inside the Git view takes every key, except the way out
 	if m.view == "git" {
-		if g := m.gs(); g.prompt != nil || g.confirm != nil {
+		g := m.gs()
+		if g.selOn && m.focus != paneGitDiff {
+			g.selOn, g.selAnchor = false, -1 // the focus moved away (a click): the cursor goes with it
+		}
+		if g.prompt != nil || g.confirm != nil || g.selOn {
 			if s == "ctrl+c" {
 				return m.requestQuit()
 			}

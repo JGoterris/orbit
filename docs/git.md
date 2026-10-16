@@ -24,9 +24,9 @@ each row shows its own result. Pull, push, new branch and switch branch ask firs
 | Repos | `j k` pick the repo · `space` mark · `a` mark all / none · `enter` go to its changes (like `tab`) · `L` lazygit |
 | multi-repo (`m`, then…) | `f` fetch · `p` pull · `u` push · `b` new branch (asks for the name) · `s` switch to a branch (asks for the name; repos without it report the error) · `esc` cancel |
 | Changes | shown as a tree (folders first; a folder holding only another folder is merged: `src/ui/views`) · `space` stage / unstage the file, or everything under the folder · `enter` open the diff, or fold / unfold the folder · `a` stage / unstage all · `c` commit · `v` staged ⇄ unstaged side · `y` / `Y` copy the path (relative / absolute) |
-| Branches | `enter` switch · `n` new branch (this repo) |
-| Graph, Stash | `j k` pick one, the diff follows · `enter` focus the diff |
+| Branches | `enter` switch · `n` new branch (this repo) · `y` copy the name |
+| Graph, Stash | `j k` pick one, the diff follows · `enter` focus the diff · `y` copy the hash (Graph) or ref (Stash) · `Y` hash and subject / stash message |
 | Commands | `j k` move · `y` copy the command · `c` clear · `G` follow the latest. Lists every git command orbit ran for you (stage, commit, fetch, pull, push, branches), per repo, with ✓/✗, duration and git's message; the polling reads are not listed |
-| Diff | `esc` back · `{` `}` previous / next file in Changes (folders skipped) · `[` `]` previous / next hunk · `y` / `Y` copy the path · `j k` `ctrl+u/d` `g G` scroll · `s` side-by-side (mouse wheel scrolls) |
+| Diff | `esc` back · `{` `}` previous / next file in Changes (folders skipped) · `[` `]` previous / next hunk · `y` / `Y` copy the path · `v` copy mode: a cursor appears (`j k` move), `v` again starts a range, `y` copies the line or range with its `+`/`-`, `esc` exits (unified view only) · `j k` `ctrl+u/d` `g G` scroll · `s` side-by-side (mouse wheel scrolls) |
 
 Commit messages are one line; amend, discard, stash, hunk staging, branch deletion and the like live in lazygit.
