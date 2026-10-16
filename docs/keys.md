@@ -22,7 +22,7 @@
 | `Y` · `E` | copy all visible logs · export them to `~/.local/state/orbit/<project>/exports/` (the path is copied) |
 | `o` | open `http://localhost:<port>` (or `url`) in the browser |
 | `i` | interactive console of the selected service in a floating terminal (`console:` command, or `$SHELL` (`%ComSpec%` on Windows) / the container's shell). `ctrl+]` hides it and keeps it running; `i` brings it back |
-| `e` | environment variables of the selected service (secrets masked, `v` reveals) |
+| `e` | environment variables of the selected service (secrets masked, `r` reveals; `j`/`k` move, `v` marks a range, `y` copies the value or `KEY=value` lines, `Y` always `KEY=value`) |
 | `L` | open the selected service's git repo in [lazygit](https://github.com/jesseduffield/lazygit) (if installed) |
 | `4` | Git view, see [Git](git.md) |
 | `P` | open another project: `enter` opens, `tab` completes a typed path, `ctrl+f` pins, `ctrl+x` forgets |

@@ -147,7 +147,7 @@ func (m *Model) openEnv() {
 	if m.selected == "" {
 		return
 	}
-	m.envScroll, m.envReveal = 0, false
+	m.envScroll, m.envCursor, m.envAnchor, m.envReveal = 0, 0, -1, false
 	m.mode = modeEnv
 }
 

@@ -209,7 +209,7 @@ func (m *Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.quitting = true
 		return m, tea.Quit
 	case copyDoneMsg:
-		text, ok := describeCopy(msg.res, msg.what, msg.n)
+		text, ok := describeCopy(msg.res, msg.what, msg.unit, msg.n)
 		p := theme.Active()
 		if ok {
 			return m, m.notify(text, p.Green)
@@ -341,25 +341,45 @@ func (m *Model) keyInMode(k tea.KeyMsg) tea.Cmd {
 		return nil
 	case modeEnv:
 		l, _ := m.envLayoutFor(m.width)
+		entries, _ := m.envEntries()
 		page := envPageSize(m.height)
-		clampTo := func(v int) int { return max(0, min(v, max(0, len(l.rows)-page))) }
+		move := func(to int) {
+			m.envCursor = max(0, min(to, len(entries)-1))
+			m.envScroll = envScrollTo(l, m.envCursor, m.envScroll, page)
+		}
 		switch s {
-		case "esc", "e", "q":
+		case "esc", "q":
+			if m.envAnchor >= 0 {
+				m.envAnchor = -1
+			} else {
+				m.mode = modeNormal
+			}
+		case "e":
 			m.mode = modeNormal
-		case "v":
+		case "r":
 			m.envReveal = !m.envReveal
+		case "v", " ":
+			if m.envAnchor >= 0 {
+				m.envAnchor = -1
+			} else {
+				m.envAnchor = m.envCursor
+			}
+		case "y", "enter":
+			return m.envCopy(false)
+		case "Y":
+			return m.envCopy(true)
 		case "down", "j":
-			m.envScroll = clampTo(m.envScroll + 1)
+			move(m.envCursor + 1)
 		case "up", "k":
-			m.envScroll = clampTo(m.envScroll - 1)
+			move(m.envCursor - 1)
 		case "pgdown", "ctrl+d":
-			m.envScroll = clampTo(m.envScroll + page)
+			move(m.envCursor + max(1, page/2))
 		case "pgup", "ctrl+u":
-			m.envScroll = clampTo(m.envScroll - page)
+			move(m.envCursor - max(1, page/2))
 		case "g", "home":
-			m.envScroll = 0
+			move(0)
 		case "G", "end":
-			m.envScroll = clampTo(len(l.rows))
+			move(len(entries) - 1)
 		}
 		return nil
 	case modeQuit:

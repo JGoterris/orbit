@@ -436,6 +436,57 @@ func TestEnvOverlayWrapsLongValues(t *testing.T) {
 	}
 }
 
+func TestEnvOverlayCopiesValuesAndRanges(t *testing.T) {
+	m, sup := newModel(t)
+	sup.Service("db").Env["AAA"] = "one"
+	sup.Service("db").Env["BBB_SECRET"] = "hunter2"
+	sup.Service("db").Env["CCC"] = "three"
+	var copied string
+	old := clipboardCopy
+	clipboardCopy = func(text string) copyResult { copied = text; return copyResult{ok: true, via: "test"} }
+	t.Cleanup(func() { clipboardCopy = old })
+	run := func(keys ...string) copyDoneMsg {
+		t.Helper()
+		var out copyDoneMsg
+		for _, k := range keys {
+			if _, cmd := m.Update(key(k)); cmd != nil {
+				if d, ok := cmd().(copyDoneMsg); ok {
+					out = d
+				}
+			}
+		}
+		return out
+	}
+	press(m, "e")
+	entries, _ := m.envEntries()
+	idx := map[string]int{}
+	for i, e := range entries {
+		idx[e.Key] = i
+	}
+	// one variable: just its value, even a hidden secret
+	press(m, "g")
+	for i := 0; i < idx["BBB_SECRET"]; i++ {
+		press(m, "j")
+	}
+	if d := run("y"); d.n != 1 || copied != "hunter2" {
+		t.Fatalf("copied %q (%+v)", copied, d)
+	}
+	// a range: KEY=value per variable
+	press(m, "g", "v")
+	for i := 0; i < idx["CCC"]; i++ {
+		press(m, "j")
+	}
+	if d := run("y"); d.n != idx["CCC"]+1 || !strings.Contains(copied, "BBB_SECRET=hunter2") || !strings.Contains(copied, "CCC=three") {
+		t.Fatalf("copied %q (%+v)", copied, d)
+	}
+	if m.envAnchor != -1 || m.mode != modeEnv {
+		t.Fatal("copying a range ends the selection but keeps the overlay")
+	}
+	if d := run("Y"); d.n != 1 || !strings.HasPrefix(copied, "CCC=") {
+		t.Fatalf("Y copied %q", copied)
+	}
+}
+
 func TestViewFitsTheTerminal(t *testing.T) {
 	m, sup := newModel(t)
 	sup.Start("db")

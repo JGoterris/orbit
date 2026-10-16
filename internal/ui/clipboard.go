@@ -66,9 +66,12 @@ func plural(n int) string {
 	return "s"
 }
 
-func describeCopy(r copyResult, what string, n int) (string, bool) {
+func describeCopy(r copyResult, what, unit string, n int) (string, bool) {
+	if unit == "" {
+		unit = "line"
+	}
 	if r.ok {
-		return fmt.Sprintf("copied %s (%d line%s) via %s", what, n, plural(n), r.via), true
+		return fmt.Sprintf("copied %s (%d %s%s) via %s", what, n, unit, plural(n), r.via), true
 	}
 	if r.err != "" {
 		return r.err, false

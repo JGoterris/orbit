@@ -233,6 +233,8 @@ type Model struct {
 	paletteIdx int
 
 	envScroll  int
+	envCursor  int // variable under the cursor
+	envAnchor  int // where a range started (v), -1 for none
 	helpScroll int
 	envReveal  bool
 
@@ -339,6 +341,7 @@ type copyDoneMsg struct {
 	res  copyResult
 	what string
 	n    int
+	unit string // what n counts; "line" when empty
 }
 type openURLMsg struct {
 	url string

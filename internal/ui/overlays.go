@@ -194,7 +194,7 @@ var helpRows = [][2]string{
 	{"P · U", "open another project · apply orbit.yaml edits (restarts only what changed)"},
 	{"T", "change color theme (live preview, enter saves)"},
 	{"h", "dashboard: cpu / memory chart range 2m ⇄ 15m ⇄ 1h (memory turns orange/red near its limit, ↗ = leak)"},
-	{"e", "environment variables of the selected service"},
+	{"e", "environment variables of the selected service (j k move · v select a range · y copy value / KEY=value · Y always KEY=value · r reveal secrets)"},
 	{"i", "interactive console: psql, rails console, container shell (ctrl+] hides it)"},
 	{"o", "open service URL in the browser"},
 	{": / ctrl+p", "command palette"},
@@ -232,6 +232,65 @@ var secretRe = regexp.MustCompile(`(?i)KEY|TOKEN|SECRET|PASSWORD|PASS|PWD|CREDEN
 
 func isSecretKey(key string) bool { return secretRe.MatchString(key) }
 
+// envScrollTo moves the scroll (in screen rows) the least that shows every row of a variable.
+func envScrollTo(l envLayout, entry, scroll, page int) int {
+	first, last := -1, -1
+	for i, r := range l.rows {
+		if r.entry == entry {
+			if first < 0 {
+				first = i
+			}
+			last = i
+		}
+	}
+	if first < 0 {
+		return scroll
+	}
+	if last >= scroll+page {
+		scroll = last - page + 1
+	}
+	if first < scroll {
+		scroll = first
+	}
+	return max(0, min(scroll, max(0, len(l.rows)-page)))
+}
+
+// envSelection is the range of variables a copy takes: just the one under the cursor, or what v marked.
+func (m *Model) envSelection() (lo, hi int) {
+	if m.envAnchor < 0 {
+		return m.envCursor, m.envCursor
+	}
+	return min(m.envAnchor, m.envCursor), max(m.envAnchor, m.envCursor)
+}
+
+// envCopy copies the value under the cursor, or KEY=value for each variable of a range (or always with full).
+// Secrets are copied for real even when the overlay hides them.
+func (m *Model) envCopy(full bool) tea.Cmd {
+	entries, _ := m.envEntries()
+	lo, hi := m.envSelection()
+	if lo < 0 || hi >= len(entries) {
+		return m.notify("nothing to copy", theme.Active().Yellow)
+	}
+	var text string
+	if lo == hi && !full {
+		text = entries[lo].Value
+	} else {
+		var lines []string
+		for _, e := range entries[lo : hi+1] {
+			lines = append(lines, e.Key+"="+e.Value)
+		}
+		text = strings.Join(lines, "\n")
+	}
+	m.envAnchor = -1
+	what, n := entries[lo].Key, hi-lo+1
+	if n > 1 {
+		what = fmt.Sprintf("%d variables", n)
+	}
+	return func() tea.Msg {
+		return copyDoneMsg{res: clipboardCopy(text), what: what, n: n, unit: "variable"}
+	}
+}
+
 // envPageSize is how many rows of the env overlay fit at a given terminal height.
 func envPageSize(height int) int { return max(3, min(height-4, 30)-5) }
 
@@ -247,6 +306,7 @@ func (m *Model) envEntries() ([]config.EnvEntry, []string) {
 type envRow struct {
 	key, val, src string
 	secret        bool
+	entry         int // index of the variable this row belongs to
 }
 
 type envLayout struct {
@@ -265,16 +325,16 @@ func (m *Model) envLayoutFor(W int) (envLayout, []string) {
 	}
 	l.valW = max(8, w-4-l.keyW-l.srcW-2)
 	flat := strings.NewReplacer("\r\n", "\\n", "\n", "\\n", "\r", "\\r")
-	for _, e := range entries {
+	for i, e := range entries {
 		if !m.envReveal && isSecretKey(e.Key) {
-			l.rows = append(l.rows, envRow{key: e.Key, val: "••••••", src: e.Source, secret: true})
+			l.rows = append(l.rows, envRow{key: e.Key, val: "••••••", src: e.Source, secret: true, entry: i})
 			continue
 		}
 		val := []rune(flat.Replace(e.Value))
 		first := true
 		for {
 			n := min(len(val), l.valW)
-			row := envRow{val: string(val[:n])}
+			row := envRow{val: string(val[:n]), entry: i}
 			if first {
 				row.key, row.src = e.Key, e.Source
 			}
@@ -297,16 +357,24 @@ func (m *Model) renderEnv(W, H int) ([]string, int, int, int) {
 	page := envPageSize(H)
 	start := min(m.envScroll, max(0, len(l.rows)-page))
 	shown := l.rows[start:min(len(l.rows), start+page)]
+	lo, hi := m.envSelection()
 	var content []string
 	if len(entries) == 0 {
 		content = append(content, newLine(p.PanelAlt).add(p.Dim, "no variables defined for this service").String())
 	}
 	for _, r := range shown {
+		bg := p.PanelAlt
+		switch {
+		case r.entry == m.envCursor:
+			bg = p.Cursor
+		case r.entry >= lo && r.entry <= hi && m.envAnchor >= 0:
+			bg = p.Selection
+		}
 		color := p.Text
 		if r.secret {
 			color = p.Dim
 		}
-		content = append(content, newLine(p.PanelAlt).add(p.Accent, theme.Fit(r.key, l.keyW+1)).
+		content = append(content, newLine(bg).add(p.Accent, theme.Fit(r.key, l.keyW+1)).
 			add(color, theme.Fit(r.val, l.valW+1)).add(p.Dim, theme.Fit(r.src, l.srcW)).String())
 	}
 	for len(content) < h-2-2 {
@@ -319,9 +387,12 @@ func (m *Model) renderEnv(W, H int) ([]string, int, int, int) {
 	if m.envReveal {
 		verb = "hide"
 	}
-	foot := fmt.Sprintf("j/k scroll · v %s secrets · esc close", verb)
-	if len(l.rows) > page {
-		foot += fmt.Sprintf("  (%d-%d/%d)", start+1, start+len(shown), len(l.rows))
+	foot := fmt.Sprintf("j/k move · v select · y copy · r %s secrets · esc close", verb)
+	if m.envAnchor >= 0 {
+		foot = fmt.Sprintf("%d selected · y copy KEY=value · v/esc cancel", hi-lo+1)
+	}
+	if len(entries) > 1 {
+		foot += fmt.Sprintf("  (%d/%d)", m.envCursor+1, len(entries))
 	}
 	content = append(content, newLine(p.PanelAlt).add(p.Dim, foot).String())
 	x, y := center(W, H, w, h)
