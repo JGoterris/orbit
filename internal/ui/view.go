@@ -234,6 +234,39 @@ var copyHints = [][2]string{
 	{"y", "copy"}, {"esc", "cancel"},
 }
 
+// fitHints keeps the hints that fit in width columns, in order, so none is cut in half. When some must go, "esc",
+// "?" and "q" stay (they move to the end): esc is the way out, "?" says where to find every other key.
+func fitHints(hints [][2]string, width int) [][2]string {
+	cost := func(h [2]string) int { return ansi.StringWidth(h[0]) + 1 + ansi.StringWidth(h[1]) + 3 }
+	fixed := func(h [2]string) bool { return h[0] == "esc" || h[0] == "?" || h[0] == "q" }
+	total := 0
+	for _, h := range hints {
+		total += cost(h)
+	}
+	if total <= width {
+		return hints
+	}
+	var keep, tail [][2]string
+	used := 0
+	for _, h := range hints {
+		if fixed(h) {
+			tail = append(tail, h)
+			used += cost(h)
+		}
+	}
+	for _, h := range hints {
+		if fixed(h) {
+			continue
+		}
+		if used+cost(h) > width {
+			break
+		}
+		used += cost(h)
+		keep = append(keep, h)
+	}
+	return append(keep, tail...)
+}
+
 func (m *Model) renderFooter(W int) string {
 	p := theme.Active()
 	l := newLine(p.PanelAlt)
@@ -248,7 +281,7 @@ func (m *Model) renderFooter(W int) string {
 		case m.view == "git":
 			hints = m.gitHints()
 		}
-		for _, h := range hints {
+		for _, h := range fitHints(hints, W-1) {
 			l.add(p.Accent, h[0]).add(p.Dim, " "+h[1]+"   ")
 		}
 	}

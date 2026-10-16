@@ -568,6 +568,34 @@ func TestEscStepsBackOutOfGitSections(t *testing.T) {
 	}
 }
 
+func TestFitHintsKeepsHelpAndQuit(t *testing.T) {
+	hints := [][2]string{{"space", "stage"}, {"a", "all"}, {"c", "commit"}, {"enter", "diff/fold"}, {"?", "help"}, {"q", "quit"}}
+	if got := fitHints(hints, 200); len(got) != len(hints) {
+		t.Fatalf("everything fits: %v", got)
+	}
+	got := fitHints(hints, 40)
+	if n := len(got); n < 3 || got[n-2][0] != "?" || got[n-1][0] != "q" {
+		t.Fatalf("help and quit stay at the end: %v", got)
+	}
+	total := 0
+	for _, h := range got {
+		total += len(h[0]) + 1 + len(h[1]) + 3
+	}
+	if total > 40 {
+		t.Fatalf("%v is %d wide, more than 40", got, total)
+	}
+	if got := fitHints(hints, 5); len(got) != 2 {
+		t.Fatalf("only the fixed ones when nothing else fits: %v", got)
+	}
+	esc := [][2]string{{"esc", "exit"}, {"j/k", "move"}, {"v", "start selecting"}, {"y", "copy line"}, {"?", "help"}, {"q", "quit"}}
+	if got := fitHints(esc, 200); got[0][0] != "esc" {
+		t.Fatalf("with room, the order is kept: %v", got)
+	}
+	if got := fitHints(esc, 40); got[len(got)-3][0] != "esc" {
+		t.Fatalf("esc must survive a narrow footer: %v", got)
+	}
+}
+
 func TestViewFitsTheTerminal(t *testing.T) {
 	m, sup := newModel(t)
 	sup.Start("db")
