@@ -125,12 +125,13 @@ func RunTUI(cfg *config.OrbitConfig, opts TUIOptions) int {
 	}()
 
 	// the daemon of the open project went away (`orbit down`, or it was killed): nothing left to show
+	var unwatch func()
 	watch := func(sup supervisor.Like) {
 		r, ok := sup.(*ipc.Remote)
 		if !ok {
 			return
 		}
-		r.OnClose(func() {
+		cancel := r.OnClose(func() {
 			mu.Lock()
 			current := sess.Sup() == supervisor.Like(r)
 			skip := quitting || !current
@@ -142,6 +143,19 @@ func RunTUI(cfg *config.OrbitConfig, opts TUIOptions) int {
 				quitProgram()
 			}
 		})
+		mu.Lock()
+		unwatch = cancel
+		mu.Unlock()
+	}
+	// leaving a project on purpose closes its connection: that is not the daemon going away
+	stopWatching := func() {
+		mu.Lock()
+		cancel := unwatch
+		unwatch = nil
+		mu.Unlock()
+		if cancel != nil {
+			cancel()
+		}
 	}
 
 	// a signal to a TUI that only mirrors a daemon (closing the terminal sends SIGHUP) must not stop the services
@@ -167,8 +181,11 @@ func RunTUI(cfg *config.OrbitConfig, opts TUIOptions) int {
 		Notifications:    func() bool { return userconfig.Read().NotificationsEnabled() },
 		SetNotifications: func(on bool) bool { return userconfig.Write(userconfig.Config{Notifications: &on}) },
 		OpenProject: func(dir, how string) (supervisor.Like, *ui.Relaunch, error) {
+			stopWatching()
 			next, rl, err := sess.SwitchTo(dir, how)
 			if err != nil {
+				// nothing was disconnected on failure: keep watching the project that stays open
+				watch(sess.Sup())
 				return nil, nil, err
 			}
 			watch(next)
