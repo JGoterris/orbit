@@ -251,6 +251,24 @@ func Fit(s string, width int) string {
 	return s + strings.Repeat(" ", width-len(r))
 }
 
+// FitMid is Fit for names: a name that does not fit loses its middle, not its end, because the end is usually what
+// tells two similar names apart (api-gateway-pr…eu-1 against api-gateway-pr…us-2).
+func FitMid(s string, width int) string {
+	r := []rune(s)
+	if width <= 0 {
+		return ""
+	}
+	if len(r) <= width {
+		return s + strings.Repeat(" ", width-len(r))
+	}
+	if width < 5 {
+		return Fit(s, width)
+	}
+	head := width / 2
+	tail := width - 1 - head
+	return string(r[:head]) + "…" + string(r[len(r)-tail:])
+}
+
 // Mix blends colour over base (both #rrggbb), amount 0..1 of colour: a tint for diff backgrounds.
 func Mix(base, color string, amount float64) string {
 	ch := func(hex string, i int) float64 {

@@ -138,3 +138,29 @@ func TestNoThemesDirIsFine(t *testing.T) {
 		t.Fatalf("themes = %v %v %v", themes, names, errs)
 	}
 }
+
+func TestFitMidKeepsBothEnds(t *testing.T) {
+	cases := []struct {
+		in    string
+		width int
+		want  string
+	}{
+		{"api", 6, "api   "},
+		{"api-gateway-prod-eu-1", 11, "api-g…eu-1"},
+		{"api-gateway-prod-eu-1", 10, "api-g…eu-1"},
+		{"abcdefghij", 4, "abc…"},
+		{"abcdefghij", 0, ""},
+	}
+	for _, c := range cases {
+		got := FitMid(c.in, c.width)
+		if len([]rune(got)) != max(0, c.width) {
+			t.Errorf("FitMid(%q, %d) = %q is not %d wide", c.in, c.width, got, c.width)
+		}
+		if c.in == "api" && got != c.want {
+			t.Errorf("FitMid(%q, %d) = %q", c.in, c.width, got)
+		}
+	}
+	if got := FitMid("api-gateway-prod-eu-1", 11); !strings.HasPrefix(got, "api-g") || !strings.HasSuffix(got, "eu-1") || !strings.Contains(got, "…") {
+		t.Errorf("both ends must survive: %q", got)
+	}
+}

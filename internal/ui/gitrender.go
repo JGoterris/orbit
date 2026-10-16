@@ -179,7 +179,7 @@ func (m *Model) renderGit(W, H int) []string {
 			case len(st.Files) > 0:
 				dot = p.Orange
 			}
-			l.add(dot, "● ").add(p.Text, theme.Fit(e.Name, nameW))
+			l.add(dot, "● ").add(p.Text, theme.FitMid(e.Name, nameW))
 			branchName := "…"
 			sync := ""
 			if st != nil {
@@ -208,7 +208,7 @@ func (m *Model) renderGit(W, H int) []string {
 			if st != nil && st.Branch != "" && common != "" && st.Branch != common {
 				bc = p.Yellow
 			}
-			l.add(bc, " "+theme.Fit(branchName, branchW))
+			l.add(bc, " "+theme.FitMid(branchName, branchW))
 			sc := p.Muted
 			if st != nil && st.Behind > 0 {
 				sc = p.Yellow
@@ -376,9 +376,9 @@ func (m *Model) renderGit(W, H int) []string {
 					rows = append(rows, func(bg string) *line {
 						l := newLine(bg)
 						if b.Current {
-							l.add(p.Green, "* ").add(p.Text, theme.Fit(b.Name, max(1, lw-4-2-20)))
+							l.add(p.Green, "* ").add(p.Text, theme.FitMid(b.Name, max(1, lw-4-2-20)))
 						} else {
-							l.add(p.Dim, "  ").add(p.Muted, theme.Fit(b.Name, max(1, lw-4-2-20)))
+							l.add(p.Dim, "  ").add(p.Muted, theme.FitMid(b.Name, max(1, lw-4-2-20)))
 						}
 						l.add(p.Yellow, theme.Fit(b.Track, 9)).add(p.Dim, theme.Fit(" "+ago(b.When), 11))
 						return l
@@ -663,7 +663,7 @@ func (m *Model) renderGitCommands(v gitView, w, h int) []string {
 			} else {
 				l.add(p.Red, "✗ ")
 			}
-			l.add(p.Accent2, theme.Fit(names[c.Root], nameW)).add(p.Text, " git "+git.FormatArgs(c.Args)).add(p.Dim, fmt.Sprintf("  %dms", c.Ms))
+			l.add(p.Accent2, theme.FitMid(names[c.Root], nameW)).add(p.Text, " git "+git.FormatArgs(c.Args)).add(p.Dim, fmt.Sprintf("  %dms", c.Ms))
 			if !c.OK && c.Message != "" {
 				l.add(p.Red, "  "+c.Message)
 			}

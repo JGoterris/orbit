@@ -89,9 +89,9 @@ func (m *Model) renderServiceList(w, h int, focused, compact bool) []string {
 		}
 		l.add(style.Color, theme.StatusIcon(string(st.Status), m.tick, svc.Oneshot)+" ")
 		if isSel {
-			l.bold(p.Text, theme.Fit(name, nameW-2))
+			l.bold(p.Text, theme.FitMid(name, nameW-2))
 		} else {
-			l.add(p.Text, theme.Fit(name, nameW-2))
+			l.add(p.Text, theme.FitMid(name, nameW-2))
 		}
 		switch st.Watch {
 		case "pending":

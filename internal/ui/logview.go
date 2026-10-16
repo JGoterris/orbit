@@ -225,7 +225,7 @@ func (m *Model) renderLogView(title string, w, h int, focused bool) []string {
 				ln.addStyled(p.Dim, bg, false, logs.Clock(l.Ts)+" ")
 			}
 			if !perService {
-				ln.addStyled(theme.ServiceColor(l.Service, names), bg, false, theme.Fit(l.Service, lay.prefix-1)+" ")
+				ln.addStyled(theme.ServiceColor(l.Service, names), bg, false, theme.FitMid(l.Service, lay.prefix-1)+" ")
 			}
 		}
 		ln.addStyled(color, bg, false, r.text)
