@@ -237,6 +237,7 @@ func (m *Model) openProject(dir, how string) tea.Cmd {
 		return m.notify("switching projects is not available here", theme.Active().Yellow)
 	}
 	m.mode = modeStopping
+	m.busyHow = how
 	open := m.opts.OpenProject
 	return func() tea.Msg {
 		sup, relaunch, err := open(dir, how)

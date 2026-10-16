@@ -271,6 +271,7 @@ type Model struct {
 	projQuery    input
 	projIdx      int
 	pendingDir   string
+	busyHow      string // "stop" | "detach": what the services are going through while modeStopping
 
 	git        *gitState
 	pendingGit bool

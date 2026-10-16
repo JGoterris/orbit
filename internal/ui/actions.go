@@ -398,6 +398,7 @@ func (m *Model) requestQuit() tea.Cmd {
 func (m *Model) doQuit(how string) tea.Cmd {
 	if how == "stop" {
 		m.mode = modeStopping
+		m.busyHow = "stop"
 	}
 	m.consoles.CloseAll()
 	return func() tea.Msg {

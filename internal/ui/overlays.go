@@ -2,6 +2,7 @@ package ui
 
 import (
 	"fmt"
+	"path/filepath"
 	"regexp"
 	"strings"
 
@@ -305,10 +306,20 @@ func (m *Model) renderConfirm(W, H int) ([]string, int, int, int) {
 	}
 	title, h := title0, 7
 	var content []string
-	if busy {
+	running := m.sup.OwnedRunningCount()
+	if busy && (m.busyHow == "detach" || running == 0) {
+		// nothing is being stopped: the services stay up, only the project changes
+		title, h = title0, 6
+		content = []string{
+			newLine(p.PanelAlt).add(p.Text, "Opening "+filepath.Base(m.pendingDir)+"…").String(),
+		}
+		if running > 0 {
+			content = append(content, newLine(p.PanelAlt).add(p.Dim, fmt.Sprintf("leaving %d service(s) running", running)).String())
+		}
+	} else if busy {
 		title, h = "Stopping", 6
 		content = []string{
-			newLine(p.PanelAlt).add(p.Text, fmt.Sprintf("Stopping %d service(s)…", m.sup.OwnedRunningCount())).String(),
+			newLine(p.PanelAlt).add(p.Text, fmt.Sprintf("Stopping %d service(s)…", running)).String(),
 			newLine(p.PanelAlt).add(p.Dim, "please wait…").String(),
 		}
 	} else {
