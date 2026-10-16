@@ -1,6 +1,7 @@
 package ui
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"strings"
@@ -360,6 +361,37 @@ func TestQuitFlow(t *testing.T) {
 		t.Fatalf("how = %q", how2)
 	}
 	_ = sup
+}
+
+func TestSwitchProjectModalSaysWhatHappensToServices(t *testing.T) {
+	for _, tc := range []struct {
+		key, want, notWant string
+	}{
+		{"d", "leaving 1 service(s) running", "Stopping"},
+		{"s", "Stopping 1 service(s)", "leaving"},
+	} {
+		m, sup := newModel(t)
+		release := make(chan struct{})
+		m.opts.OpenProject = func(dir, how string) (supervisor.Like, *Relaunch, error) {
+			<-release
+			return nil, nil, errors.New("not here")
+		}
+		sup.Start("db")
+		m.pendingDir, m.mode = "/work/other", modeSwitch
+		_, cmd := m.Update(key(tc.key))
+		if m.mode != modeStopping {
+			t.Fatalf("%s: mode = %v", tc.key, m.mode)
+		}
+		out := screen(m)
+		if !strings.Contains(out, tc.want) || strings.Contains(out, tc.notWant) {
+			t.Fatalf("%s: modal must contain %q and not %q:\n%s", tc.key, tc.want, tc.notWant, out)
+		}
+		if tc.key == "d" && !strings.Contains(out, "Opening other") {
+			t.Fatalf("detach modal must name the project:\n%s", out)
+		}
+		close(release)
+		cmd()
+	}
 }
 
 func TestViewFitsTheTerminal(t *testing.T) {
