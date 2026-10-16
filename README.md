@@ -8,16 +8,7 @@ TUI to launch, control and monitor local services —processes (backends, fronte
 workers), Docker containers and `docker compose` services— respecting their dependencies.
 A single static binary written in Go ([Bubble Tea](https://github.com/charmbracelet/bubbletea)): no runtime to install.
 
-```
- ◉ orbit · demo     1 Dashboard  2 Graph  3 Logs                                ● 7 up  ○ 1
-╭─ Services 7/8 ───────────╮╭─ Dependency graph · 7/8 up ────────────────────────────────────╮
-│ ● postgres       :55432  ││                               ╭────────────────────╮           │
-│ ● redis          :56379  ││                         ╭────▶│ ● auth             ├────╮      │
-│ ● auth           :4300   ││ ╭────────────────────╮  │     │ healthy :4300 40M  │    │      │
-│▌● api            :4100   ││ │ ● postgres         ├──┤     ╰────────────────────╯    │      │
-│ ● worker                 ││ │ healthy :55432 19M │  │                               │      │
-│ ● web            :4200   ││ ╰────────────────────╯  │                               │  ... │
-```
+![orbit starting a demo stack in dependency order, then its dependency graph, logs and Git view](assets/demo.gif)
 
 ## Features
 
