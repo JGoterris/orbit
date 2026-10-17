@@ -26,6 +26,8 @@ type ConfigDiff struct {
 	Changed []ServiceChange `json:"changed"`
 	// Groups: the `groups:` section differs (applied without restarting anything)
 	Groups bool `json:"groups"`
+	// Tasks: the `tasks:` section differs (applied without restarting anything)
+	Tasks bool `json:"tasks"`
 	// NameChanged: the project name is part of the state dir and the socket, so it cannot change while orbit runs
 	NameChanged *NameChange `json:"nameChanged,omitempty"`
 }
@@ -106,6 +108,7 @@ func DiffConfig(prev, next *OrbitConfig) ConfigDiff {
 		d.Changed = append(d.Changed, ServiceChange{Name: name, Fields: fields, Restart: restart})
 	}
 	d.Groups = stableJSON(normGroups(prev.Groups)) != stableJSON(normGroups(next.Groups))
+	d.Tasks = (len(prev.Tasks) > 0 || len(next.Tasks) > 0) && stableJSON(prev.Tasks) != stableJSON(next.Tasks)
 	if prev.Name != next.Name {
 		d.NameChanged = &NameChange{From: prev.Name, To: next.Name}
 	}
@@ -121,7 +124,7 @@ func normGroups(g map[string][]string) map[string][]string {
 }
 
 func (d ConfigDiff) IsEmpty() bool {
-	return len(d.Added) == 0 && len(d.Removed) == 0 && len(d.Changed) == 0 && !d.Groups && d.NameChanged == nil
+	return len(d.Added) == 0 && len(d.Removed) == 0 && len(d.Changed) == 0 && !d.Groups && !d.Tasks && d.NameChanged == nil
 }
 
 // RestartNames are the services a running instance of prev has to restart for d (the changed ones that need it).
@@ -153,6 +156,9 @@ func (d ConfigDiff) Describe() []string {
 	}
 	if d.Groups {
 		out = append(out, "~ groups")
+	}
+	if d.Tasks {
+		out = append(out, "~ tasks")
 	}
 	if d.NameChanged != nil {
 		out = append(out, fmt.Sprintf("! name %s → %s: not applied while running (`orbit down` and reopen)", d.NameChanged.From, d.NameChanged.To))

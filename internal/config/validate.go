@@ -80,7 +80,8 @@ func distance(a, b string) int {
 	return row[len(rb)]
 }
 
-func suggest(key string, known []string) string {
+// Suggest is the known key closest to key, or "" when none is close enough.
+func Suggest(key string, known []string) string {
 	best, bestD := "", 3
 	for _, k := range known {
 		if d := distance(strings.ToLower(key), strings.ToLower(k)); d < bestD {
@@ -155,7 +156,7 @@ func UnknownKeys(doc any) []UnknownKey {
 				walk(child, ap, at)
 			case bool:
 				if !ap {
-					out = append(out, UnknownKey{Path: path, Key: key, Suggestion: suggest(key, props.Keys())})
+					out = append(out, UnknownKey{Path: path, Key: key, Suggestion: Suggest(key, props.Keys())})
 				}
 			}
 		}

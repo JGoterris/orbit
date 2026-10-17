@@ -128,6 +128,15 @@ func run(args []string) int {
 			return cli.RunCtl(cfg, inv.Rest)
 		}
 		return 1
+	case "run":
+		if cfg, ok := load(); ok {
+			name := ""
+			if len(inv.Rest) > 0 {
+				name = inv.Rest[0]
+			}
+			return cli.RunTask(cfg, name, inv.Args)
+		}
+		return 1
 	case "up":
 		if cfg, ok := load(); ok {
 			return cli.RunUp(cfg, inv.Rest)

@@ -38,13 +38,13 @@ CI runs all of the above on Linux, macOS and Windows. Code that depends on the o
 cmd/orbit/             the binary: argument dispatch, version
 orbit.go               embeds orbit.schema.json
 internal/
-  cli/                 argument parsing, --help, up / down / logs / status / ctl / graph / ls / init / projects, TUI startup
+  cli/                 argument parsing, --help, up / down / run / logs / status / ctl / graph / ls / init / projects, TUI startup
   config/              orbit.yaml loading (YAML → services), compose import, env files, diff, schema validation
   graph/               DAG: cycles, topological order, levels
   core/
     supervisor/        states, dependencies, health, restarts, readiness, hooks, watchers, reload, metrics
     runner/            process / docker / compose / external
-    health/ hooks/ watch/ logs/ resources/ metrics/ notify/ console/
+    health/ hooks/ watch/ logs/ resources/ metrics/ notify/ console/ tasks/
   ipc/                 local socket: JSON-RPC server and client, Remote (the TUI's mirror of a daemon), daemon
   git/                 status, diff parsing, operations, cached repo state, multi-repo runs, repo discovery
   platform/            everything that differs per OS: shells, process trees, metrics, ports, per-user dirs

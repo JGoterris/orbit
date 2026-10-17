@@ -4,15 +4,18 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 
+	"github.com/JGoterris/orbit/internal/config"
 	"github.com/JGoterris/orbit/internal/core/console"
 	"github.com/JGoterris/orbit/internal/core/logs"
 	"github.com/JGoterris/orbit/internal/core/metrics"
 	"github.com/JGoterris/orbit/internal/core/resources"
 	"github.com/JGoterris/orbit/internal/core/supervisor"
+	"github.com/JGoterris/orbit/internal/core/tasks"
 	"github.com/JGoterris/orbit/internal/proc"
 	"github.com/JGoterris/orbit/internal/ui/term"
 	"github.com/JGoterris/orbit/internal/ui/theme"
@@ -351,18 +354,53 @@ func (m *Model) openConsole(name string) tea.Cmd {
 	if err != nil {
 		return m.notify(err.Error(), p.Yellow)
 	}
+	return m.attachConsole(name, spec, false)
+}
+
+// attachConsole opens (or reattaches to) the session under key and shows it in the floating console.
+func (m *Model) attachConsole(key string, spec console.Spec, task bool) tea.Cmd {
+	p := theme.Active()
 	_, _, cols, rows := consoleSize(m.width, m.height)
-	session, err := m.consoles.Open(name, spec, cols, rows)
+	session, err := m.consoles.Open(key, spec, cols, rows)
 	if err != nil {
 		return m.notify("console: "+err.Error(), p.Red)
 	}
-	cs := &consoleState{name: name, session: session, cols: cols, rows: rows}
+	cs := &consoleState{name: key, session: session, cols: cols, rows: rows, task: task, started: time.Now()}
 	cs.term = term.New(cols, rows, writerFunc(func(b []byte) { session.Write(b) }))
 	cs.detach = session.Attach(func(b []byte) { cs.term.Write(b) })
 	session.Resize(cols, rows)
 	m.console = cs
 	m.mode = modeConsole
 	return m.watchConsole(cs)
+}
+
+// runTask runs a task of orbit.yaml in the floating console, after the services it depends on are ready.
+func (m *Model) runTask(name string) tea.Cmd {
+	t := m.sup.Config().Tasks[name]
+	if t == nil {
+		return nil
+	}
+	if len(t.DependsOn) == 0 {
+		return m.openTask(t)
+	}
+	sup, deps := m.sup, t.DependsOn
+	return tea.Batch(m.notify("task "+name+": starting "+strings.Join(deps, ", "), theme.Active().Muted), func() tea.Msg {
+		ok := true
+		for _, d := range deps {
+			if !sup.Start(d) {
+				ok = false
+			}
+		}
+		return taskDepsMsg{name: name, ok: ok}
+	})
+}
+
+func (m *Model) openTask(t *config.TaskConfig) tea.Cmd {
+	spec, err := tasks.Command(t, nil)
+	if err != nil {
+		return m.notify("task "+t.Name+": "+err.Error(), theme.Active().Red)
+	}
+	return m.attachConsole("task:"+t.Name, console.Spec{Argv: spec.Argv, Cwd: spec.Cwd, Env: spec.Env, Title: spec.Title}, true)
 }
 
 type writerFunc func([]byte)
@@ -373,7 +411,7 @@ func (f writerFunc) Write(b []byte) (int, error) { f(b); return len(b), nil }
 func (m *Model) watchConsole(cs *consoleState) tea.Cmd {
 	return func() tea.Msg {
 		<-cs.session.Done()
-		return consoleExitMsg{name: cs.name, code: cs.session.ExitCode()}
+		return consoleExitMsg{name: cs.name, code: cs.session.ExitCode(), elapsed: time.Since(cs.started)}
 	}
 }
 

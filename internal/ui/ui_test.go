@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"runtime"
 	"strings"
 	"sync"
 	"testing"
@@ -739,5 +740,46 @@ func TestSplashSkippedOnTinyTerminals(t *testing.T) {
 	m.Update(splashTickMsg{})
 	if m.splash != nil {
 		t.Fatal("no splash on a terminal too small for it")
+	}
+}
+
+func TestTaskRunsInTheConsoleAndStaysOpenUntilAKey(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("needs a pseudo-terminal")
+	}
+	m, sup := newModel(t)
+	cfg := sup.Config()
+	cfg.Tasks = map[string]*config.TaskConfig{"hi": {Name: "hi", Cmd: "echo hi-from-task; exit 3", Cwd: cfg.Root, Env: map[string]string{}}}
+	cfg.TaskOrder = []string{"hi"}
+	t.Cleanup(m.consoles.CloseAll)
+
+	var run func(*Model) tea.Cmd
+	for _, c := range m.commands() {
+		if c.id == "task-hi" {
+			run = c.run
+		}
+	}
+	if run == nil {
+		t.Fatal("the palette has no entry for the task")
+	}
+	cmd := run(m)
+	if m.mode != modeConsole || m.console == nil || !m.console.task {
+		t.Fatalf("mode = %v, console = %+v", m.mode, m.console)
+	}
+	msg := cmd()
+	exit, ok := msg.(consoleExitMsg)
+	if !ok || exit.code != 3 {
+		t.Fatalf("msg = %#v", msg)
+	}
+	m.Update(exit)
+	if m.mode != modeConsole || !m.console.exited || m.console.code != 3 {
+		t.Fatalf("the console must stay open showing the result: mode = %v", m.mode)
+	}
+	if out := strings.Join(m.console.term.StyledLines(false), "\n"); !strings.Contains(out, "hi-from-task") {
+		t.Fatalf("output = %q", out)
+	}
+	m.Update(key("x"))
+	if m.mode != modeNormal || m.console != nil {
+		t.Fatal("any key should close the finished task")
 	}
 }

@@ -459,3 +459,64 @@ func TestValidateReportsUnknownKeysInLocal(t *testing.T) {
 		t.Fatalf("errors = %v", res.Errors)
 	}
 }
+
+func TestTasks(t *testing.T) {
+	dir := project(t, map[string]string{
+		"orbit.yaml": `
+shell: bash
+env: { GLOBAL: g, BOTH: global }
+services:
+  db: { cmd: run db, port: 5432 }
+tasks:
+  lint: golangci-lint run
+  migrate:
+    cmd: npm run migrate
+    description: Apply migrations
+    cwd: ./api
+    env: { BOTH: task }
+    depends_on: db
+`,
+	})
+	cfg, err := LoadConfig(LoadOptions{Dir: dir, Env: noEnv})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(cfg.TaskOrder, []string{"lint", "migrate"}) {
+		t.Fatalf("order = %v", cfg.TaskOrder)
+	}
+	lint, mig := cfg.Tasks["lint"], cfg.Tasks["migrate"]
+	if lint.Cmd != "golangci-lint run" || lint.Cwd != dir || lint.Shell != "bash" {
+		t.Fatalf("lint = %+v", lint)
+	}
+	if mig.Cwd != filepath.Join(dir, "api") || mig.Description != "Apply migrations" || !reflect.DeepEqual(mig.DependsOn, []string{"db"}) {
+		t.Fatalf("migrate = %+v", mig)
+	}
+	if !reflect.DeepEqual(mig.Env, map[string]string{"GLOBAL": "g", "BOTH": "task"}) {
+		t.Fatalf("env = %v", mig.Env)
+	}
+	if cfg.Services["lint"] != nil {
+		t.Fatal("a task is not a service")
+	}
+}
+
+func TestInvalidTasks(t *testing.T) {
+	if msg := loadErr(t, map[string]string{"orbit.yaml": "tasks:\n  x: { description: hi }\n"}); !strings.Contains(msg, "tasks.x: a task needs `cmd`") {
+		t.Fatal(msg)
+	}
+	if msg := loadErr(t, map[string]string{"orbit.yaml": "tasks:\n  x: { cmd: y, depends_on: [nope] }\n"}); !strings.Contains(msg, `unknown service "nope"`) {
+		t.Fatal(msg)
+	}
+	if msg := loadErr(t, map[string]string{"orbit.yaml": "tasks:\n  x: { cmd: y, env_file: ./missing.env }\n"}); !strings.Contains(msg, "env_file not found") {
+		t.Fatal(msg)
+	}
+}
+
+func TestLocalOverridesTasks(t *testing.T) {
+	cfg := mustLoad(t, map[string]string{
+		"orbit.yaml":       "tasks:\n  a: echo a\n  b: echo b\n",
+		"orbit.local.yaml": "tasks:\n  a: echo local\n  b: null\n  c: echo c\n",
+	})
+	if !reflect.DeepEqual(cfg.TaskOrder, []string{"a", "c"}) || cfg.Tasks["a"].Cmd != "echo local" {
+		t.Fatalf("tasks = %v", cfg.TaskOrder)
+	}
+}

@@ -15,6 +15,7 @@ orbit ctl start|stop|restart|toggle [svc|group…]   # drives a running orbit fr
 orbit ctl reload     # applies the edits made to orbit.yaml to a running orbit
 orbit graph          # prints the dependency graph
 orbit ls             # lists services
+orbit run [task] [-- args]   # runs a task of orbit.yaml on this terminal (no task: lists them)
 orbit logs [svc|group…] [-f] [-n 200] [--grep re] [--since 10m]
                      # prints recent logs without the TUI (works while orbit is open or closed)
 orbit init [dir]     # generates an orbit.yaml by scanning the project

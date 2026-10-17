@@ -146,6 +146,12 @@ type consoleState struct {
 	detach  func()
 	cols    int
 	rows    int
+	// task: the console runs a task of orbit.yaml, so it stays open after the command ends until a key is pressed
+	task    bool
+	exited  bool
+	code    int
+	elapsed time.Duration
+	started time.Time
 }
 
 // geometry is what the last render measured: the mouse and the scroll keys need it between frames.
@@ -362,8 +368,15 @@ type projectSwitchedMsg struct {
 }
 type projectSwitchFailedMsg struct{ err error }
 type consoleExitMsg struct {
+	name    string
+	code    int
+	elapsed time.Duration
+}
+
+// taskDepsMsg: the services a task depends on were started (ok: all of them are ready).
+type taskDepsMsg struct {
 	name string
-	code int
+	ok   bool
 }
 type historyMsg struct {
 	name    string

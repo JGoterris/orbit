@@ -13,6 +13,7 @@ usage
   orbit status [--json]      show the state of the services of an orbit that is running
   orbit ctl <action> [svc…]  start|stop|restart|toggle services of a running orbit (no svc: start/stop all)
   orbit ctl reload           apply the edits made to orbit.yaml to a running orbit (restarts only what changed)
+  orbit run [task] [-- args] run a task of orbit.yaml (no task: list them); args go to the task
   orbit graph                print the dependency graph
   orbit ls                   list services
   orbit init [dir]           generate an orbit.yaml by scanning the project

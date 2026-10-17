@@ -132,6 +132,20 @@ type ServiceConfig struct {
 	ComposeService string `json:"composeService,omitempty"`
 }
 
+// TaskConfig is a command run on demand (`orbit run <task>`, the command palette): it is not a service, so orbit
+// neither supervises it nor counts it in the graph.
+type TaskConfig struct {
+	Name        string            `json:"name"`
+	Description string            `json:"description,omitempty"`
+	Cmd         string            `json:"cmd"`
+	Cwd         string            `json:"cwd"`
+	Shell       string            `json:"shell,omitempty"`
+	Env         map[string]string `json:"env"`
+	EnvFiles    []EnvFileRef      `json:"envFiles"`
+	// DependsOn are services that have to be ready before the task runs
+	DependsOn []string `json:"dependsOn"`
+}
+
 // OrbitConfig is a project. Order and GroupOrder keep the declaration order of services and groups.
 type OrbitConfig struct {
 	Name string `json:"name"`
@@ -143,6 +157,8 @@ type OrbitConfig struct {
 	Order      []string                  `json:"order"`
 	Groups     map[string][]string       `json:"groups"`
 	GroupOrder []string                  `json:"groupOrder"`
+	Tasks      map[string]*TaskConfig    `json:"tasks"`
+	TaskOrder  []string                  `json:"taskOrder"`
 }
 
 // DepMap is the dependency graph of the services, in declaration order.

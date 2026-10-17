@@ -51,6 +51,18 @@ func (m *Model) commands() []command {
 			})
 		})
 	}
+	for _, tn := range cfg.TaskOrder {
+		tn := tn
+		t := cfg.Tasks[tn]
+		hint := t.Description
+		if hint == "" {
+			hint = t.Cmd
+		}
+		if len(t.DependsOn) > 0 {
+			hint = "+ " + strings.Join(t.DependsOn, ",") + " · " + hint
+		}
+		add("task-"+tn, "Run task "+tn, hint, func(m *Model) tea.Cmd { return m.runTask(tn) })
+	}
 	for _, n := range names {
 		n := n
 		svc := sup.Service(n)

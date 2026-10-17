@@ -257,7 +257,27 @@ func (m *Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.history, m.historyFor, m.historyRng = msg.buckets, msg.name, msg.rng
 		}
 		return m, nil
+	case taskDepsMsg:
+		if !msg.ok {
+			return m, m.notify("task "+msg.name+": its services did not become ready", theme.Active().Red)
+		}
+		if t := m.sup.Config().Tasks[msg.name]; t != nil {
+			return m, m.openTask(t)
+		}
+		return m, nil
 	case consoleExitMsg:
+		if strings.HasPrefix(msg.name, "task:") {
+			p := theme.Active()
+			name := strings.TrimPrefix(msg.name, "task:")
+			if m.console != nil && m.console.name == msg.name {
+				m.console.exited, m.console.code, m.console.elapsed = true, msg.code, msg.elapsed
+			} else if msg.code == 0 {
+				return m, m.notify("✓ task "+name+" done", p.Green)
+			} else {
+				return m, m.notify("✖ task "+name+" exited ("+itoa(msg.code)+")", p.Red)
+			}
+			return m, nil
+		}
 		if m.console != nil && m.console.name == msg.name {
 			m.closeConsole()
 			if msg.code != 0 {
@@ -307,7 +327,7 @@ func (m *Model) keyInMode(k tea.KeyMsg) tea.Cmd {
 			m.mode = modeNormal
 			return nil
 		}
-		if s == "ctrl+]" {
+		if s == "ctrl+]" || m.console.exited {
 			m.closeConsole()
 			return nil
 		}

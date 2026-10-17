@@ -88,3 +88,21 @@ func TestGroupsChange(t *testing.T) {
 		t.Fatal("a new group must show as a groups change")
 	}
 }
+
+func TestTasksChangeIsReportedWithoutRestarts(t *testing.T) {
+	a, b := cfg(svc("a", "x")), cfg(svc("a", "x"))
+	b.Tasks = map[string]*TaskConfig{"lint": {Name: "lint", Cmd: "go vet"}}
+	d := DiffConfig(a, b)
+	if !d.Tasks || d.IsEmpty() || len(d.RestartNames()) != 0 {
+		t.Fatalf("diff = %+v", d)
+	}
+	if got := d.Describe(); !reflect.DeepEqual(got, []string{"~ tasks"}) {
+		t.Fatalf("describe = %v", got)
+	}
+	// no tasks on either side, nil or empty, is no change
+	a.Tasks = map[string]*TaskConfig{}
+	b.Tasks = nil
+	if !DiffConfig(a, b).IsEmpty() {
+		t.Fatal("empty vs nil tasks must not be a change")
+	}
+}

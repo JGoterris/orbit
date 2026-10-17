@@ -7,7 +7,7 @@ import (
 )
 
 // Subcommands are the words that select a command; anything else in first position is the TUI's directory.
-var Subcommands = []string{"up", "down", "logs", "graph", "ls", "init", "validate", "open", "projects", "status", "ctl", "daemon"}
+var Subcommands = []string{"up", "down", "logs", "graph", "ls", "init", "validate", "open", "projects", "status", "ctl", "daemon", "run"}
 
 // Invocation is a parsed command line: which command, its arguments and the directory it works on.
 type Invocation struct {
@@ -16,6 +16,8 @@ type Invocation struct {
 	Sub string
 	// Rest are the positionals after the subcommand (service names, ctl action...).
 	Rest []string
+	// Args are what follows `--` in `orbit run <task> -- args`: they go to the task, not to orbit.
+	Args []string
 	// Dir is the directory given on the command line, "" when there is none.
 	Dir string
 }
@@ -29,11 +31,20 @@ func usagef(format string, a ...any) error { return &UsageError{Msg: fmt.Sprintf
 
 // Parse turns os.Args[1:] into an Invocation, applying the same positional rules as the TS version.
 func Parse(args []string) (Invocation, error) {
-	opts, pos, err := ParseArgs(args)
+	head, tail := args, []string(nil)
+	if i := slices.Index(args, "--"); i >= 0 {
+		head, tail = args[:i], args[i+1:]
+	}
+	opts, pos, err := ParseArgs(head)
 	if err != nil {
 		return Invocation{}, &UsageError{Msg: err.Error()}
 	}
 	inv := Invocation{Options: opts}
+	if len(pos) > 0 && pos[0] == "run" {
+		inv.Args = tail
+	} else {
+		pos = append(pos, tail...)
+	}
 	if opts.Help || opts.Version || len(pos) == 0 {
 		return inv, nil
 	}
@@ -49,7 +60,7 @@ func Parse(args []string) (Invocation, error) {
 	switch inv.Sub {
 	case "up", "logs", "ctl":
 		maxExtra = -1 // any number
-	case "init", "open", "daemon", "validate":
+	case "init", "open", "daemon", "validate", "run":
 		maxExtra = 1
 	}
 	if inv.Sub == "open" && len(rest) != 1 {

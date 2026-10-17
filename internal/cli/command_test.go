@@ -111,3 +111,23 @@ func TestHelpFlagWins(t *testing.T) {
 		t.Fatalf("%+v, %v", inv, err)
 	}
 }
+
+func TestParseRunKeepsArgsForTheTask(t *testing.T) {
+	inv, err := Parse([]string{"run", "test", "--", "-v", "--json", "-run", "Foo"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if inv.Sub != "run" || !reflect.DeepEqual(inv.Rest, []string{"test"}) || !reflect.DeepEqual(inv.Args, []string{"-v", "--json", "-run", "Foo"}) {
+		t.Fatalf("invocation = %+v", inv)
+	}
+	if inv.Options.JSON {
+		t.Fatal("options after -- belong to the task")
+	}
+	if _, err := Parse([]string{"run", "a", "b"}); err == nil {
+		t.Fatal("run takes one task")
+	}
+	inv, err = Parse([]string{"logs", "--", "api"})
+	if err != nil || !reflect.DeepEqual(inv.Rest, []string{"api"}) || inv.Args != nil {
+		t.Fatalf("logs -- api: %+v, %v", inv, err)
+	}
+}

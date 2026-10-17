@@ -78,5 +78,8 @@ func RunList(cfg *config.OrbitConfig) int {
 	for _, g := range cfg.GroupOrder {
 		fmt.Println(dim(fmt.Sprintf("group %s: %s", g, strings.Join(cfg.Groups[g], ", "))))
 	}
+	if len(cfg.TaskOrder) > 0 {
+		fmt.Println(dim("tasks (orbit run): " + strings.Join(cfg.TaskOrder, ", ")))
+	}
 	return 0
 }

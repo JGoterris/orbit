@@ -150,3 +150,16 @@ func TestKillTreeTakesChildrenDown(t *testing.T) {
 		t.Fatal("the child survived its group being killed")
 	}
 }
+
+func TestQuoteArgs(t *testing.T) {
+	args := []string{"a b", "it's", ""}
+	if got := QuoteArgs(args, "", false); got != `'a b' 'it'\''s' ''` {
+		t.Fatalf("sh: %s", got)
+	}
+	if got := QuoteArgs(args, "pwsh", false); got != `'a b' 'it''s' ''` {
+		t.Fatalf("pwsh: %s", got)
+	}
+	if got := QuoteArgs([]string{`say "hi"`}, "", true); got != `"say ""hi"""` {
+		t.Fatalf("cmd: %s", got)
+	}
+}

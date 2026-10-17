@@ -24,6 +24,11 @@
       "type": "object",
       "description": "Named sets of services, to start or stop together.",
       "additionalProperties": { "$ref": "#/definitions/stringList" }
+    },
+    "tasks": {
+      "type": "object",
+      "description": "Commands run on demand with `orbit run <task>` or from the command palette. They are not services: orbit does not supervise them.",
+      "additionalProperties": { "$ref": "#/definitions/task" }
     }
   },
   "definitions": {
@@ -127,6 +132,28 @@
           "properties": {
             "cmd": { "type": "string" },
             "timeout": { "$ref": "#/definitions/duration", "description": "Time before the hook is killed and counts as failed (default 60s)." }
+          }
+        }
+      ]
+    },
+    "task": {
+      "description": "A task: an object, or just its command as a string.",
+      "oneOf": [
+        { "type": "string" },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "cmd": { "type": "string", "description": "Command to run, through the shell. `orbit run <task> -- args` appends the arguments." },
+            "command": { "type": "string", "description": "Alias of cmd." },
+            "description": { "type": "string", "description": "Shown by `orbit run` and in the command palette." },
+            "cwd": { "type": "string", "description": "Working directory (default: the project root)." },
+            "shell": { "type": "string", "description": "Shell for this task (default: the top-level `shell`)." },
+            "env": { "$ref": "#/definitions/env", "description": "Variables for this task; they are added to the top-level env." },
+            "environment": { "$ref": "#/definitions/env", "description": "Alias of env." },
+            "env_file": { "$ref": "#/definitions/envFile", "description": ".env files for this task." },
+            "depends_on": { "$ref": "#/definitions/stringList", "description": "Services that must be ready before the task runs." },
+            "dependsOn": { "$ref": "#/definitions/stringList", "description": "Alias of depends_on." }
           }
         }
       ]

@@ -57,7 +57,7 @@ func TestSchemaCoversEveryKeyTheLoaderReads(t *testing.T) {
 	known := map[string]bool{}
 	schemaKeys(schema(), known)
 	var src strings.Builder
-	for _, f := range []string{"load.go", "envfiles.go"} {
+	for _, f := range []string{"load.go", "envfiles.go", "tasks.go"} {
 		data, err := os.ReadFile(f)
 		if err != nil {
 			t.Fatal(err)
@@ -181,5 +181,13 @@ func TestValidFileHasNoErrors(t *testing.T) {
 	}
 	if !reflect.DeepEqual(res.Config.Order, []string{"a"}) {
 		t.Fatalf("services = %v", res.Config.Order)
+	}
+}
+
+func TestUnknownKeyInTask(t *testing.T) {
+	doc := yamlDoc(t, "tasks:\n  migrate:\n    cmdd: x\n")
+	got := UnknownKeys(doc)
+	if len(got) != 1 || got[0].Path != "tasks.migrate" || got[0].Key != "cmdd" || got[0].Suggestion != "cmd" {
+		t.Fatalf("unknown keys = %+v", got)
 	}
 }

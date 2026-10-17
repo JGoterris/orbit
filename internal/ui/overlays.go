@@ -503,7 +503,16 @@ func (m *Model) renderConsole(W, H int) ([]string, int, int, int) {
 			content = append(content, blank(cols, p.Bg))
 		}
 	}
-	content = append(content, newLine(p.Bg).add(p.Dim, theme.Fit(" ctrl+] hide (keeps running) · exit / ctrl+d end the session", cols)).String())
+	footer := newLine(p.Bg).add(p.Dim, theme.Fit(" ctrl+] hide (keeps running) · exit / ctrl+d end the session", cols))
+	switch {
+	case c.exited && c.code == 0:
+		footer = newLine(p.Bg).add(p.Green, theme.Fit(fmt.Sprintf(" ✓ done in %.1fs · any key to close", c.elapsed.Seconds()), cols))
+	case c.exited:
+		footer = newLine(p.Bg).add(p.Red, theme.Fit(fmt.Sprintf(" ✖ exit %d after %.1fs · any key to close", c.code, c.elapsed.Seconds()), cols))
+	case c.task:
+		footer = newLine(p.Bg).add(p.Dim, theme.Fit(" ctrl+] hide (keeps running) · ctrl+c stops the task", cols))
+	}
+	content = append(content, footer.String())
 	box := panel(panelOpts{title: fmt.Sprintf("› %s · %s", c.name, c.session.Spec.Title), focused: true, bg: p.Bg}, w, h, content)
 	x, y := center(W, H, w, h)
 	return box, w, x, y

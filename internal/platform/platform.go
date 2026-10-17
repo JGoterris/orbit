@@ -62,6 +62,30 @@ func ShellCommand(cmd, shell string, win bool) (argv []string, verbatim bool) {
 	return argv, true
 }
 
+// QuoteArgs quotes args so the shell reads each one back as a single word, for appending to a command line.
+func QuoteArgs(args []string, shell string, win bool) string {
+	name := shell
+	if name == "" && win {
+		name = "cmd"
+	}
+	if i := strings.LastIndexAny(name, `\/`); i >= 0 {
+		name = name[i+1:]
+	}
+	name = strings.ToLower(strings.TrimSuffix(strings.ToLower(name), ".exe"))
+	quoted := make([]string, len(args))
+	for i, a := range args {
+		switch name {
+		case "pwsh", "powershell":
+			quoted[i] = "'" + strings.ReplaceAll(a, "'", "''") + "'"
+		case "cmd":
+			quoted[i] = `"` + strings.ReplaceAll(a, `"`, `""`) + `"`
+		default:
+			quoted[i] = "'" + strings.ReplaceAll(a, "'", `'\''`) + "'"
+		}
+	}
+	return strings.Join(quoted, " ")
+}
+
 // UserShell is the interactive shell of the user.
 func UserShell() string {
 	if IsWindows {

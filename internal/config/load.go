@@ -401,6 +401,13 @@ func validateGraph(c *OrbitConfig) {
 			}
 		}
 	}
+	for _, n := range c.TaskOrder {
+		for _, dep := range c.Tasks[n].DependsOn {
+			if c.Services[dep] == nil {
+				fail(fmt.Sprintf("depends on unknown service %q", dep), "tasks."+n+".depends_on")
+			}
+		}
+	}
 	if cycle := graphCycle(c); cycle != nil {
 		fail("dependency cycle: "+strings.Join(cycle, " → "), "")
 	}
@@ -431,7 +438,7 @@ func LoadConfig(opts LoadOptions) (cfg *OrbitConfig, err error) {
 				if name == "" || name == string(filepath.Separator) {
 					name = "orbit"
 				}
-				return &OrbitConfig{Name: name, Root: startDir, Services: map[string]*ServiceConfig{}, Groups: map[string][]string{}}, nil
+				return &OrbitConfig{Name: name, Root: startDir, Services: map[string]*ServiceConfig{}, Groups: map[string][]string{}, Tasks: map[string]*TaskConfig{}}, nil
 			}
 			fail(fmt.Sprintf("no orbit.yaml or docker-compose.yml found in %s (run `orbit init`)", startDir), "")
 		}
@@ -443,7 +450,7 @@ func LoadConfig(opts LoadOptions) (cfg *OrbitConfig, err error) {
 		if cerr != nil {
 			return nil, cerr
 		}
-		c := &OrbitConfig{Name: "orbit", Root: startDir, Services: map[string]*ServiceConfig{}, Groups: map[string][]string{}}
+		c := &OrbitConfig{Name: "orbit", Root: startDir, Services: map[string]*ServiceConfig{}, Groups: map[string][]string{}, Tasks: map[string]*TaskConfig{}}
 		if len(services) > 0 {
 			c.Name = services[0].ComposeProject
 		}
@@ -521,7 +528,7 @@ func LoadConfig(opts LoadOptions) (cfg *OrbitConfig, err error) {
 		}
 	}
 
-	c := &OrbitConfig{Root: root, File: file, LocalFile: local, Services: map[string]*ServiceConfig{}, Groups: map[string][]string{}}
+	c := &OrbitConfig{Root: root, File: file, LocalFile: local, Services: map[string]*ServiceConfig{}, Groups: map[string][]string{}, Tasks: map[string]*TaskConfig{}}
 	rawServices := asRecord(doc.Get("services"), "services")
 	for _, name := range importedOrder {
 		if !rawServices.Has(name) {
@@ -574,6 +581,28 @@ func LoadConfig(opts LoadOptions) (cfg *OrbitConfig, err error) {
 		}
 		c.Groups[g] = members
 		c.GroupOrder = append(c.GroupOrder, g)
+	}
+
+	rawTasks := asRecord(doc.Get("tasks"), "tasks")
+	for _, name := range rawTasks.Keys() {
+		t := parseTask(name, rawTasks.Get(name), root)
+		merged := map[string]string{}
+		for k, v := range globalEnv {
+			merged[k] = v
+		}
+		for k, v := range t.Env {
+			merged[k] = v
+		}
+		t.Env = merged
+		if t.Shell == "" {
+			t.Shell = globalShell
+		}
+		t.EnvFiles = append(slices.Clone(globalEnvFiles), t.EnvFiles...)
+		if missing := MissingEnvFiles(t.EnvFiles); len(missing) > 0 {
+			fail(fmt.Sprintf("env_file not found: %s (use { path, required: false } for optional files)", strings.Join(missing, ", ")), "tasks."+name+".env_file")
+		}
+		c.Tasks[name] = t
+		c.TaskOrder = append(c.TaskOrder, name)
 	}
 
 	c.Name, _ = asString(doc.Get("name"), "name")

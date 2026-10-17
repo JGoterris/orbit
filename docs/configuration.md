@@ -64,7 +64,7 @@ services:
     mem_limit: 1G               # alert (orange ≥85 %, red ≥100 %); 512m, 1.5G, or bytes
     leak_detection: false       # default true: warn about sustained memory growth
 
-  build-lib:                    # task: build, migration, provisioning…
+  build-lib:                    # one-off step of the startup: build, provisioning…
     cmd: mvn -q install -pl shared-kernel -am -DskipTests
     oneshot: true               # "ready" when it finishes with exit code 0; its dependents wait
 
@@ -78,7 +78,36 @@ services:
 
 groups:
   backend: [postgres, redis, api]
+
+tasks:                          # commands on demand: `orbit run <task>` and the command palette
+  lint: golangci-lint run
+  migrate:
+    cmd: npm run migrate
+    description: Apply DB migrations
+    cwd: ./api
+    env: { LOG_LEVEL: debug }
+    depends_on: [postgres]      # started (and waited for) before the task runs
 ```
+
+## Tasks
+
+A task is a command you run when you want it, not a service: orbit doesn't supervise it, it never starts with
+`S` / `--up` and it isn't in the graph. It gets the same `env`, `env_file` and `shell` as the services (the
+top-level ones, plus its own) and runs in the project root unless it has a `cwd`.
+
+```bash
+orbit run                        # lists the tasks
+orbit run migrate                # runs it here, on your terminal; orbit exits with the task's exit code
+orbit run test -- -run TestFoo   # what follows -- is appended to the command (quoted for the shell)
+```
+
+- With `depends_on`, `orbit run` asks the orbit that has the project open (`orbit up`, the TUI or the daemon) to
+  start those services and waits until they are ready. If nothing is running it tells you what to start.
+- In the TUI, open the command palette (`ctrl+p`) and pick **Run task …**: the task runs in the floating console and
+  stays open after it ends, showing `✓ done` or `✖ exit N`; any key closes it, `ctrl+]` hides it while it runs.
+- Use a task for things you launch by hand (migrations, seeds, tests, lint). For a step that has to finish *before*
+  a service starts, use a service with `oneshot: true` and make the service depend on it.
+- Tasks can be added, changed or removed in [`orbit.local.yaml`](#local-overrides-orbitlocalyaml) too.
 
 ## Local overrides (`orbit.local.yaml`)
 
