@@ -76,7 +76,7 @@ The full documentation is at **[jgoterris.github.io/orbit](https://jgoterris.git
 
 - [Usage](docs/usage.md): commands and live reload of `orbit.yaml`
 - [Keys](docs/keys.md)
-- [Configuration](docs/configuration.md): full `orbit.yaml` reference, editor support, hooks, env vars
+- [Configuration](docs/configuration.md): full `orbit.yaml` reference, per-developer `orbit.local.yaml` overrides, editor support, hooks, env vars
 - [Git](docs/git.md) · [Themes](docs/themes.md) · [Scripting & editors](docs/scripting.md)
 - [Platforms](docs/platforms.md) · [Upgrading from 0.x](docs/upgrading.md)
 

@@ -31,7 +31,7 @@ See [keys.md](keys.md) for the keyboard shortcuts.
 
 ## Editing `orbit.yaml` while running
 
-When `orbit.yaml` changes, the header shows `⟳ orbit.yaml changed · U`; `U` shows the diff and applies it on `y`.
+When `orbit.yaml` (or its [`orbit.local.yaml`](configuration.md#local-overrides-orbitlocalyaml) override) changes, the header shows `⟳ orbit.yaml changed · U`; `U` shows the diff and applies it on `y`.
 Like `docker compose up`, only what changed is touched: modified services restart (dependents don't), removed
 ones stop, added ones start if `autostart`. `orbit` / `orbit up` on a running project and `orbit ctl reload` do the same.
 

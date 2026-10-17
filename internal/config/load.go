@@ -473,20 +473,12 @@ func LoadConfig(opts LoadOptions) (cfg *OrbitConfig, err error) {
 		vars[k] = v
 	}
 
-	text, rerr := os.ReadFile(file)
-	if rerr != nil {
-		fail(rerr.Error(), file)
+	rawDoc := readYAMLDoc(file)
+	local := FindLocalConfigFile(root)
+	if local != "" {
+		rawDoc = mergeDoc(rawDoc, readYAMLDoc(local))
 	}
-	parsed, perr := ParseYAML(string(text))
-	if perr != nil {
-		msg := perr.Error()
-		hint := ""
-		if l := strings.ToLower(msg); strings.Contains(l, "alias") || strings.Contains(l, "anchor") {
-			hint = ` (quote glob patterns that start with *, e.g. "**/*.py")`
-		}
-		fail("invalid YAML: "+msg+hint, file)
-	}
-	doc := Interpolate(asRecord(parsed, file), vars).(*Map)
+	doc := Interpolate(rawDoc, vars).(*Map)
 	globalEnv := asEnv(doc.Get("env"), "env")
 	globalEnvFiles := parseEnvFileRefs(doc.Get("env_file"), "env_file", root)
 
@@ -529,7 +521,7 @@ func LoadConfig(opts LoadOptions) (cfg *OrbitConfig, err error) {
 		}
 	}
 
-	c := &OrbitConfig{Root: root, File: file, Services: map[string]*ServiceConfig{}, Groups: map[string][]string{}}
+	c := &OrbitConfig{Root: root, File: file, LocalFile: local, Services: map[string]*ServiceConfig{}, Groups: map[string][]string{}}
 	rawServices := asRecord(doc.Get("services"), "services")
 	for _, name := range importedOrder {
 		if !rawServices.Has(name) {

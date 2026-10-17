@@ -166,9 +166,11 @@ func UnknownKeys(doc any) []UnknownKey {
 
 // Validation is the outcome of `orbit validate`.
 type Validation struct {
-	File   string
-	Config *OrbitConfig
-	Errors []string
+	File string
+	// LocalFile is the orbit.local.yaml next to File, when there is one
+	LocalFile string
+	Config    *OrbitConfig
+	Errors    []string
 }
 
 // ValidateFile loads the file with the real loader (which decides what is valid) and, on top of that, reports the
@@ -192,9 +194,9 @@ func ValidateFile(opts LoadOptions) Validation {
 		}
 		v.File = FindConfigFile(dir)
 	}
-	if v.File != "" {
+	check := func(file, prefix string) {
 		var doc any
-		if data, rerr := os.ReadFile(v.File); rerr == nil {
+		if data, rerr := os.ReadFile(file); rerr == nil {
 			doc, _ = ParseYAML(string(data)) // the loader already reported invalid YAML
 		}
 		for _, u := range UnknownKeys(doc) {
@@ -202,11 +204,18 @@ func ValidateFile(opts LoadOptions) Validation {
 			if u.Path != "" {
 				at = u.Path + "." + u.Key
 			}
-			msg := at + ": unknown key"
+			msg := prefix + at + ": unknown key"
 			if u.Suggestion != "" {
 				msg += fmt.Sprintf(" (did you mean %q?)", u.Suggestion)
 			}
 			v.Errors = append(v.Errors, msg)
+		}
+	}
+	if v.File != "" {
+		check(v.File, "")
+		if local := FindLocalConfigFile(filepath.Dir(v.File)); local != "" {
+			v.LocalFile = local
+			check(local, filepath.Base(local)+": ")
 		}
 	}
 	return v

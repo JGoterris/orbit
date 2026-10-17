@@ -20,6 +20,9 @@ func RunValidate(opts config.LoadOptions) int {
 	name := "docker-compose"
 	if res.File != "" {
 		name = filepath.Base(res.File)
+		if res.LocalFile != "" {
+			name += " + " + filepath.Base(res.LocalFile)
+		}
 	}
 	n, g := len(res.Config.Services), len(res.Config.Groups)
 	fmt.Printf("%s %s: %d service%s, %d group%s\n", green("✓"), name, n, plural(n), g, plural(g))

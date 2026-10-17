@@ -28,6 +28,20 @@ func (m *Map) Set(key string, v any) {
 	m.vals[key] = v
 }
 
+// Delete removes a key; absent keys are ignored.
+func (m *Map) Delete(key string) {
+	if _, ok := m.vals[key]; !ok {
+		return
+	}
+	delete(m.vals, key)
+	for i, k := range m.keys {
+		if k == key {
+			m.keys = append(m.keys[:i:i], m.keys[i+1:]...)
+			break
+		}
+	}
+}
+
 // Lookup distinguishes an absent key from one set to null.
 func (m *Map) Lookup(key string) (any, bool) {
 	if m == nil {

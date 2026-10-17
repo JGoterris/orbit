@@ -1738,7 +1738,7 @@ func (s *Supervisor) applyConfig(given *config.OrbitConfig) (config.ConfigDiff, 
 	return diff, nil
 }
 
-// configFiles are the files whose edit may change the config: the yaml, the .env that interpolates it, and the
+// configFiles are the files whose edit may change the config: the yaml, its local override, the .env that interpolates it, and the
 // compose files with theirs.
 func (s *Supervisor) configFiles() []string {
 	cfg := s.Config()
@@ -1753,6 +1753,10 @@ func (s *Supervisor) configFiles() []string {
 	if cfg.File != "" {
 		add(cfg.File)
 		add(filepath.Join(cfg.Root, ".env"))
+		// watched even when absent, so creating the override is noticed
+		for _, name := range config.LocalConfigFilenames {
+			add(filepath.Join(cfg.Root, name))
+		}
 	}
 	for _, name := range cfg.Order {
 		if f := cfg.Services[name].ComposeFile; f != "" {

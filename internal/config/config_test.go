@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -364,4 +365,97 @@ func TestResolveEnv(t *testing.T) {
 func TestInvalidYAMLHint(t *testing.T) {
 	msg := loadErr(t, map[string]string{"orbit.yaml": "services: [oops"})
 	wantContains(t, msg, "invalid YAML")
+}
+
+const localBase = `
+services:
+  api:
+    cmd: run api
+    port: 3000
+    env: { A: "1", B: "2" }
+    depends_on: [db, redis]
+  db: { cmd: run db, port: 5432 }
+  redis: { cmd: run redis, port: 6379 }
+  worker: { cmd: run worker }
+`
+
+func TestLocalOverrideMergesAndReplaces(t *testing.T) {
+	cfg := mustLoad(t, map[string]string{
+		"orbit.yaml": localBase,
+		"orbit.local.yaml": `
+services:
+  api:
+    port: 4000
+    env: { B: "9", C: "3" }
+    depends_on: [db]
+  extra: { cmd: run extra }
+`,
+	})
+	api := cfg.Services["api"]
+	if api.Port != 4000 || api.Cmd != "run api" {
+		t.Fatalf("port/cmd = %d/%q", api.Port, api.Cmd)
+	}
+	if !reflect.DeepEqual(api.Env, map[string]string{"A": "1", "B": "9", "C": "3"}) {
+		t.Fatalf("env = %v", api.Env)
+	}
+	if !reflect.DeepEqual(api.DependsOn, []string{"db"}) {
+		t.Fatalf("depends_on = %v", api.DependsOn)
+	}
+	if cfg.Services["extra"] == nil || !strings.HasSuffix(cfg.LocalFile, "orbit.local.yaml") {
+		t.Fatalf("extra = %v, local = %q", cfg.Services["extra"], cfg.LocalFile)
+	}
+}
+
+func TestLocalNullRemoves(t *testing.T) {
+	cfg := mustLoad(t, map[string]string{
+		"orbit.yaml": localBase,
+		"orbit.local.yaml": `
+services:
+  worker: null
+  api: { env: { A: null } }
+`,
+	})
+	if cfg.Services["worker"] != nil || slices.Contains(cfg.Order, "worker") {
+		t.Fatal("worker should be removed")
+	}
+	if _, ok := cfg.Services["api"].Env["A"]; ok {
+		t.Fatalf("env A should be removed: %v", cfg.Services["api"].Env)
+	}
+}
+
+func TestLocalInterpolatesAndReportsItsOwnErrors(t *testing.T) {
+	cfg, err := LoadConfig(LoadOptions{
+		Dir: project(t, map[string]string{
+			"orbit.yaml":       localBase,
+			"orbit.local.yaml": "services:\n  api: { env: { X: \"${WHO:-nobody}\" } }\n",
+		}),
+		Env: map[string]string{"WHO": "me"},
+	})
+	if err != nil || cfg.Services["api"].Env["X"] != "me" {
+		t.Fatalf("err = %v", err)
+	}
+	msg := loadErr(t, map[string]string{"orbit.yaml": localBase, "orbit.local.yaml": "services: [\n"})
+	if !strings.Contains(msg, "orbit.local.yaml") {
+		t.Fatalf("error should name the local file: %s", msg)
+	}
+}
+
+func TestLocalIgnoredWithoutOrbitYaml(t *testing.T) {
+	cfg, err := LoadConfig(LoadOptions{Dir: project(t, map[string]string{
+		"docker-compose.yml": "services:\n  web:\n    image: nginx\n",
+		"orbit.local.yaml":   "services:\n  nope: { cmd: x }\n",
+	}), Env: noEnv})
+	if err != nil || cfg.Services["nope"] != nil {
+		t.Fatalf("err = %v", err)
+	}
+}
+
+func TestValidateReportsUnknownKeysInLocal(t *testing.T) {
+	res := ValidateFile(LoadOptions{Dir: project(t, map[string]string{
+		"orbit.yaml":       localBase,
+		"orbit.local.yaml": "services:\n  api: { helth: false }\n",
+	}), Env: noEnv})
+	if len(res.Errors) != 1 || !strings.HasPrefix(res.Errors[0], "orbit.local.yaml: ") {
+		t.Fatalf("errors = %v", res.Errors)
+	}
 }

@@ -80,6 +80,27 @@ groups:
   backend: [postgres, redis, api]
 ```
 
+## Local overrides (`orbit.local.yaml`)
+
+An optional `orbit.local.yaml` (or `.yml`) next to `orbit.yaml` is merged over it, so each developer can tweak the
+project without touching the shared file. Keep it out of git (`echo orbit.local.yaml >> .gitignore`).
+
+```yaml
+# orbit.local.yaml
+services:
+  api:
+    port: 4000                  # replaces the port
+    env: { LOG_LEVEL: debug }   # added to / overrides the api env, the rest is kept
+    depends_on: [postgres]      # lists replace the whole list
+  worker: null                  # null removes a service (or any other key)
+```
+
+- Mappings are merged key by key; scalars and lists **replace** the value from `orbit.yaml`.
+- `null` removes the key.
+- `${VAR}` is interpolated after the merge, so it works the same in both files.
+- Editing it shows `⟳ orbit.yaml changed · U` like any other config file, and `orbit validate` checks it too.
+- It is ignored in a directory that only has a `docker-compose.yml`.
+
 ## Editor support
 
 `orbit.schema.json` (shipped with the package) gives autocompletion, hover docs and

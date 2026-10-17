@@ -134,9 +134,11 @@ type ServiceConfig struct {
 
 // OrbitConfig is a project. Order and GroupOrder keep the declaration order of services and groups.
 type OrbitConfig struct {
-	Name       string                    `json:"name"`
-	Root       string                    `json:"root"`
-	File       string                    `json:"file,omitempty"`
+	Name string `json:"name"`
+	Root string `json:"root"`
+	File string `json:"file,omitempty"`
+	// LocalFile is the orbit.local.yaml merged over File, when there is one
+	LocalFile  string                    `json:"localFile,omitempty"`
 	Services   map[string]*ServiceConfig `json:"services"`
 	Order      []string                  `json:"order"`
 	Groups     map[string][]string       `json:"groups"`
