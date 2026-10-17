@@ -199,7 +199,7 @@ func (m *Model) keyInProjects(k tea.KeyMsg) tea.Cmd {
 			return m.notify(row.path+" is not a folder", p.Red)
 		}
 		m.pendingDir = row.path
-		if m.sup.OwnedRunningCount() == 0 {
+		if m.sup.OwnedRunningCount() == 0 && m.runningTasks() == 0 {
 			return m.openProject(row.path, "stop")
 		}
 		m.mode = modeSwitch

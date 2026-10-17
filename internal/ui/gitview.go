@@ -542,7 +542,8 @@ func (m *Model) gitLazygit(root string) tea.Cmd {
 	if _, err := exec.LookPath("lazygit"); err != nil {
 		return m.notify("lazygit is not installed", p.Yellow)
 	}
-	m.consoles.CloseAll()
+	// a task keeps running behind lazygit
+	m.consoles.CloseExcept("task:")
 	c := exec.Command("lazygit", "-p", root)
 	return tea.ExecProcess(c, func(err error) tea.Msg { return lazygitDoneMsg{err} })
 }

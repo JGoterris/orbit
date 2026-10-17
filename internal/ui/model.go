@@ -34,6 +34,7 @@ const (
 	modeReload
 	modeProjects
 	modeSwitch
+	modeTasks
 )
 
 // pane is a focusable panel.
@@ -246,6 +247,7 @@ type Model struct {
 
 	themeEntries []themeEntry
 	themeIdx     int
+	taskIdx      int
 	themeName    string
 	savedTheme   string
 

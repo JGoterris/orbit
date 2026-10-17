@@ -425,8 +425,11 @@ func (m *Model) closeConsole() {
 	m.mode = modeNormal
 }
 
+// runningTasks is how many tasks are still running, in the console or hidden behind it.
+func (m *Model) runningTasks() int { return m.consoles.Running("task:") }
+
 func (m *Model) requestQuit() tea.Cmd {
-	if m.sup.OwnedRunningCount() == 0 {
+	if m.sup.OwnedRunningCount() == 0 && m.runningTasks() == 0 {
 		return m.doQuit("stop")
 	}
 	m.mode = modeQuit

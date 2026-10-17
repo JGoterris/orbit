@@ -7,6 +7,7 @@ import (
 	"os/exec"
 	"os/signal"
 	"strings"
+	"syscall"
 
 	"github.com/JGoterris/orbit/internal/config"
 	"github.com/JGoterris/orbit/internal/core/tasks"
@@ -53,12 +54,16 @@ func RunTask(cfg *config.OrbitConfig, name string, args []string) int {
 		fmt.Fprintln(os.Stderr, red(fmt.Sprintf("task %s could not start: %v", name, err)))
 		return 1
 	}
-	// ctrl+c reaches the task through the terminal; orbit waits for it instead of dying first
-	sigs := make(chan os.Signal, 1)
-	signal.Notify(sigs, os.Interrupt)
+	// ctrl+c reaches the task through the terminal, so orbit only waits for it instead of dying first. A kill or a
+	// closed terminal reaches orbit alone: the task gets it from us, or it would be left running on its own.
+	sigs := make(chan os.Signal, 4)
+	signal.Notify(sigs, os.Interrupt, syscall.SIGTERM, syscall.SIGHUP)
 	defer signal.Stop(sigs)
 	go func() {
-		for range sigs {
+		for s := range sigs {
+			if sig, ok := s.(syscall.Signal); ok && s != os.Interrupt {
+				platform.KillTree(cmd.Process.Pid, sig)
+			}
 		}
 	}()
 	err = cmd.Wait()
@@ -66,8 +71,13 @@ func RunTask(cfg *config.OrbitConfig, name string, args []string) int {
 	switch {
 	case err == nil:
 		return 0
-	case errors.As(err, &ee) && ee.ExitCode() > 0:
-		return ee.ExitCode()
+	case errors.As(err, &ee):
+		if ws, ok := ee.Sys().(syscall.WaitStatus); ok && ws.Signaled() {
+			return 128 + int(ws.Signal())
+		}
+		if ee.ExitCode() > 0 {
+			return ee.ExitCode()
+		}
 	}
 	return 1
 }

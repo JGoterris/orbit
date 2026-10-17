@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"slices"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"syscall"
@@ -300,12 +301,34 @@ func (m *Manager) Discard(name string) {
 }
 
 // CloseAll ends every console: quitting orbit must not leave a psql behind.
-func (m *Manager) CloseAll() {
+func (m *Manager) CloseAll() { m.CloseExcept("") }
+
+// CloseExcept ends every console whose key does not start with keep, which stay as they are.
+func (m *Manager) CloseExcept(keep string) {
 	m.mu.Lock()
-	sessions := m.sessions
-	m.sessions = map[string]*Session{}
+	var doomed []*Session
+	for key, s := range m.sessions {
+		if keep != "" && strings.HasPrefix(key, keep) {
+			continue
+		}
+		doomed = append(doomed, s)
+		delete(m.sessions, key)
+	}
 	m.mu.Unlock()
-	for _, s := range sessions {
+	for _, s := range doomed {
 		s.Kill()
 	}
+}
+
+// Running is how many consoles whose key starts with prefix still have their program running.
+func (m *Manager) Running(prefix string) int {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	n := 0
+	for key, s := range m.sessions {
+		if strings.HasPrefix(key, prefix) && s.Alive() {
+			n++
+		}
+	}
+	return n
 }

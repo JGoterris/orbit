@@ -57,6 +57,8 @@ func (m *Model) viewApp() string {
 	switch m.mode {
 	case modeTheme:
 		modal, mw, mx, my = m.renderThemePicker(W, H)
+	case modeTasks:
+		modal, mw, mx, my = m.renderTasks(W, H)
 	case modePalette:
 		modal, mw, mx, my = m.renderPalette(W, H)
 	case modeHelp:
@@ -229,6 +231,18 @@ var defaultHints = [][2]string{
 	{"/", "filter"}, {"i", "console"}, {"o", "open"}, {":", "commands"}, {"?", "help"}, {"q", "quit"},
 }
 
+// withHint puts hint before the one whose key is before.
+func withHint(hints [][2]string, hint [2]string, before string) [][2]string {
+	out := make([][2]string, 0, len(hints)+1)
+	for _, h := range hints {
+		if h[0] == before {
+			out = append(out, hint)
+		}
+		out = append(out, h)
+	}
+	return out
+}
+
 var copyHints = [][2]string{
 	{"j/k", "move"}, {"ctrl+d/u", "page"}, {"v", "start/clear selection"}, {"enter/space", "open/close trace"},
 	{"y", "copy"}, {"esc", "cancel"},
@@ -275,6 +289,9 @@ func (m *Model) renderFooter(W int) string {
 		l.add(m.toast.color, m.toast.text)
 	} else {
 		hints := defaultHints
+		if len(m.sup.Config().TaskOrder) > 0 {
+			hints = withHint(hints, [2]string{"!", "tasks"}, ":")
+		}
 		switch {
 		case m.mode == modeCopy:
 			hints = copyHints

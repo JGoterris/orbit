@@ -103,7 +103,8 @@ orbit run test -- -run TestFoo   # what follows -- is appended to the command (q
 
 - With `depends_on`, `orbit run` asks the orbit that has the project open (`orbit up`, the TUI or the daemon) to
   start those services and waits until they are ready. If nothing is running it tells you what to start.
-- In the TUI, open the command palette (`ctrl+p`) and pick **Run task …**: the task runs in the floating console and
+- In the TUI, `!` lists the tasks (green `●` when their services are up, grey `●` when they need none, orange `○` when running it
+  starts them first, red `✖` when one failed); `enter` runs the selected one. They are also in the command palette (`ctrl+p`, **Run task …**): the task runs in the floating console and
   stays open after it ends, showing `✓ done` or `✖ exit N`; any key closes it, `ctrl+]` hides it while it runs.
 - Use a task for things you launch by hand (migrations, seeds, tests, lint). For a step that has to finish *before*
   a service starts, use a service with `oneshot: true` and make the service depend on it.

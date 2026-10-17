@@ -447,6 +447,8 @@ func (m *Model) keyInMode(k tea.KeyMsg) tea.Cmd {
 			}
 		}
 		return nil
+	case modeTasks:
+		return m.keyInTasks(k)
 	case modeTheme:
 		switch s {
 		case "esc", "q":
@@ -524,6 +526,8 @@ func (m *Model) keyInMode(k tea.KeyMsg) tea.Cmd {
 	case "T":
 		m.openThemePicker()
 		return nil
+	case "!":
+		return m.openTasks()
 	case "U":
 		return m.openReload()
 	case "P":

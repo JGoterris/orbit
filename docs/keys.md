@@ -26,6 +26,7 @@
 | `L` | open the selected service's git repo in [lazygit](https://github.com/jesseduffield/lazygit) (if installed) |
 | `4` | Git view, see [Git](git.md) |
 | `P` | open another project: `enter` opens, `tab` completes a typed path, `ctrl+f` pins, `ctrl+x` forgets |
+| `!` | list the tasks of `orbit.yaml` and run one (`○` = it starts the services it needs first, `✖` = one of them failed) |
 | `T` | change color theme (live preview, `enter` saves, `esc` cancels) |
 | `:` / `ctrl+p` | command palette |
 | `?` | help |

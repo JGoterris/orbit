@@ -194,6 +194,7 @@ var helpRows = [][2]string{
 	{"(git diff) v", "copy mode: a cursor (j k) · v again starts the range · y copies with +/- · esc exits"},
 	{"(git commands)", "j k move · y copy the command · c clear"},
 	{"P · U", "open another project · apply orbit.yaml edits (restarts only what changed)"},
+	{"!", "list the tasks of orbit.yaml and run one (○ = it starts the services it needs first)"},
 	{"T", "change color theme (live preview, enter saves)"},
 	{"h", "dashboard: cpu / memory chart range 2m ⇄ 15m ⇄ 1h (memory turns orange/red near its limit, ↗ = leak)"},
 	{"e", "environment variables of the selected service (j k move · v select a range · y copy value / KEY=value · Y always KEY=value · r reveal secrets)"},
@@ -416,7 +417,17 @@ func (m *Model) renderConfirm(W, H int) ([]string, int, int, int) {
 			break
 		}
 	}
+	tasksMsg := ""
+	if n := m.runningTasks(); n > 0 {
+		tasksMsg = fmt.Sprintf("%d task(s) running: they stop either way.", n)
+		if m.sup.OwnedRunningCount() == 0 {
+			msg, tasksMsg = tasksMsg, ""
+		}
+	}
 	title, h := title0, 7
+	if tasksMsg != "" {
+		h++
+	}
 	var content []string
 	running := m.sup.OwnedRunningCount()
 	if busy && (m.busyHow == "detach" || running == 0) {
@@ -435,12 +446,14 @@ func (m *Model) renderConfirm(W, H int) ([]string, int, int, int) {
 			newLine(p.PanelAlt).add(p.Dim, "please wait…").String(),
 		}
 	} else {
-		content = []string{
-			newLine(p.PanelAlt).add(p.Text, msg).String(),
+		content = []string{newLine(p.PanelAlt).add(p.Text, msg).String()}
+		if tasksMsg != "" {
+			content = append(content, newLine(p.PanelAlt).add(p.Orange, tasksMsg).String())
+		}
+		content = append(content,
 			newLine(p.PanelAlt).add(p.Green, "s").add(p.Dim, " stop all & "+verb).String(),
 			newLine(p.PanelAlt).add(p.Accent, "d").add(p.Dim, " leave running & "+verb+" (reopen that project to resume them)").String(),
-			newLine(p.PanelAlt).add(p.Red, "n / esc").add(p.Dim, " cancel").String(),
-		}
+			newLine(p.PanelAlt).add(p.Red, "n / esc").add(p.Dim, " cancel").String())
 	}
 	x, y := center(W, H, w, h)
 	return modalBox(title, w, h, content), w, x, y

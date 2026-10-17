@@ -183,3 +183,28 @@ func TestAttachReplayMayWaitForAWriteFromAnotherGoroutine(t *testing.T) {
 		t.Fatal("Attach and Write deadlocked")
 	}
 }
+
+func TestCloseExceptKeepsTheMatchingConsoles(t *testing.T) {
+	m := NewManager()
+	t.Cleanup(m.CloseAll)
+	open := func(key string) *Session {
+		s, err := m.Open(key, Spec{Argv: []string{"/bin/sh", "-c", "sleep 30"}}, 80, 24)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return s
+	}
+	shell, task := open("db"), open("task:migrate")
+	if m.Running("task:") != 1 {
+		t.Fatalf("running tasks = %d", m.Running("task:"))
+	}
+	m.CloseExcept("task:")
+	select {
+	case <-shell.Done():
+	case <-time.After(5 * time.Second):
+		t.Fatal("the console outside the prefix should end")
+	}
+	if !task.Alive() || m.Running("task:") != 1 {
+		t.Fatal("the task must keep running")
+	}
+}

@@ -783,3 +783,82 @@ func TestTaskRunsInTheConsoleAndStaysOpenUntilAKey(t *testing.T) {
 		t.Fatal("any key should close the finished task")
 	}
 }
+
+func TestTaskPickerShowsWhetherTheServicesAreUp(t *testing.T) {
+	m, sup := newModel(t)
+	cfg := sup.Config()
+	cfg.Tasks = map[string]*config.TaskConfig{
+		"lint":    {Name: "lint", Cmd: "go vet", Cwd: cfg.Root, Env: map[string]string{}},
+		"migrate": {Name: "migrate", Cmd: "run migrations", Description: "Apply migrations", Cwd: cfg.Root, Env: map[string]string{}, DependsOn: []string{"db"}},
+	}
+	cfg.TaskOrder = []string{"lint", "migrate"}
+
+	m.Update(key("!"))
+	if m.mode != modeTasks {
+		t.Fatalf("mode = %v", m.mode)
+	}
+	rows, _, _, _ := m.renderTasks(120, 36)
+	out := strings.Join(rows, "\n")
+	for _, want := range []string{"lint", "go vet", "migrate", "Apply migrations", "starts db"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("the picker should show %q:\n%s", want, out)
+		}
+	}
+	if r := m.taskReadiness(cfg.Tasks["lint"]); len(r.missing) != 0 {
+		t.Fatalf("a task without services is always ready: %+v", r)
+	}
+	if r := m.taskReadiness(cfg.Tasks["migrate"]); len(r.missing) != 1 || len(r.failed) != 0 {
+		t.Fatalf("migrate readiness = %+v", r)
+	}
+
+	m.Update(key("down"))
+	if m.taskIdx != 1 {
+		t.Fatalf("taskIdx = %d", m.taskIdx)
+	}
+	_, cmd := m.Update(key("enter"))
+	if m.mode != modeNormal || cmd == nil {
+		t.Fatalf("enter should close the picker and start the task: mode = %v", m.mode)
+	}
+	m.Update(key("!"))
+	m.Update(key("esc"))
+	if m.mode != modeNormal {
+		t.Fatal("esc should close the picker")
+	}
+}
+
+func TestTaskPickerWithoutTasksSaysSo(t *testing.T) {
+	m, _ := newModel(t)
+	m.Update(key("!"))
+	if m.mode != modeNormal || m.toast == nil {
+		t.Fatalf("mode = %v, toast = %v", m.mode, m.toast)
+	}
+}
+
+func TestAHiddenRunningTaskAsksBeforeQuitting(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("needs a pseudo-terminal")
+	}
+	m, sup := newModel(t)
+	cfg := sup.Config()
+	cfg.Tasks = map[string]*config.TaskConfig{"slow": {Name: "slow", Cmd: "sleep 30", Cwd: cfg.Root, Env: map[string]string{}}}
+	cfg.TaskOrder = []string{"slow"}
+	t.Cleanup(m.consoles.CloseAll)
+
+	m.runTask("slow")
+	m.Update(key("ctrl+]")) // hide it: it keeps running
+	if m.mode != modeNormal || m.runningTasks() != 1 {
+		t.Fatalf("mode = %v, running tasks = %d", m.mode, m.runningTasks())
+	}
+	m.Update(key("q"))
+	if m.mode != modeQuit {
+		t.Fatalf("quitting with a task running should ask first, mode = %v", m.mode)
+	}
+	rows, _, _, _ := m.renderConfirm(120, 36)
+	if out := strings.Join(rows, "\n"); !strings.Contains(out, "1 task(s) running") {
+		t.Fatalf("the confirmation should mention the task:\n%s", out)
+	}
+	m.Update(key("esc"))
+	if m.mode != modeNormal || m.runningTasks() != 1 {
+		t.Fatal("cancelling must leave the task running")
+	}
+}
