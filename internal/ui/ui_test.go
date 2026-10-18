@@ -16,9 +16,20 @@ import (
 
 	"github.com/JGoterris/orbit/internal/config"
 	"github.com/JGoterris/orbit/internal/core/logs"
+	"github.com/JGoterris/orbit/internal/core/runner"
 	"github.com/JGoterris/orbit/internal/core/supervisor"
 	"github.com/JGoterris/orbit/internal/ui/theme"
 )
+
+// On Windows a process service runs as `<this binary> __wrap …` (see runner.RunWrap). Here that binary is the test
+// one: without this it would run the whole suite again in every service, and a child that outlives the tests keeps
+// the .exe locked, so `go test` cannot delete it.
+func TestMain(m *testing.M) {
+	if len(os.Args) > 1 && os.Args[1] == runner.WrapCommand {
+		os.Exit(runner.RunWrap(os.Args[2:]))
+	}
+	os.Exit(m.Run())
+}
 
 func svc(name, cmd string, deps ...string) *config.ServiceConfig {
 	cwd, _ := os.Getwd()
