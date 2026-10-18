@@ -5,6 +5,7 @@ package console
 import (
 	"os"
 	"os/exec"
+	"sync"
 	"syscall"
 
 	"github.com/creack/pty"
@@ -15,6 +16,10 @@ import (
 type unixPTY struct {
 	f   *os.File
 	cmd *exec.Cmd
+	// mu keeps Resize (which needs the descriptor itself, and File.Fd is not safe against a concurrent Close) and
+	// Close apart; Read and Write go through the file's own locking
+	mu     sync.Mutex
+	closed bool
 }
 
 func ptySupported() bool { return true }
@@ -35,9 +40,19 @@ func startPTY(argv []string, dir string, env []string, cols, rows int) (ptyProce
 func (p *unixPTY) Read(b []byte) (int, error)  { return p.f.Read(b) }
 func (p *unixPTY) Write(b []byte) (int, error) { return p.f.Write(b) }
 func (p *unixPTY) Pid() int                    { return p.cmd.Process.Pid }
-func (p *unixPTY) Close() error                { return p.f.Close() }
+func (p *unixPTY) Close() error {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.closed = true
+	return p.f.Close()
+}
 
 func (p *unixPTY) Resize(cols, rows int) error {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if p.closed {
+		return nil
+	}
 	return pty.Setsize(p.f, &pty.Winsize{Cols: uint16(cols), Rows: uint16(rows)})
 }
 
