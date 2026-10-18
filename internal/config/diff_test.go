@@ -106,3 +106,24 @@ func TestTasksChangeIsReportedWithoutRestarts(t *testing.T) {
 		t.Fatal("empty vs nil tasks must not be a change")
 	}
 }
+
+func TestProfilesChangeIsReportedWithoutRestarts(t *testing.T) {
+	a, b := cfg(svc("a", "x")), cfg(svc("a", "x"))
+	b.Profiles = []string{"debug", "light"}
+	d := DiffConfig(a, b)
+	if !d.Profiles || d.IsEmpty() || len(d.RestartNames()) != 0 {
+		t.Fatalf("diff = %+v", d)
+	}
+	if got := d.Describe(); !reflect.DeepEqual(got, []string{"~ profiles: debug, light"}) {
+		t.Fatalf("describe = %v", got)
+	}
+	b.Profiles = nil
+	a.Profiles = []string{}
+	if !DiffConfig(a, b).IsEmpty() {
+		t.Fatal("nil vs empty profiles must not be a change")
+	}
+	a.Profiles = []string{"x"}
+	if got := DiffConfig(a, b).Describe(); !reflect.DeepEqual(got, []string{"~ profiles: none"}) {
+		t.Fatalf("describe = %v", got)
+	}
+}

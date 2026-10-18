@@ -15,23 +15,46 @@
     "env": { "$ref": "#/definitions/env", "description": "Variables for all services. ${VAR} and ${VAR:-def} are interpolated (also from .env)." },
     "env_file": { "$ref": "#/definitions/envFile", "description": ".env files for all services." },
     "shell": { "type": "string", "description": "Shell that runs cmd, hooks, health and console (default: sh, or cmd.exe on Windows)." },
+    "services": { "$ref": "#/definitions/services" },
+    "groups": { "$ref": "#/definitions/groups" },
+    "tasks": { "$ref": "#/definitions/tasks" },
+    "default_profiles": { "$ref": "#/definitions/stringList", "description": "Profiles that are active when nothing else selects them (--profile, ORBIT_PROFILES, the selection saved for the project)." },
+    "profiles": {
+      "type": "object",
+      "description": "Optional sets of changes laid over this file when the profile is active: add services, change them, or remove them with null. Activate with --profile, ORBIT_PROFILES or `p` in the TUI.",
+      "additionalProperties": { "$ref": "#/definitions/profile" }
+    }
+  },
+  "definitions": {
     "services": {
       "type": "object",
-      "description": "The services of the project, by name.",
+      "description": "The services of the project, by name. null removes one (in a profile or orbit.local.yaml).",
       "additionalProperties": { "$ref": "#/definitions/service" }
     },
     "groups": {
       "type": "object",
       "description": "Named sets of services, to start or stop together.",
-      "additionalProperties": { "$ref": "#/definitions/stringList" }
+      "additionalProperties": { "oneOf": [{ "$ref": "#/definitions/stringList" }, { "type": "null" }] }
     },
     "tasks": {
       "type": "object",
       "description": "Commands run on demand with `orbit run <task>` or from the command palette. They are not services: orbit does not supervise them.",
       "additionalProperties": { "$ref": "#/definitions/task" }
-    }
-  },
-  "definitions": {
+    },
+    "profile": {
+      "type": "object",
+      "description": "Changes laid over orbit.yaml while the profile is active: mappings merge, lists and values replace, null removes.",
+      "additionalProperties": false,
+      "properties": {
+        "description": { "type": "string", "description": "Shown in the profile picker." },
+        "env": { "$ref": "#/definitions/env", "description": "Variables for all services." },
+        "env_file": { "$ref": "#/definitions/envFile", "description": ".env files for all services." },
+        "shell": { "type": "string", "description": "Shell that runs cmd, hooks, health and console." },
+        "services": { "$ref": "#/definitions/services" },
+        "groups": { "$ref": "#/definitions/groups" },
+        "tasks": { "$ref": "#/definitions/tasks" }
+      }
+    },
     "stringList": {
       "description": "A string or a list of strings.",
       "oneOf": [{ "type": "string" }, { "type": "array", "items": { "type": "string" } }]
@@ -137,9 +160,10 @@
       ]
     },
     "task": {
-      "description": "A task: an object, or just its command as a string.",
+      "description": "A task: an object, or just its command as a string. null removes it (in a profile or orbit.local.yaml).",
       "oneOf": [
         { "type": "string" },
+        { "type": "null" },
         {
           "type": "object",
           "additionalProperties": false,

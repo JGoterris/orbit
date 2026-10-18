@@ -298,6 +298,9 @@ func (m *Model) applyReload() tea.Cmd {
 	}
 	return func() tea.Msg {
 		diff, err := m.sup.Reload(offer.cfg)
+		if err == nil && offer.profiles && m.opts.SaveProfiles != nil {
+			m.opts.SaveProfiles(offer.cfg.Profiles)
+		}
 		return reloadDoneMsg{diff: diff, err: err}
 	}
 }

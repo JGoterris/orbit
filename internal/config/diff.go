@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"reflect"
+	"slices"
 	"strings"
 )
 
@@ -28,6 +29,10 @@ type ConfigDiff struct {
 	Groups bool `json:"groups"`
 	// Tasks: the `tasks:` section differs (applied without restarting anything)
 	Tasks bool `json:"tasks"`
+	// Profiles: a different set of profiles is active (applied without restarting anything by itself)
+	Profiles bool `json:"profiles"`
+	// ActiveProfiles is the new set when Profiles is true
+	ActiveProfiles []string `json:"activeProfiles,omitempty"`
 	// NameChanged: the project name is part of the state dir and the socket, so it cannot change while orbit runs
 	NameChanged *NameChange `json:"nameChanged,omitempty"`
 }
@@ -109,6 +114,9 @@ func DiffConfig(prev, next *OrbitConfig) ConfigDiff {
 	}
 	d.Groups = stableJSON(normGroups(prev.Groups)) != stableJSON(normGroups(next.Groups))
 	d.Tasks = (len(prev.Tasks) > 0 || len(next.Tasks) > 0) && stableJSON(prev.Tasks) != stableJSON(next.Tasks)
+	if d.Profiles = !slices.Equal(prev.Profiles, next.Profiles); d.Profiles {
+		d.ActiveProfiles = next.Profiles
+	}
 	if prev.Name != next.Name {
 		d.NameChanged = &NameChange{From: prev.Name, To: next.Name}
 	}
@@ -124,7 +132,7 @@ func normGroups(g map[string][]string) map[string][]string {
 }
 
 func (d ConfigDiff) IsEmpty() bool {
-	return len(d.Added) == 0 && len(d.Removed) == 0 && len(d.Changed) == 0 && !d.Groups && !d.Tasks && d.NameChanged == nil
+	return len(d.Added) == 0 && len(d.Removed) == 0 && len(d.Changed) == 0 && !d.Groups && !d.Tasks && !d.Profiles && d.NameChanged == nil
 }
 
 // RestartNames are the services a running instance of prev has to restart for d (the changed ones that need it).
@@ -160,8 +168,19 @@ func (d ConfigDiff) Describe() []string {
 	if d.Tasks {
 		out = append(out, "~ tasks")
 	}
+	if d.Profiles {
+		out = append(out, "~ profiles: "+profilesLabel(d.ActiveProfiles))
+	}
 	if d.NameChanged != nil {
 		out = append(out, fmt.Sprintf("! name %s → %s: not applied while running (`orbit down` and reopen)", d.NameChanged.From, d.NameChanged.To))
 	}
 	return out
+}
+
+// profilesLabel is a set of profiles as the user reads it.
+func profilesLabel(names []string) string {
+	if len(names) == 0 {
+		return "none"
+	}
+	return strings.Join(names, ", ")
 }

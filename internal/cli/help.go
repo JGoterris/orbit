@@ -23,6 +23,8 @@ usage
 
 options
   -c, --config <file>        use a specific config file
+      --profile <names>      activate profiles of orbit.yaml (a,b or repeat the flag); it is remembered for the project
+      --no-profiles          deactivate every profile (ORBIT_PROFILES and the saved selection are ignored too)
   -f, --follow               (logs) keep streaming new lines
       --json                 (status) machine-readable output
   -n, --lines <n>            (logs) lines per service, default 200

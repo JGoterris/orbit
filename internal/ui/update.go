@@ -257,6 +257,8 @@ func (m *Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.history, m.historyFor, m.historyRng = msg.buckets, msg.name, msg.rng
 		}
 		return m, nil
+	case profilesLoadedMsg:
+		return m, m.offerProfiles(msg)
 	case taskDepsMsg:
 		if !msg.ok {
 			return m, m.notify("task "+msg.name+": its services did not become ready", theme.Active().Red)
@@ -449,6 +451,8 @@ func (m *Model) keyInMode(k tea.KeyMsg) tea.Cmd {
 		return nil
 	case modeTasks:
 		return m.keyInTasks(k)
+	case modeProfiles:
+		return m.keyInProfiles(k)
 	case modeTheme:
 		switch s {
 		case "esc", "q":
@@ -511,6 +515,10 @@ func (m *Model) keyInMode(k tea.KeyMsg) tea.Cmd {
 			cmd, _ := m.gitKeys(k)
 			return cmd
 		}
+	}
+	// `p` is pull in the Git view
+	if s == "p" && m.view != "git" {
+		return m.openProfiles()
 	}
 	switch s {
 	case "ctrl+c", "q":

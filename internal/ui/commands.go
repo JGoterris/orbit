@@ -104,6 +104,7 @@ func (m *Model) commands() []command {
 	add("export-logs", "Export visible logs to a file", "E", func(m *Model) tea.Cmd { return m.exportLogs() })
 	add("copy-logs", "Copy visible logs to the clipboard", "Y", func(m *Model) tea.Cmd { return m.copyLines(m.rawViewLines(), "all logs in view") })
 	add("reload", "Apply orbit.yaml changes", "U", func(m *Model) tea.Cmd { return m.openReload() })
+	add("profiles", "Profiles…", "p", func(m *Model) tea.Cmd { return m.openProfiles() })
 	add("tasks", "Tasks…", "!", func(m *Model) tea.Cmd { return m.openTasks() })
 	add("projects", "Open project…", "P", func(m *Model) tea.Cmd { m.openProjects(); return nil })
 	add("theme", "Change theme…", "T", func(m *Model) tea.Cmd { m.openThemePicker(); return nil })

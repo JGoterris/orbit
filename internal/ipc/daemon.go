@@ -8,6 +8,7 @@ import (
 	"os/exec"
 	"os/signal"
 	"path/filepath"
+	"strings"
 	"sync"
 	"syscall"
 	"time"
@@ -197,7 +198,14 @@ func spawnDaemon(cfg *config.OrbitConfig, dir string) error {
 	if cfg.File != "" {
 		target = []string{"-c", cfg.File}
 	}
-	cmd := exec.Command(exe, append([]string{"daemon"}, target...)...)
+	// the profiles are passed explicitly, so the daemon runs what this orbit has loaded whatever is saved on disk
+	args := append([]string{"daemon"}, target...)
+	if len(cfg.Profiles) > 0 {
+		args = append(args, "--profile", strings.Join(cfg.Profiles, ","))
+	} else {
+		args = append(args, "--no-profiles")
+	}
+	cmd := exec.Command(exe, args...)
 	cmd.Dir = cfg.Root
 	cmd.Env = os.Environ()
 	cmd.Stdout, cmd.Stderr = logf, logf

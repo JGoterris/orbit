@@ -35,6 +35,7 @@ const (
 	modeProjects
 	modeSwitch
 	modeTasks
+	modeProfiles
 )
 
 // pane is a focusable panel.
@@ -102,6 +103,9 @@ type Options struct {
 	// SetNotifications persists desktop notifications on / off and says whether it worked; Notifications reads it
 	SetNotifications func(on bool) bool
 	Notifications    func() bool
+	// LoadProfiles loads the project with this set of profiles active; SaveProfiles remembers the selection
+	LoadProfiles func(names []string) (*config.OrbitConfig, error)
+	SaveProfiles func(names []string)
 	// Started gets the program once it exists: the owner can ask it to quit from the outside
 	Started func(p *tea.Program)
 	// OpenProject switches to the project in dir ("stop" or "detach" the services of the current one). It blocks
@@ -138,6 +142,10 @@ type toast struct {
 type reloadOffer struct {
 	diff config.ConfigDiff
 	cfg  *config.OrbitConfig
+	// title replaces "orbit.yaml changed" in the modal
+	title string
+	// profiles: applying it makes cfg.Profiles the selection of the project, remembered for the next session
+	profiles bool
 }
 
 type consoleState struct {
@@ -248,6 +256,8 @@ type Model struct {
 	themeEntries []themeEntry
 	themeIdx     int
 	taskIdx      int
+	profIdx      int
+	profSel      map[string]bool
 	themeName    string
 	savedTheme   string
 

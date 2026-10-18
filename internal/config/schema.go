@@ -159,6 +159,10 @@ type OrbitConfig struct {
 	GroupOrder []string                  `json:"groupOrder"`
 	Tasks      map[string]*TaskConfig    `json:"tasks"`
 	TaskOrder  []string                  `json:"taskOrder"`
+	// Profiles are the active profiles, in the order they were laid over orbit.yaml
+	Profiles []string `json:"profiles"`
+	// AvailableProfiles are the ones orbit.yaml declares
+	AvailableProfiles []ProfileInfo `json:"availableProfiles"`
 }
 
 // DepMap is the dependency graph of the services, in declaration order.

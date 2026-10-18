@@ -59,6 +59,8 @@ func (m *Model) viewApp() string {
 		modal, mw, mx, my = m.renderThemePicker(W, H)
 	case modeTasks:
 		modal, mw, mx, my = m.renderTasks(W, H)
+	case modeProfiles:
+		modal, mw, mx, my = m.renderProfiles(W, H)
 	case modePalette:
 		modal, mw, mx, my = m.renderPalette(W, H)
 	case modeHelp:
@@ -89,7 +91,11 @@ func (m *Model) viewApp() string {
 func (m *Model) renderHeader(W int) string {
 	p := theme.Active()
 	l := newLine(p.PanelAlt)
-	l.add("", " ").bold(p.Accent, "◉ orbit").add(p.Dim, " · ").add(p.Text, m.sup.Config().Name).add(p.Dim, "    ")
+	l.add("", " ").bold(p.Accent, "◉ orbit").add(p.Dim, " · ").add(p.Text, m.sup.Config().Name)
+	if prof := m.sup.Config().Profiles; len(prof) > 0 {
+		l.add(p.Dim, " ⚑ ").add(p.Accent, strings.Join(prof, ","))
+	}
+	l.add(p.Dim, "    ")
 	var tabs []tabHit
 	for i, v := range views {
 		label := fmt.Sprintf(" %d %s ", i+1, v.label)
@@ -291,6 +297,9 @@ func (m *Model) renderFooter(W int) string {
 		hints := defaultHints
 		if len(m.sup.Config().TaskOrder) > 0 {
 			hints = withHint(hints, [2]string{"!", "tasks"}, ":")
+		}
+		if len(m.sup.Config().AvailableProfiles) > 0 && m.view != "git" {
+			hints = withHint(hints, [2]string{"p", "profiles"}, ":")
 		}
 		switch {
 		case m.mode == modeCopy:

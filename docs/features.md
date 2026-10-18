@@ -45,6 +45,8 @@
   `~/.local/state/orbit/<project>/logs/`) but nobody supervises them until the next `orbit` re-attaches.
 - **`oneshot` tasks** (builds, migrations, provisioning): count as ready once they finish with
   exit code 0, are shown as `✓ done`, and aren't re-run when another dependent starts.
+- **Profiles** (`--profile debug`, or `p` in the TUI): optional sets of changes that add, change or remove services
+  on top of `orbit.yaml`, applied live (only what differs restarts) and remembered per project.
 - **`tasks:`** for what you run by hand (migrate, seed, test, lint): `orbit run <task> [-- args]` or the command
   palette, with the project's env and optional `depends_on` services started first. Not services: never started by `S`.
 - Detects **occupied ports** before starting (and tells you which process is using them).

@@ -3,6 +3,7 @@ package cli
 import (
 	"fmt"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -77,6 +78,16 @@ func RunList(cfg *config.OrbitConfig) int {
 	}
 	for _, g := range cfg.GroupOrder {
 		fmt.Println(dim(fmt.Sprintf("group %s: %s", g, strings.Join(cfg.Groups[g], ", "))))
+	}
+	if len(cfg.AvailableProfiles) > 0 {
+		labels := make([]string, len(cfg.AvailableProfiles))
+		for i, p := range cfg.AvailableProfiles {
+			labels[i] = p.Name
+			if slices.Contains(cfg.Profiles, p.Name) {
+				labels[i] += "*"
+			}
+		}
+		fmt.Println(dim("profiles (* active): " + strings.Join(labels, ", ")))
 	}
 	if len(cfg.TaskOrder) > 0 {
 		fmt.Println(dim("tasks (orbit run): " + strings.Join(cfg.TaskOrder, ", ")))

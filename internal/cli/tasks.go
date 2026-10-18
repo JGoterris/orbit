@@ -50,23 +50,26 @@ func RunTask(cfg *config.OrbitConfig, name string, args []string) int {
 	if spec.Verbatim {
 		platform.SetVerbatimArgs(cmd, spec.Argv)
 	}
+	restoreTerminal := prepareTask(cmd)
+	defer restoreTerminal()
 	if err := cmd.Start(); err != nil {
 		fmt.Fprintln(os.Stderr, red(fmt.Sprintf("task %s could not start: %v", name, err)))
 		return 1
 	}
-	// ctrl+c reaches the task through the terminal, so orbit only waits for it instead of dying first. A kill or a
-	// closed terminal reaches orbit alone: the task gets it from us, or it would be left running on its own.
+	// orbit waits for the task instead of dying first. What reaches orbit alone (a kill, a closed terminal) is passed
+	// on to everything the task started, or it would be left running on its own.
 	sigs := make(chan os.Signal, 4)
 	signal.Notify(sigs, os.Interrupt, syscall.SIGTERM, syscall.SIGHUP)
 	defer signal.Stop(sigs)
 	go func() {
 		for s := range sigs {
-			if sig, ok := s.(syscall.Signal); ok && s != os.Interrupt {
+			if sig, ok := s.(syscall.Signal); ok && (s != os.Interrupt || forwardInterrupt) {
 				platform.KillTree(cmd.Process.Pid, sig)
 			}
 		}
 	}()
 	err = cmd.Wait()
+	restoreTerminal()
 	var ee *exec.ExitError
 	switch {
 	case err == nil:

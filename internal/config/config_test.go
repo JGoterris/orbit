@@ -520,3 +520,167 @@ func TestLocalOverridesTasks(t *testing.T) {
 		t.Fatalf("tasks = %v", cfg.TaskOrder)
 	}
 }
+
+const profilesBase = `
+services:
+  api: { cmd: run api, port: 3000, env: { A: "1" }, depends_on: [redis] }
+  redis: { cmd: run redis }
+  worker: { cmd: run worker }
+default_profiles: [light]
+profiles:
+  debug:
+    description: verbose
+    services:
+      api: { env: { LOG: debug } }
+      tracing: { cmd: run tracing }
+  light:
+    services:
+      worker: null
+  broken:
+    services:
+      oops: { port: 1 }
+`
+
+func loadProfiles(t *testing.T, files map[string]string, edit func(*LoadOptions)) (*OrbitConfig, error) {
+	t.Helper()
+	opts := LoadOptions{Dir: project(t, files), Env: noEnv}
+	edit(&opts)
+	return LoadConfig(opts)
+}
+
+func TestProfilesAddModifyAndRemove(t *testing.T) {
+	files := map[string]string{"orbit.yaml": profilesBase}
+	cfg, err := loadProfiles(t, files, func(o *LoadOptions) { o.Profiles, o.ProfilesSet = []string{"debug"}, true })
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Services["tracing"] == nil || cfg.Services["api"].Env["LOG"] != "debug" || cfg.Services["api"].Env["A"] != "1" {
+		t.Fatalf("debug should add tracing and extend api: %+v", cfg.Services["api"].Env)
+	}
+	if cfg.Services["worker"] == nil || !reflect.DeepEqual(cfg.Profiles, []string{"debug"}) {
+		t.Fatalf("worker stays without light; profiles = %v", cfg.Profiles)
+	}
+	if got := cfg.AvailableProfiles; len(got) != 3 || got[0].Name != "debug" || got[0].Description != "verbose" {
+		t.Fatalf("available = %+v", got)
+	}
+
+	cfg, err = loadProfiles(t, files, func(o *LoadOptions) { o.Profiles, o.ProfilesSet = []string{"light", "debug"}, true })
+	if err != nil || cfg.Services["worker"] != nil || slices.Contains(cfg.Order, "worker") || cfg.Services["tracing"] == nil {
+		t.Fatalf("light+debug: err = %v", err)
+	}
+	if !reflect.DeepEqual(cfg.Profiles, []string{"light", "debug"}) {
+		t.Fatalf("profiles keep the order they were given: %v", cfg.Profiles)
+	}
+}
+
+func TestProfilePrecedence(t *testing.T) {
+	files := map[string]string{"orbit.yaml": profilesBase}
+	saved := func(names ...string) func(string, string) ([]string, bool) {
+		return func(string, string) ([]string, bool) { return names, true }
+	}
+	active := func(edit func(*LoadOptions)) []string {
+		cfg, err := loadProfiles(t, files, edit)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return cfg.Profiles
+	}
+	if got := active(func(o *LoadOptions) {}); !reflect.DeepEqual(got, []string{"light"}) {
+		t.Fatalf("default_profiles: %v", got)
+	}
+	if got := active(func(o *LoadOptions) { o.SavedProfiles = saved("debug") }); !reflect.DeepEqual(got, []string{"debug"}) {
+		t.Fatalf("saved beats default: %v", got)
+	}
+	if got := active(func(o *LoadOptions) { o.SavedProfiles = saved(); o.Env = map[string]string{} }); len(got) != 0 {
+		t.Fatalf("a saved empty selection means none: %v", got)
+	}
+	if got := active(func(o *LoadOptions) {
+		o.SavedProfiles = saved("debug")
+		o.Env = map[string]string{"ORBIT_PROFILES": "light"}
+	}); !reflect.DeepEqual(got, []string{"light"}) {
+		t.Fatalf("ORBIT_PROFILES beats saved: %v", got)
+	}
+	if got := active(func(o *LoadOptions) {
+		o.Env = map[string]string{"ORBIT_PROFILES": "light"}
+		o.Profiles, o.ProfilesSet = []string{"debug"}, true
+	}); !reflect.DeepEqual(got, []string{"debug"}) {
+		t.Fatalf("the flag beats the environment: %v", got)
+	}
+	if got := active(func(o *LoadOptions) { o.ProfilesSet = true }); len(got) != 0 {
+		t.Fatalf("an explicit empty selection is none, not the default: %v", got)
+	}
+	// a saved profile that no longer exists must not keep the project from opening
+	if got := active(func(o *LoadOptions) { o.SavedProfiles = saved("gone", "debug") }); !reflect.DeepEqual(got, []string{"debug"}) {
+		t.Fatalf("unknown saved profile: %v", got)
+	}
+}
+
+func TestUnknownProfileIsAnErrorWithASuggestion(t *testing.T) {
+	_, err := loadProfiles(t, map[string]string{"orbit.yaml": profilesBase}, func(o *LoadOptions) { o.Profiles, o.ProfilesSet = []string{"debgu"}, true })
+	if err == nil || !strings.Contains(err.Error(), `did you mean "debug"`) || !strings.Contains(err.Error(), "profiles: debug, light, broken") {
+		t.Fatalf("err = %v", err)
+	}
+	_, err = loadProfiles(t, map[string]string{"orbit.yaml": "services:\n  a: x\n"}, func(o *LoadOptions) { o.Profiles, o.ProfilesSet = []string{"x"}, true })
+	if err == nil || !strings.Contains(err.Error(), "defines no `profiles:`") {
+		t.Fatalf("err = %v", err)
+	}
+}
+
+func TestInactiveProfilesAreNotEvaluated(t *testing.T) {
+	// `broken` adds a process service without a cmd: only activating it fails
+	if _, err := loadProfiles(t, map[string]string{"orbit.yaml": profilesBase}, func(o *LoadOptions) {}); err != nil {
+		t.Fatal(err)
+	}
+	_, err := loadProfiles(t, map[string]string{"orbit.yaml": profilesBase}, func(o *LoadOptions) { o.Profiles, o.ProfilesSet = []string{"broken"}, true })
+	if err == nil || !strings.Contains(err.Error(), "needs `cmd`") {
+		t.Fatalf("err = %v", err)
+	}
+}
+
+func TestProfilesCannotChangeTheIdentityOfTheProject(t *testing.T) {
+	msg := loadErr(t, map[string]string{"orbit.yaml": "services:\n  a: x\nprofiles:\n  p:\n    name: other\n"})
+	if !strings.Contains(msg, "profiles.p.name") || !strings.Contains(msg, "cannot be set by a profile") {
+		t.Fatal(msg)
+	}
+}
+
+func TestLocalWinsOverProfilesAndRemovalsExplainThemselves(t *testing.T) {
+	files := map[string]string{
+		"orbit.yaml":       profilesBase,
+		"orbit.local.yaml": "services:\n  api: { env: { LOG: local } }\n",
+	}
+	cfg, err := loadProfiles(t, files, func(o *LoadOptions) { o.Profiles, o.ProfilesSet = []string{"debug"}, true })
+	if err != nil || cfg.Services["api"].Env["LOG"] != "local" {
+		t.Fatalf("err = %v", err)
+	}
+	// removing a service somebody depends on says who removed it
+	files["orbit.yaml"] = "services:\n  api: { cmd: x, depends_on: [redis] }\n  redis: y\nprofiles:\n  light:\n    services: { redis: null }\n"
+	_, err = loadProfiles(t, files, func(o *LoadOptions) { o.Profiles, o.ProfilesSet = []string{"light"}, true })
+	if err == nil || !strings.Contains(err.Error(), `unknown service "redis" (removed by profile light)`) {
+		t.Fatalf("err = %v", err)
+	}
+}
+
+func TestNullRemovesServicesImportedFromCompose(t *testing.T) {
+	compose := "services:\n  web:\n    image: nginx\n  db:\n    image: postgres\n"
+	for name, files := range map[string]map[string]string{
+		"profile": {"orbit.yaml": "profiles:\n  p:\n    services: { db: null }\n", "docker-compose.yml": compose},
+		"local":   {"orbit.yaml": "services: {}\n", "orbit.local.yaml": "services: { db: null }\n", "docker-compose.yml": compose},
+	} {
+		cfg, err := loadProfiles(t, files, func(o *LoadOptions) {
+			if name == "profile" {
+				o.Profiles, o.ProfilesSet = []string{"p"}, true
+			}
+		})
+		if err != nil || cfg.Services["db"] != nil || cfg.Services["web"] == nil {
+			t.Fatalf("%s: db should be gone and web kept: err = %v, order = %v", name, err, cfg.Order)
+		}
+	}
+}
+
+func TestValidateChecksEveryProfile(t *testing.T) {
+	res := ValidateFile(LoadOptions{Dir: project(t, map[string]string{"orbit.yaml": profilesBase}), Env: noEnv})
+	if len(res.Errors) != 1 || !strings.HasPrefix(res.Errors[0], "profile broken: ") {
+		t.Fatalf("errors = %v", res.Errors)
+	}
+}

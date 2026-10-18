@@ -35,11 +35,51 @@ var unsafeName = regexp.MustCompile(`[^a-zA-Z0-9_.-]`)
 
 // Dir is the per-project directory for logs, pids and the lock: <state base>/orbit/<name>-<hash of root>
 // (~/.local/state, %LOCALAPPDATA% on Windows).
-func Dir(cfg *config.OrbitConfig) string {
-	sum := sha1.Sum([]byte(cfg.Root))
-	name := unsafeName.ReplaceAllString(cfg.Name+"-"+hex.EncodeToString(sum[:])[:8], "-")
-	return filepath.Join(platform.StateBase(), "orbit", name)
+func Dir(cfg *config.OrbitConfig) string { return DirOf(cfg.Root, cfg.Name) }
+
+// DirOf is Dir for a project known only by its root and name, as it is before its configuration is loaded.
+func DirOf(root, name string) string {
+	sum := sha1.Sum([]byte(root))
+	dir := unsafeName.ReplaceAllString(name+"-"+hex.EncodeToString(sum[:])[:8], "-")
+	return filepath.Join(platform.StateBase(), "orbit", dir)
 }
+
+// ReadProfiles is the selection of profiles saved for the project in dir; ok is false when none was ever saved
+// (a saved empty selection means "no profiles").
+func ReadProfiles(dir string) (names []string, ok bool) {
+	data, err := os.ReadFile(filepath.Join(dir, "profiles.json"))
+	if err != nil {
+		return nil, false
+	}
+	if json.Unmarshal(data, &names) != nil {
+		return nil, false
+	}
+	return names, true
+}
+
+// WriteProfiles saves the selection of profiles of the project in dir. Like Write, it is best effort.
+func WriteProfiles(dir string, names []string) {
+	if os.MkdirAll(dir, 0o755) != nil {
+		return
+	}
+	if names == nil {
+		names = []string{}
+	}
+	data, err := json.Marshal(names)
+	if err != nil {
+		return
+	}
+	tmp := filepath.Join(dir, "profiles.json."+strconv.Itoa(os.Getpid())+".tmp")
+	if os.WriteFile(tmp, data, 0o644) != nil {
+		return
+	}
+	if os.Rename(tmp, filepath.Join(dir, "profiles.json")) != nil {
+		os.Remove(tmp)
+	}
+}
+
+// SavedProfiles is the lookup LoadOptions.SavedProfiles wants.
+func SavedProfiles(root, name string) ([]string, bool) { return ReadProfiles(DirOf(root, name)) }
 
 // ProcFiles are the files a process service writes: its output, its errors and its exit code.
 type ProcFiles struct {

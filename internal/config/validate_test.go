@@ -57,7 +57,7 @@ func TestSchemaCoversEveryKeyTheLoaderReads(t *testing.T) {
 	known := map[string]bool{}
 	schemaKeys(schema(), known)
 	var src strings.Builder
-	for _, f := range []string{"load.go", "envfiles.go", "tasks.go"} {
+	for _, f := range []string{"load.go", "envfiles.go", "tasks.go", "profiles.go"} {
 		data, err := os.ReadFile(f)
 		if err != nil {
 			t.Fatal(err)

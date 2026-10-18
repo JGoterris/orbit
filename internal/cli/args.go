@@ -20,6 +20,9 @@ type Options struct {
 	Lines    string
 	Grep     string
 	Since    string
+	// Profile is every --profile given, joined with commas
+	Profile    string
+	NoProfiles bool
 }
 
 type optSpec struct {
@@ -41,6 +44,33 @@ var optSpecs = []optSpec{
 	{long: "lines", short: "n", takesValue: true, set: func(o *Options, v string) { o.Lines = v }},
 	{long: "grep", takesValue: true, set: func(o *Options, v string) { o.Grep = v }},
 	{long: "since", takesValue: true, set: func(o *Options, v string) { o.Since = v }},
+	{long: "profile", takesValue: true, set: addProfiles},
+	{long: "profiles", takesValue: true, set: addProfiles},
+	{long: "no-profiles", set: func(o *Options, _ string) { o.NoProfiles = true }},
+}
+
+func addProfiles(o *Options, v string) {
+	if o.Profile != "" {
+		o.Profile += ","
+	}
+	o.Profile += v
+}
+
+// ProfileSelection is what --profile / --no-profiles ask for: set is false when the command line says nothing, so
+// the environment, the saved selection and the project's defaults decide.
+func (o Options) ProfileSelection() (names []string, set bool) {
+	if o.NoProfiles && o.Profile == "" {
+		return nil, true
+	}
+	if o.Profile == "" {
+		return nil, false
+	}
+	for _, n := range strings.Split(o.Profile, ",") {
+		if n = strings.TrimSpace(n); n != "" {
+			names = append(names, n)
+		}
+	}
+	return names, true
 }
 
 func (s optSpec) describe() string {

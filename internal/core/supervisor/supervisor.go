@@ -1617,7 +1617,7 @@ func (s *Supervisor) applyConfig(given *config.OrbitConfig) (config.ConfigDiff, 
 	loaded := given
 	if loaded == nil {
 		var err error
-		loaded, err = config.LoadConfig(config.LoadOptions{File: prev.File, Dir: prev.Root, AllowEmpty: true})
+		loaded, err = config.LoadConfig(config.LoadOptions{File: prev.File, Dir: prev.Root, AllowEmpty: true, Profiles: prev.Profiles, ProfilesSet: true})
 		if err != nil {
 			return config.ConfigDiff{}, err
 		}
@@ -1845,7 +1845,7 @@ func (s *Supervisor) checkConfig() {
 	s.mu.Unlock()
 
 	var pending *PendingConfig
-	next, err := config.LoadConfig(config.LoadOptions{File: cur.File, Dir: cur.Root, AllowEmpty: true})
+	next, err := config.LoadConfig(config.LoadOptions{File: cur.File, Dir: cur.Root, AllowEmpty: true, Profiles: cur.Profiles, ProfilesSet: true})
 	if err != nil {
 		pending = &PendingConfig{Error: err.Error()}
 	} else {

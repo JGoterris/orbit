@@ -14,12 +14,14 @@ orbit status [--json]          # state of the services of a running orbit (TUI o
 orbit ctl start|stop|restart|toggle [svc|group…]   # drives a running orbit from another terminal
 orbit ctl reload     # applies the edits made to orbit.yaml to a running orbit
 orbit graph          # prints the dependency graph
-orbit ls             # lists services
+orbit ls             # lists services (and tasks, and profiles)
 orbit run [task] [-- args]   # runs a task of orbit.yaml on this terminal (no task: lists them)
 orbit logs [svc|group…] [-f] [-n 200] [--grep re] [--since 10m]
                      # prints recent logs without the TUI (works while orbit is open or closed)
 orbit init [dir]     # generates an orbit.yaml by scanning the project
 orbit validate [dir] # checks the orbit.yaml (errors and unknown keys, e.g. a typo like `helth:`); exit code 1 if invalid
+
+orbit --profile debug[,…] # (any command) activate profiles of orbit.yaml; the TUI, `up` and `ctl` remember them. --no-profiles clears
 ```
 
 Without `orbit.yaml`, orbit opens the services from a `docker-compose.yml` directly. In a folder with

@@ -8,6 +8,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"sync"
 	"syscall"
@@ -24,10 +25,20 @@ import (
 func TestMain(m *testing.M) {
 	if len(os.Args) > 1 && os.Args[1] == "daemon" {
 		var opts config.LoadOptions
-		if len(os.Args) > 3 && os.Args[2] == "-c" {
-			opts.File = os.Args[3]
-		} else if len(os.Args) > 2 {
-			opts.Dir = os.Args[2]
+		args := os.Args[2:]
+		for i := 0; i < len(args); i++ {
+			switch args[i] {
+			case "-c":
+				i++
+				opts.File = args[i]
+			case "--profile":
+				i++
+				opts.Profiles, opts.ProfilesSet = strings.Split(args[i], ","), true
+			case "--no-profiles":
+				opts.ProfilesSet = true
+			default:
+				opts.Dir = args[i]
+			}
 		}
 		cfg, err := config.LoadConfig(opts)
 		if err != nil {
@@ -640,4 +651,31 @@ func TestASecondClientDoesNotStartASecondDaemon(t *testing.T) {
 	r.Init()
 	r.Dispose()
 	until(t, "the daemon to go", func() bool { return !alive(pids[0]) })
+}
+
+// The daemon is started with the profiles of the orbit that spawns it, not with whatever is saved or defaulted.
+func TestDaemonStartsWithTheActiveProfiles(t *testing.T) {
+	t.Setenv("XDG_STATE_HOME", t.TempDir())
+	yaml := "services:\n  w: { cmd: sleep 300, autostart: false }\ndefault_profiles: [other]\nprofiles:\n  debug:\n    services:\n      extra: { cmd: sleep 300, autostart: false }\n  other:\n    services:\n      w: null\n"
+	dir := filepath.Join(t.TempDir(), "proj")
+	os.MkdirAll(dir, 0o755)
+	os.WriteFile(filepath.Join(dir, "orbit.yaml"), []byte(yaml), 0o644)
+	cfg, err := config.LoadConfig(config.LoadOptions{Dir: dir, Env: map[string]string{}, Profiles: []string{"debug"}, ProfilesSet: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if pid := state.ReadLock(state.Dir(cfg)); pid != 0 {
+			syscall.Kill(pid, syscall.SIGKILL)
+		}
+	})
+	r, err := ConnectProject(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer r.Dispose()
+	got := r.Config()
+	if !reflect.DeepEqual(got.Profiles, []string{"debug"}) || got.Services["extra"] == nil || got.Services["w"] == nil {
+		t.Fatalf("the daemon loaded profiles %v with services %v", got.Profiles, got.Order)
+	}
 }

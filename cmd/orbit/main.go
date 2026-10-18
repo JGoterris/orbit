@@ -13,6 +13,7 @@ import (
 	"github.com/JGoterris/orbit/internal/core/runner"
 	"github.com/JGoterris/orbit/internal/ipc"
 	"github.com/JGoterris/orbit/internal/projects"
+	"github.com/JGoterris/orbit/internal/state"
 )
 
 // version is set at build time (-ldflags "-X main.version=...").
@@ -73,7 +74,14 @@ func run(args []string) int {
 		inv.Dir, inv.Sub = entry.Path, ""
 	}
 
-	opts := config.LoadOptions{Dir: inv.Dir, File: inv.Options.Config}
+	opts := config.LoadOptions{Dir: inv.Dir, File: inv.Options.Config, SavedProfiles: state.SavedProfiles}
+	opts.Profiles, opts.ProfilesSet = inv.Options.ProfileSelection()
+	// a --profile on the command line becomes the selection of the project, until another one replaces it
+	remember := func(cfg *config.OrbitConfig) {
+		if opts.ProfilesSet && cfg.File != "" {
+			state.WriteProfiles(state.Dir(cfg), cfg.Profiles)
+		}
+	}
 	load := func() (*config.OrbitConfig, bool) {
 		cfg, err := config.LoadConfig(opts)
 		if err != nil {
@@ -81,6 +89,14 @@ func run(args []string) int {
 			return nil, false
 		}
 		return cfg, true
+	}
+	// the commands that act on the project make a --profile its selection; the ones that only look do not
+	loadAndRemember := func() (*config.OrbitConfig, bool) {
+		cfg, ok := load()
+		if ok {
+			remember(cfg)
+		}
+		return cfg, ok
 	}
 
 	switch inv.Sub {
@@ -124,8 +140,8 @@ func run(args []string) int {
 		}
 		return 1
 	case "ctl":
-		if cfg, ok := load(); ok {
-			return cli.RunCtl(cfg, inv.Rest)
+		if cfg, ok := loadAndRemember(); ok {
+			return cli.RunCtl(cfg, inv.Rest, opts.ProfilesSet)
 		}
 		return 1
 	case "run":
@@ -138,7 +154,7 @@ func run(args []string) int {
 		}
 		return 1
 	case "up":
-		if cfg, ok := load(); ok {
+		if cfg, ok := loadAndRemember(); ok {
 			return cli.RunUp(cfg, inv.Rest)
 		}
 		return 1
@@ -166,11 +182,14 @@ func run(args []string) int {
 	}
 
 	if inv.Sub == "" {
-		cfg, err := config.LoadConfig(config.LoadOptions{Dir: inv.Dir, File: inv.Options.Config, AllowEmpty: true})
+		tuiOpts := opts
+		tuiOpts.AllowEmpty = true
+		cfg, err := config.LoadConfig(tuiOpts)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "%s %v\n", red, err)
 			return 1
 		}
+		remember(cfg)
 		// a folder with neither orbit.yaml nor compose is not a project: the picker opens instead
 		bare := cfg.File == "" && len(cfg.Services) == 0 && inv.Dir == ""
 		return cli.RunTUI(cfg, cli.TUIOptions{Up: inv.Options.Up, NoDaemon: inv.Options.NoDaemon, Bare: bare})

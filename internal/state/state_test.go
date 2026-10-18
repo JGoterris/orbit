@@ -86,3 +86,19 @@ func TestLock(t *testing.T) {
 	}
 	ReleaseLock(dir)
 }
+
+func TestProfilesSelectionRoundTrip(t *testing.T) {
+	dir := t.TempDir()
+	if _, ok := ReadProfiles(dir); ok {
+		t.Fatal("nothing saved yet")
+	}
+	WriteProfiles(dir, []string{"debug", "light"})
+	if got, ok := ReadProfiles(dir); !ok || len(got) != 2 || got[0] != "debug" || got[1] != "light" {
+		t.Fatalf("read = %v, %v", got, ok)
+	}
+	// saving "none" is a selection too: it is not the same as never having saved
+	WriteProfiles(dir, nil)
+	if got, ok := ReadProfiles(dir); !ok || len(got) != 0 {
+		t.Fatalf("read = %v, %v", got, ok)
+	}
+}

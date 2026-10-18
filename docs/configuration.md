@@ -79,6 +79,17 @@ services:
 groups:
   backend: [postgres, redis, api]
 
+default_profiles: [light]       # optional: the profiles that apply when nothing else selects them
+profiles:                       # optional sets of changes, laid over this file: --profile debug, or `p` in the TUI
+  debug:
+    description: verbose logs and tracing
+    services:
+      api: { env: { LOG_LEVEL: debug } }              # change a service
+      tracing: { image: jaegertracing/all-in-one }    # add one that only exists with this profile
+  light:
+    services:
+      worker: null                                    # null removes a service
+
 tasks:                          # commands on demand: `orbit run <task>` and the command palette
   lint: golangci-lint run
   migrate:
@@ -88,6 +99,55 @@ tasks:                          # commands on demand: `orbit run <task>` and the
     env: { LOG_LEVEL: debug }
     depends_on: [postgres]      # started (and waited for) before the task runs
 ```
+
+## Profiles
+
+A profile is a set of changes that apply on top of `orbit.yaml` while it is active: it can add services, change the
+ones that exist, or remove them. Use them for the optional parts of a stack (tracing, mocks, a heavy worker) and for
+settings that only make sense in some situations.
+
+```yaml
+services:
+  api: { cmd: bun dev, depends_on: [postgres] }
+  worker: { cmd: bun worker }
+
+profiles:
+  debug:
+    description: verbose logs and tracing      # shown in the picker
+    services:
+      api: { env: { LOG_LEVEL: debug } }        # merged into the api service
+      tracing: { image: jaegertracing/all-in-one }
+  light:
+    services:
+      worker: null                              # not part of the project while `light` is active
+```
+
+A profile can set `description`, `env`, `env_file`, `shell`, `services`, `groups` and `tasks`: the same merge as
+[`orbit.local.yaml`](#local-overrides-orbitlocalyaml) (mappings merge, lists and values replace, `null` removes). It
+can also remove a service imported from a compose file. It cannot change `name` or `compose`, which identify the
+project. Order of application: `orbit.yaml`, then the active profiles in the order they were given, then
+`orbit.local.yaml`, which always wins.
+
+```bash
+orbit --profile debug            # also: orbit up --profile debug,light · --profile a --profile b
+orbit --no-profiles              # none, whatever was saved or set as a default
+ORBIT_PROFILES=debug orbit       # the same as the flag, but not remembered
+orbit ls                         # lists them: profiles (* active): debug*, light
+orbit ctl reload --profile light # changes the profiles of an orbit that is already running
+```
+
+Which ones are active, first match wins: `--profile` / `--no-profiles`, `ORBIT_PROFILES`, the selection saved for the
+project, `default_profiles`. A `--profile` given to `orbit`, `up` or `ctl` (and a change made in the TUI) is **remembered for the project**, so
+the next `orbit` opens with the same ones; use `--no-profiles` to clear it. Commands that only look (`ls`, `graph`,
+`validate`…) use the flag without saving it. A name that does not exist
+is an error (with a suggestion), except in the saved selection: a profile you deleted since is just ignored.
+
+In the TUI, `p` opens the profile picker (`space` toggles, `enter` shows what would change, `y` applies it): only the
+services that differ are started, stopped or restarted, as with any other `orbit.yaml` edit. The active ones show in
+the header (`⚑ debug`). `orbit validate` checks every profile, active or not.
+
+If a profile removes a service that another one depends on, loading fails and says which profile removed it:
+override that `depends_on` in the same profile.
 
 ## Tasks
 

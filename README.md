@@ -19,6 +19,7 @@ A single static binary written in Go ([Bubble Tea](https://github.com/charmbrace
 - **Live dependency graph**, logs (filter, search, folded stack traces, copy mode), CPU and memory with history.
 - **Runs in a daemon**: close the terminal and everything keeps running and supervised; reopen to resume.
 - **Healthchecks, restart policies, watch mode, lifecycle hooks** and desktop notifications on crashes.
+- **Profiles** (`--profile debug`) to turn optional services and settings on and off, live.
 - **Tasks** (`orbit run migrate`, or from the command palette) for the commands you run by hand.
 - **Embedded console** (`psql`, `rails console`, a container shell) without leaving orbit.
 - **Git view** across all your service repos with multi-repo fetch / pull / push, and [lazygit](https://github.com/jesseduffield/lazygit) one key away.

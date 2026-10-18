@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"reflect"
 	"runtime"
 	"strings"
 	"sync"
@@ -860,5 +861,81 @@ func TestAHiddenRunningTaskAsksBeforeQuitting(t *testing.T) {
 	m.Update(key("esc"))
 	if m.mode != modeNormal || m.runningTasks() != 1 {
 		t.Fatal("cancelling must leave the task running")
+	}
+}
+
+func TestProfilePickerReviewsTheChangeBeforeApplyingAndRemembersIt(t *testing.T) {
+	m, sup := newModel(t)
+	cfg := sup.Config()
+	cfg.AvailableProfiles = []config.ProfileInfo{{Name: "debug", Description: "verbose logs"}, {Name: "light"}}
+	cfg.Profiles = []string{}
+	var saved []string
+	m.opts.LoadProfiles = func(names []string) (*config.OrbitConfig, error) {
+		next := *sup.Config()
+		next.Profiles = names
+		next.Services = map[string]*config.ServiceConfig{}
+		for k, v := range sup.Config().Services {
+			next.Services[k] = v
+		}
+		extra := svc("tracing", "sleep 30")
+		extra.Autostart = false
+		next.Services["tracing"] = extra
+		next.Order = append(append([]string{}, sup.Config().Order...), "tracing")
+		return &next, nil
+	}
+	m.opts.SaveProfiles = func(names []string) { saved = names }
+
+	m.Update(key("p"))
+	if m.mode != modeProfiles {
+		t.Fatalf("mode = %v", m.mode)
+	}
+	rows, _, _, _ := m.renderProfiles(120, 36)
+	out := strings.Join(rows, "\n")
+	for _, want := range []string{"[ ] debug", "verbose logs", "[ ] light"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("the picker should show %q:\n%s", want, out)
+		}
+	}
+	m.Update(key(" "))
+	if !m.profSel["debug"] || strings.Join(m.chosenProfiles(), ",") != "debug" {
+		t.Fatalf("selection = %v", m.profSel)
+	}
+
+	_, cmd := m.Update(key("enter"))
+	if cmd == nil || m.mode != modeNormal {
+		t.Fatalf("enter should load the result: mode = %v", m.mode)
+	}
+	m.Update(cmd())
+	if m.mode != modeReload || m.reload == nil || !m.reload.profiles || m.reload.title != "Profiles" {
+		t.Fatalf("the result should be offered before it is applied: mode = %v, offer = %+v", m.mode, m.reload)
+	}
+	if got := m.reload.diff.Describe(); !reflect.DeepEqual(got, []string{"+ tracing", "~ profiles: debug"}) {
+		t.Fatalf("diff = %v", got)
+	}
+	if saved != nil {
+		t.Fatal("nothing is saved until it is applied")
+	}
+	_, cmd = m.Update(key("y"))
+	done, ok := cmd().(reloadDoneMsg)
+	if !ok || done.err != nil {
+		t.Fatalf("reload = %#v", done)
+	}
+	if !reflect.DeepEqual(saved, []string{"debug"}) || !reflect.DeepEqual(sup.Config().Profiles, []string{"debug"}) || sup.Service("tracing") == nil {
+		t.Fatalf("saved = %v, active = %v", saved, sup.Config().Profiles)
+	}
+}
+
+func TestProfileKeyIsPullInTheGitViewAndSaysSoWithoutProfiles(t *testing.T) {
+	m, _ := newModel(t)
+	m.Update(key("p"))
+	if m.mode != modeNormal || m.toast == nil {
+		t.Fatalf("without profiles p only explains: mode = %v", m.mode)
+	}
+	m.sup.Config().AvailableProfiles = []config.ProfileInfo{{Name: "debug"}}
+	m.opts.LoadProfiles = func([]string) (*config.OrbitConfig, error) { return nil, nil }
+	m.setView("git")
+	m.Update(key("p"))
+	if m.mode == modeProfiles {
+		t.Fatal("p belongs to the Git view there")
 	}
 }

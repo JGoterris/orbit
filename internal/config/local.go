@@ -38,7 +38,7 @@ func readYAMLDoc(file string) *Map {
 }
 
 // mergeDoc lays over on top of base: mappings merge key by key, anything else (scalars, lists) replaces, and a
-// null removes the key. Neither argument is modified.
+// null removes the key. Neither argument is modified; base may be nil.
 func mergeDoc(base, over *Map) *Map {
 	out := NewMap()
 	for _, k := range base.Keys() {
@@ -51,10 +51,10 @@ func mergeDoc(base, over *Map) *Map {
 			continue
 		}
 		if om, ok := v.(*Map); ok {
-			if bm, ok := base.Get(k).(*Map); ok {
-				out.Set(k, mergeDoc(bm, om))
-				continue
-			}
+			// merged even where base has nothing, so the nulls inside do not survive as keys
+			bm, _ := base.Get(k).(*Map)
+			out.Set(k, mergeDoc(bm, om))
+			continue
 		}
 		out.Set(k, v)
 	}

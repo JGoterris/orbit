@@ -131,3 +131,26 @@ func TestParseRunKeepsArgsForTheTask(t *testing.T) {
 		t.Fatalf("logs -- api: %+v, %v", inv, err)
 	}
 }
+
+func TestProfileFlags(t *testing.T) {
+	for _, tc := range []struct {
+		args []string
+		want []string
+		set  bool
+	}{
+		{[]string{"up"}, nil, false},
+		{[]string{"up", "--profile", "a,b", "--profile=c"}, []string{"a", "b", "c"}, true},
+		{[]string{"--profiles", "debug", "ls"}, []string{"debug"}, true},
+		{[]string{"ls", "--no-profiles"}, nil, true},
+		{[]string{"ls", "--no-profiles", "--profile", "x"}, []string{"x"}, true},
+	} {
+		inv, err := Parse(tc.args)
+		if err != nil {
+			t.Fatalf("%v: %v", tc.args, err)
+		}
+		got, set := inv.Options.ProfileSelection()
+		if set != tc.set || !reflect.DeepEqual(got, tc.want) {
+			t.Errorf("%v: got %v, %v; want %v, %v", tc.args, got, set, tc.want, tc.set)
+		}
+	}
+}

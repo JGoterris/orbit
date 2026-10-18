@@ -194,6 +194,7 @@ var helpRows = [][2]string{
 	{"(git diff) v", "copy mode: a cursor (j k) · v again starts the range · y copies with +/- · esc exits"},
 	{"(git commands)", "j k move · y copy the command · c clear"},
 	{"P · U", "open another project · apply orbit.yaml edits (restarts only what changed)"},
+	{"p", "profiles of orbit.yaml: space toggles, enter shows what changes and asks before applying (not in the Git view, where p is pull)"},
 	{"!", "list the tasks of orbit.yaml and run one (○ = it starts the services it needs first)"},
 	{"T", "change color theme (live preview, enter saves)"},
 	{"h", "dashboard: cpu / memory chart range 2m ⇄ 15m ⇄ 1h (memory turns orange/red near its limit, ↗ = leak)"},
@@ -480,6 +481,10 @@ func (m *Model) renderReload(W, H int) ([]string, int, int, int) {
 	if len(lines) > shown {
 		content = append(content, newLine(p.PanelAlt).add(p.Dim, fmt.Sprintf("… and %d more", len(lines)-shown)).String())
 	}
+	notNow := " not now (U applies later)"
+	if m.reload.profiles {
+		notNow = " cancel"
+	}
 	restarts := 0
 	for _, c := range m.reload.diff.Changed {
 		if c.Restart {
@@ -489,11 +494,15 @@ func (m *Model) renderReload(W, H int) ([]string, int, int, int) {
 	content = append(content,
 		newLine(p.PanelAlt).add(p.Dim, fmt.Sprintf("%d restart%s (↻) · only running services are restarted", restarts, plural(restarts))).String(),
 		newLine(p.PanelAlt).add(p.Green, "y / enter").add(p.Dim, " apply").String(),
-		newLine(p.PanelAlt).add(p.Red, "n / esc").add(p.Dim, " not now (U applies later)").String(),
+		newLine(p.PanelAlt).add(p.Red, "n / esc").add(p.Dim, notNow).String(),
 	)
 	h := shown + 7
 	x, y := center(W, H, w, h)
-	return modalBox("orbit.yaml changed", w, h, content), w, x, y
+	title := "orbit.yaml changed"
+	if m.reload.title != "" {
+		title = m.reload.title
+	}
+	return modalBox(title, w, h, content), w, x, y
 }
 
 // consoleSize is the size of the floating console and of the terminal inside it (border and footer excluded).

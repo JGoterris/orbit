@@ -138,8 +138,10 @@ func printDiff(diff config.ConfigDiff) {
 	}
 }
 
-// runReload is `orbit ctl reload`: the running orbit re-reads orbit.yaml and applies the difference.
-func runReload(cfg *config.OrbitConfig) int {
+// runReload is `orbit ctl reload`: the running orbit re-reads orbit.yaml and applies the difference. With
+// sendConfig (a --profile was given) it applies the configuration loaded here instead, which is how the profiles of
+// a running orbit change.
+func runReload(cfg *config.OrbitConfig, sendConfig bool) int {
 	client := connectIPC(cfg)
 	if client == nil {
 		fmt.Fprintln(os.Stderr, red(notRunning))
@@ -149,7 +151,11 @@ func runReload(cfg *config.OrbitConfig) int {
 	var res struct {
 		Diff config.ConfigDiff `json:"diff"`
 	}
-	if err := client.Call(ipc.MethodReload, nil, &res); err != nil {
+	var params any
+	if sendConfig {
+		params = map[string]any{"config": cfg}
+	}
+	if err := client.Call(ipc.MethodReload, params, &res); err != nil {
 		fmt.Fprintln(os.Stderr, red(err.Error()))
 		return 1
 	}
@@ -165,7 +171,7 @@ func runReload(cfg *config.OrbitConfig) int {
 var ctlActions = []string{"start", "stop", "restart", "toggle"}
 
 // RunCtl drives the services of a running orbit (`orbit ctl <action> [service or group…]`).
-func RunCtl(cfg *config.OrbitConfig, args []string) int {
+func RunCtl(cfg *config.OrbitConfig, args []string, sendConfig bool) int {
 	var action string
 	var names []string
 	if len(args) > 0 {
@@ -176,7 +182,7 @@ func RunCtl(cfg *config.OrbitConfig, args []string) int {
 			fmt.Fprintln(os.Stderr, red("usage: orbit ctl reload"))
 			return 1
 		}
-		return runReload(cfg)
+		return runReload(cfg, sendConfig)
 	}
 	if action == "" || !slices.Contains(ctlActions, action) {
 		fmt.Fprintln(os.Stderr, red(fmt.Sprintf("usage: orbit ctl <%s|reload> [service or group…]", strings.Join(ctlActions, "|"))))

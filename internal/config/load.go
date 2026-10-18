@@ -385,16 +385,39 @@ type LoadOptions struct {
 	AllowEmpty bool
 	// Env feeds `${VAR}` in the yaml; nil means the process environment
 	Env map[string]string
+	// Profiles are the profiles to activate when ProfilesSet is true (empty: none). Otherwise ORBIT_PROFILES, the
+	// selection saved for the project and `default_profiles` decide, in that order.
+	Profiles    []string
+	ProfilesSet bool
+	// SavedProfiles gives the selection last saved for the project with this root and name, if any
+	SavedProfiles func(root, name string) ([]string, bool)
 }
 
 func graphCycle(c *OrbitConfig) []string { return graph.FindCycle(c.DepMap()) }
 
-func validateGraph(c *OrbitConfig) {
+// defaultProjectName is the name of a project that does not set one: its directory.
+func defaultProjectName(root string) string {
+	name := filepath.Base(root)
+	if name == "" || name == string(filepath.Separator) {
+		return "orbit"
+	}
+	return name
+}
+
+// validateGraph checks the dependencies. removed (service → what removed it) only improves the message.
+func validateGraph(c *OrbitConfig, removed map[string]string) {
+	unknown := func(dep string) string {
+		msg := fmt.Sprintf("depends on unknown service %q", dep)
+		if by := removed[dep]; by != "" {
+			msg += " (removed by " + by + ")"
+		}
+		return msg
+	}
 	for _, n := range c.Order {
 		svc := c.Services[n]
 		for _, dep := range svc.DependsOn {
 			if c.Services[dep] == nil {
-				fail(fmt.Sprintf("depends on unknown service %q", dep), "services."+svc.Name+".depends_on")
+				fail(unknown(dep), "services."+svc.Name+".depends_on")
 			}
 			if dep == svc.Name {
 				fail("a service cannot depend on itself", "services."+svc.Name+".depends_on")
@@ -404,7 +427,7 @@ func validateGraph(c *OrbitConfig) {
 	for _, n := range c.TaskOrder {
 		for _, dep := range c.Tasks[n].DependsOn {
 			if c.Services[dep] == nil {
-				fail(fmt.Sprintf("depends on unknown service %q", dep), "tasks."+n+".depends_on")
+				fail(unknown(dep), "tasks."+n+".depends_on")
 			}
 		}
 	}
@@ -458,7 +481,7 @@ func LoadConfig(opts LoadOptions) (cfg *OrbitConfig, err error) {
 			c.Services[s.Name] = s
 			c.Order = append(c.Order, s.Name)
 		}
-		validateGraph(c)
+		validateGraph(c, nil)
 		return c, nil
 	}
 
@@ -480,12 +503,25 @@ func LoadConfig(opts LoadOptions) (cfg *OrbitConfig, err error) {
 		vars[k] = v
 	}
 
-	rawDoc := readYAMLDoc(file)
+	// the profiles are taken out before anything is merged or interpolated: an inactive one is never evaluated
+	base := readYAMLDoc(file)
+	declared := parseProfiles(base)
+	projectName, _ := asString(base.Get("name"), "name")
+	if projectName == "" {
+		projectName = defaultProjectName(root)
+	}
+	active := activeProfiles(opts, env, root, projectName, declared, base)
+	layers := &overlays{doc: mergeDoc(base, NewMap()), removed: map[string]string{}}
+	layers.doc.Delete("profiles")
+	layers.doc.Delete("default_profiles")
+	for _, name := range active {
+		layers.lay(declared.bodies[name], "profile "+name)
+	}
 	local := FindLocalConfigFile(root)
 	if local != "" {
-		rawDoc = mergeDoc(rawDoc, readYAMLDoc(local))
+		layers.lay(readYAMLDoc(local), filepath.Base(local))
 	}
-	doc := Interpolate(rawDoc, vars).(*Map)
+	doc := Interpolate(layers.doc, vars).(*Map)
 	globalEnv := asEnv(doc.Get("env"), "env")
 	globalEnvFiles := parseEnvFileRefs(doc.Get("env_file"), "env_file", root)
 
@@ -528,10 +564,11 @@ func LoadConfig(opts LoadOptions) (cfg *OrbitConfig, err error) {
 		}
 	}
 
-	c := &OrbitConfig{Root: root, File: file, LocalFile: local, Services: map[string]*ServiceConfig{}, Groups: map[string][]string{}, Tasks: map[string]*TaskConfig{}}
+	c := &OrbitConfig{Root: root, File: file, LocalFile: local, Services: map[string]*ServiceConfig{}, Groups: map[string][]string{}, Tasks: map[string]*TaskConfig{},
+		Profiles: orEmpty(active), AvailableProfiles: declared.info}
 	rawServices := asRecord(doc.Get("services"), "services")
 	for _, name := range importedOrder {
-		if !rawServices.Has(name) {
+		if !rawServices.Has(name) && layers.removed[name] == "" {
 			c.Services[name] = imported[name]
 			c.Order = append(c.Order, name)
 		}
@@ -607,11 +644,8 @@ func LoadConfig(opts LoadOptions) (cfg *OrbitConfig, err error) {
 
 	c.Name, _ = asString(doc.Get("name"), "name")
 	if c.Name == "" {
-		c.Name = filepath.Base(root)
-		if c.Name == "" || c.Name == string(filepath.Separator) {
-			c.Name = "orbit"
-		}
+		c.Name = defaultProjectName(root)
 	}
-	validateGraph(c)
+	validateGraph(c, layers.removed)
 	return c, nil
 }

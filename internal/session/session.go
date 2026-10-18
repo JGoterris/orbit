@@ -101,7 +101,7 @@ func (s *Session) SwitchTo(dir, how string) (supervisor.Like, *Relaunch, error) 
 		return nil, nil, fmt.Errorf("%s is not a folder", dir)
 	}
 	// allowEmpty would happily turn a typo into a project with no services, hence the check above
-	cfg, err := config.LoadConfig(config.LoadOptions{Dir: dir, AllowEmpty: true})
+	cfg, err := config.LoadConfig(config.LoadOptions{Dir: dir, AllowEmpty: true, SavedProfiles: state.SavedProfiles})
 	if err != nil {
 		return nil, nil, err
 	}

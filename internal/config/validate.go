@@ -183,6 +183,16 @@ func ValidateFile(opts LoadOptions) Validation {
 		v.Errors = append(v.Errors, err.Error())
 	}
 	v.Config = cfg
+	if cfg != nil {
+		// a profile that is not active is not evaluated by the load above: try each one on its own
+		for _, p := range cfg.AvailableProfiles {
+			alone := opts
+			alone.Profiles, alone.ProfilesSet = []string{p.Name}, true
+			if _, perr := LoadConfig(alone); perr != nil {
+				v.Errors = append(v.Errors, fmt.Sprintf("profile %s: %v", p.Name, perr))
+			}
+		}
+	}
 	switch {
 	case cfg != nil && cfg.File != "":
 		v.File = cfg.File
