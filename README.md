@@ -76,6 +76,8 @@ services:
 
 ## AI agents
 
+[![skills.sh](https://skills.sh/b/jgoterris/orbit)](https://skills.sh/jgoterris/orbit)
+
 Coding agents (Claude Code, Codex, Cursor…) can drive orbit through its CLI: start the services they need, read
 their logs after a change and restart them. They share the daemon with your TUI, so you see everything they do.
 
