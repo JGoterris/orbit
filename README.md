@@ -74,6 +74,34 @@ services:
     depends_on: [postgres]
 ```
 
+## AI agents
+
+Coding agents (Claude Code, Codex, Cursor…) can drive orbit through its CLI: start the services they need, read
+their logs after a change and restart them. They share the daemon with your TUI, so you see everything they do.
+
+An optional skill teaches them how, without getting stuck on commands that never return. Nothing installs it for
+you:
+
+```bash
+npx skills add JGoterris/orbit --skill orbit   # any agent (skills.sh)
+```
+
+```text
+/plugin marketplace add JGoterris/orbit        # or as a Claude Code plugin
+/plugin install orbit@orbit
+```
+
+It relies on commands that are handy in scripts too:
+
+```bash
+orbit up -d [svc…]          # start in the background, return once ready
+orbit status --json         # state of every service
+orbit logs api -n 100 --json   # recent logs, one JSON object per line
+orbit ctl restart api       # restart and wait until ready
+```
+
+See [AI agents](docs/agents.md) for details.
+
 ## Documentation
 
 The full documentation is at **[jgoterris.github.io/orbit](https://jgoterris.github.io/orbit/)** (sources in [`docs/`](docs/)):
