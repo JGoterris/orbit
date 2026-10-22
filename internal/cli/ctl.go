@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"path/filepath"
 	"slices"
 	"strings"
 	"time"
@@ -13,18 +14,35 @@ import (
 	"github.com/JGoterris/orbit/internal/core/metrics"
 	"github.com/JGoterris/orbit/internal/core/supervisor"
 	"github.com/JGoterris/orbit/internal/ipc"
-	"github.com/JGoterris/orbit/internal/state"
 )
 
 const notRunning = "orbit is not running for this project (open it with `orbit`, or `orbit up -d` in the background)"
 
 // connectIPC connects to the orbit that has this project open (TUI, `orbit up` or daemon), if any.
 func connectIPC(cfg *config.OrbitConfig) *ipc.Client {
-	c, err := ipc.Connect(ipc.SocketPath(state.Dir(cfg)), 500*time.Millisecond)
+	dir := ipc.ServedDir(cfg)
+	if dir == "" {
+		return nil
+	}
+	c, err := ipc.Connect(ipc.SocketPath(dir), 500*time.Millisecond)
 	if err != nil {
 		return nil
 	}
 	return c
+}
+
+// RunningConfig is the config of the orbit serving the project of file, or nil.
+func RunningConfig(file string) *config.OrbitConfig {
+	client := connectIPC(&config.OrbitConfig{Root: filepath.Dir(file)})
+	if client == nil {
+		return nil
+	}
+	defer client.Close()
+	var hello ipc.Hello
+	if client.Call(ipc.MethodHello, nil, &hello) != nil {
+		return nil
+	}
+	return hello.Config
 }
 
 func age(ms int64) string {
@@ -53,7 +71,7 @@ func RunStatus(cfg *config.OrbitConfig, asJSON bool) int {
 	defer client.Close()
 	var services []supervisor.ServiceState
 	if err := client.Call(ipc.MethodSnapshot, nil, &services); err != nil {
-		fmt.Fprintln(os.Stderr, red(err.Error()))
+		errorln(err.Error())
 		return 1
 	}
 	if asJSON {
@@ -86,9 +104,9 @@ func RunStatus(cfg *config.OrbitConfig, asJSON bool) int {
 		pid, up := "", ""
 		if s.Pid != 0 {
 			pid = fmt.Sprint(s.Pid)
-			if s.StartedAt != 0 {
-				up = age(now - s.StartedAt)
-			}
+		}
+		if s.StartedAt != 0 && (s.Pid != 0 || s.ContainerID != "") {
+			up = age(now - s.StartedAt)
 		}
 		detail := s.Error
 		if detail == "" {
@@ -100,7 +118,7 @@ func RunStatus(cfg *config.OrbitConfig, asJSON bool) int {
 	for i, h := range header {
 		widths[i] = len(h)
 		for _, r := range rows {
-			widths[i] = max(widths[i], len([]rune(r[i])))
+			widths[i] = max(widths[i], cellWidth(r[i]))
 		}
 	}
 	cells := make([]string, len(header))
@@ -144,7 +162,7 @@ func printDiff(diff config.ConfigDiff) {
 func runReload(cfg *config.OrbitConfig, sendConfig bool) int {
 	client := connectIPC(cfg)
 	if client == nil {
-		fmt.Fprintln(os.Stderr, red(notRunning))
+		errorln(notRunning)
 		return 1
 	}
 	defer client.Close()
@@ -156,7 +174,7 @@ func runReload(cfg *config.OrbitConfig, sendConfig bool) int {
 		params = map[string]any{"config": cfg}
 	}
 	if err := client.Call(ipc.MethodReload, params, &res); err != nil {
-		fmt.Fprintln(os.Stderr, red(err.Error()))
+		errorln(err.Error())
 		return 1
 	}
 	if res.Diff.IsEmpty() {
@@ -179,40 +197,41 @@ func RunCtl(cfg *config.OrbitConfig, args []string, sendConfig bool) int {
 	}
 	if action == "reload" {
 		if len(names) > 0 {
-			fmt.Fprintln(os.Stderr, red("usage: orbit ctl reload"))
+			errorln("usage: orbit ctl reload")
 			return 1
 		}
 		return runReload(cfg, sendConfig)
 	}
 	if action == "" || !slices.Contains(ctlActions, action) {
-		fmt.Fprintln(os.Stderr, red(fmt.Sprintf("usage: orbit ctl <%s|reload> [service or group…]", strings.Join(ctlActions, "|"))))
+		errorln(fmt.Sprintf("usage: orbit ctl <%s|reload> [service or group…]", strings.Join(ctlActions, "|")))
 		return 1
 	}
 	if n, bad := unknownTargets(cfg, names); bad {
-		fmt.Fprintln(os.Stderr, red(fmt.Sprintf("unknown service or group %q", n)))
+		errorln(fmt.Sprintf("unknown service or group %q", n))
 		return 1
 	}
 	if len(names) == 0 && action != "start" && action != "stop" {
-		fmt.Fprintln(os.Stderr, red(action+" needs at least one service or group"))
+		errorln(action + " needs at least one service or group")
 		return 1
 	}
 	client := connectIPC(cfg)
 	if client == nil && action != "stop" {
 		// starting something with nothing running: start the daemon in the background, as `orbit up -d` does
 		if err := ipc.EnsureDaemon(cfg); err != nil {
-			fmt.Fprintln(os.Stderr, red(err.Error()))
+			errorln(err.Error())
 			return 1
 		}
 		fmt.Println(dim("started orbit in the background"))
 		client = connectIPC(cfg)
 	}
 	if client == nil {
-		fmt.Fprintln(os.Stderr, red(notRunning))
+		errorln(notRunning)
 		return 1
 	}
 	defer client.Close()
 	var res struct {
-		OK bool `json:"ok"`
+		OK       bool      `json:"ok"`
+		Services *[]string `json:"services"`
 	}
 	var err error
 	if len(names) > 0 {
@@ -223,12 +242,19 @@ func RunCtl(cfg *config.OrbitConfig, args []string, sendConfig bool) int {
 		err = client.Call(ipc.MethodStopAll, nil, &res)
 	}
 	if err != nil {
-		fmt.Fprintln(os.Stderr, red(err.Error()))
+		errorln(err.Error())
 		return 1
 	}
 	label := "all services"
 	if len(names) > 0 {
 		label = strings.Join(names, ", ")
+	}
+	if res.Services != nil {
+		if len(*res.Services) == 0 {
+			fmt.Println(dim(fmt.Sprintf("nothing running in %s: nothing to restart", label)))
+			return 0
+		}
+		label = strings.Join(*res.Services, ", ")
 	}
 	if res.OK {
 		fmt.Println(green(fmt.Sprintf("%s: %s", action, label)))
@@ -243,13 +269,13 @@ func RunCtl(cfg *config.OrbitConfig, args []string, sendConfig bool) int {
 func upRunning(cfg *config.OrbitConfig, names []string, detached bool) int {
 	client := connectIPC(cfg)
 	if client == nil {
-		fmt.Fprintln(os.Stderr, red(notRunning))
+		errorln(notRunning)
 		return 1
 	}
 	defer client.Close()
 	var hello ipc.Hello
 	if err := client.Call(ipc.MethodHello, nil, &hello); err != nil {
-		fmt.Fprintln(os.Stderr, red(err.Error()))
+		errorln(err.Error())
 		return 1
 	}
 	diff := config.DiffConfig(hello.Config, cfg)
@@ -266,7 +292,7 @@ func upRunning(cfg *config.OrbitConfig, names []string, detached bool) int {
 		}
 		if answer == "" || answer == "y" || answer == "yes" {
 			if err := client.Call(ipc.MethodReload, map[string]any{"config": cfg}, nil); err != nil {
-				fmt.Fprintln(os.Stderr, red(err.Error()))
+				errorln(err.Error())
 				return 1
 			}
 			fmt.Println(green("applied"))
@@ -284,7 +310,7 @@ func upRunning(cfg *config.OrbitConfig, names []string, detached bool) int {
 		err = client.Call(ipc.MethodStartAll, nil, &res)
 	}
 	if err != nil {
-		fmt.Fprintln(os.Stderr, red(err.Error()))
+		errorln(err.Error())
 		return 1
 	}
 	if res.OK {
@@ -292,9 +318,12 @@ func upRunning(cfg *config.OrbitConfig, names []string, detached bool) int {
 	} else {
 		fmt.Println(red("some services did not become ready (see `orbit logs`)"))
 	}
-	if detached {
+	switch {
+	case detached && !hello.Daemon:
+		fmt.Println(yellow(fmt.Sprintf("orbit is open in another terminal (pid %d, not a daemon): the services stop when it quits", hello.Pid)))
+	case detached:
 		fmt.Println(dim("orbit runs in the background: `orbit status` shows the services, `orbit logs` their output, `orbit down` stops them"))
-	} else {
+	default:
 		fmt.Println(dim("orbit is already running for this project: `orbit logs -f` follows the services, `orbit down` stops them"))
 	}
 	if res.OK {
@@ -304,6 +333,20 @@ func upRunning(cfg *config.OrbitConfig, names []string, detached bool) int {
 }
 
 // followLive follows the logs of a running orbit over its socket.
+// liveHistory is the last lines of each target in a running orbit, sorted by sequence.
+func liveHistory(client *ipc.Client, targets []string, lines int) ([]logs.Line, error) {
+	var history []logs.Line
+	for _, t := range targets {
+		var part []logs.Line
+		if err := client.Call(ipc.MethodLogs, map[string]any{"service": t, "limit": lines}, &part); err != nil {
+			return nil, err
+		}
+		history = append(history, part...)
+	}
+	slices.SortStableFunc(history, func(a, b logs.Line) int { return a.Seq - b.Seq })
+	return history, nil
+}
+
 func followLive(client *ipc.Client, targets []string, opts LogsOptions, show func(logs.Line)) int {
 	if opts.Since != "" {
 		fmt.Fprintln(os.Stderr, yellow("--since is ignored when following a running orbit"))
@@ -331,19 +374,14 @@ func followLive(client *ipc.Client, targets []string, opts LogsOptions, show fun
 		}
 	})
 	if err := client.Call(ipc.MethodSubscribe, map[string]any{"states": false, "logs": true, "services": targets}, nil); err != nil {
-		fmt.Fprintln(os.Stderr, red(err.Error()))
+		errorln(err.Error())
 		return 1
 	}
-	var history []logs.Line
-	for _, t := range targets {
-		var part []logs.Line
-		if err := client.Call(ipc.MethodLogs, map[string]any{"service": t, "limit": opts.Lines}, &part); err != nil {
-			fmt.Fprintln(os.Stderr, red(err.Error()))
-			return 1
-		}
-		history = append(history, part...)
+	history, err := liveHistory(client, targets, opts.Lines)
+	if err != nil {
+		errorln(err.Error())
+		return 1
 	}
-	slices.SortStableFunc(history, func(a, b logs.Line) int { return a.Seq - b.Seq })
 	<-mu
 	for _, l := range history {
 		last = max(last, l.Seq)

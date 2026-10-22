@@ -44,6 +44,21 @@ func DirOf(root, name string) string {
 	return filepath.Join(platform.StateBase(), "orbit", dir)
 }
 
+// DirsOfRoot are the state dirs of the project at root under any name.
+func DirsOfRoot(root string) []string {
+	sum := sha1.Sum([]byte(root))
+	suffix := "-" + hex.EncodeToString(sum[:])[:8]
+	base := filepath.Join(platform.StateBase(), "orbit")
+	entries, _ := os.ReadDir(base)
+	var out []string
+	for _, e := range entries {
+		if e.IsDir() && strings.HasSuffix(e.Name(), suffix) {
+			out = append(out, filepath.Join(base, e.Name()))
+		}
+	}
+	return out
+}
+
 // ReadProfiles is the selection of profiles saved for the project in dir; ok is false when none was ever saved
 // (a saved empty selection means "no profiles").
 func ReadProfiles(dir string) (names []string, ok bool) {
@@ -89,7 +104,13 @@ type ProcFiles struct {
 }
 
 func Files(dir, service string) ProcFiles {
-	base := filepath.Join(dir, "logs", unsafeName.ReplaceAllString(service, "-"))
+	safe := unsafeName.ReplaceAllString(service, "-")
+	if safe != service {
+		// `a b` and `a-b` must not share their files
+		sum := sha1.Sum([]byte(service))
+		safe += "-" + hex.EncodeToString(sum[:])[:8]
+	}
+	base := filepath.Join(dir, "logs", safe)
 	return ProcFiles{Out: base + ".out.log", Err: base + ".err.log", Exit: base + ".exit"}
 }
 

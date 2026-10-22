@@ -45,7 +45,7 @@ func RunList(cfg *config.OrbitConfig) int {
 		case config.TypeExternal:
 			runs = s.Health.Describe()
 		case config.TypeProcess:
-			runs = s.Cmd
+			runs = strings.Join(strings.Fields(s.Cmd), " ")
 		case config.TypeDocker:
 			runs = s.Image
 		default:
@@ -60,9 +60,9 @@ func RunList(cfg *config.OrbitConfig) int {
 	header := []string{"SERVICE", "TYPE", "PORT", "LEVEL", "DEPENDS ON", "RUNS"}
 	widths := make([]int, len(header))
 	for i, h := range header {
-		widths[i] = len([]rune(h))
+		widths[i] = cellWidth(h)
 		for _, r := range rows {
-			widths[i] = max(widths[i], len([]rune(r[i])))
+			widths[i] = max(widths[i], cellWidth(r[i]))
 		}
 	}
 	line := func(r []string) string {
@@ -70,7 +70,7 @@ func RunList(cfg *config.OrbitConfig) int {
 		for i, v := range r {
 			cells[i] = padEnd(v, widths[i])
 		}
-		return strings.Join(cells, "  ")
+		return strings.TrimRight(strings.Join(cells, "  "), " ")
 	}
 	fmt.Println(bold(line(header)))
 	for _, r := range rows {

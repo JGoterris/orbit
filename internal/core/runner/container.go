@@ -152,6 +152,17 @@ func (c *containerRunner) detach() {
 func (c *containerRunner) KillSync() { c.detach() }
 func (c *containerRunner) Release()  { c.detach() }
 
+// RemoveLeftoverContainer removes the container of a service no longer in orbit.yaml, if orbit labelled it for
+// that service.
+func RemoveLeftoverContainer(project, service string) bool {
+	name := ContainerName(project, service)
+	res := proc.Exec([]string{"docker", "inspect", "-f", `{{index .Config.Labels "orbit.service"}}`, name}, proc.Options{Timeout: 5 * time.Second})
+	if res.Code != 0 || strings.TrimSpace(res.Stdout) != service {
+		return false
+	}
+	return proc.Exec([]string{"docker", "rm", "-f", name}, proc.Options{Timeout: 15 * time.Second}).Code == 0
+}
+
 // DockerRunner runs a `docker run` container.
 type DockerRunner struct {
 	containerRunner
@@ -229,8 +240,9 @@ func (r *ComposeRunner) base() []string {
 	return argv
 }
 
+// currentID is the service's container, also when it already exited.
 func (r *ComposeRunner) currentID() string {
-	res := proc.Exec(append(r.base(), "ps", "-q", r.svc.ComposeService), proc.Options{Timeout: 10 * time.Second})
+	res := proc.Exec(append(r.base(), "ps", "-a", "-q", r.svc.ComposeService), proc.Options{Timeout: 10 * time.Second})
 	if res.Code != 0 {
 		return ""
 	}

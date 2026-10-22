@@ -73,7 +73,7 @@ func RunDaemon(cfg *config.OrbitConfig, opts DaemonOptions) int {
 			}()
 		})
 	}
-	srv = NewServer(sup, ServerOptions{Version: opts.Version, OnShutdown: func(how string) { quit(how, "asked by a client") }})
+	srv = NewServer(sup, ServerOptions{Version: opts.Version, Daemon: true, OnShutdown: func(how string) { quit(how, "asked by a client") }})
 	sigs := make(chan os.Signal, 2)
 	signal.Notify(sigs, os.Interrupt, syscall.SIGTERM)
 	go func() {
@@ -133,6 +133,9 @@ func RunDaemon(cfg *config.OrbitConfig, opts DaemonOptions) int {
 // a readable message when the project is open somewhere that does not answer.
 func ConnectProject(cfg *config.OrbitConfig) (*Remote, error) {
 	dir := state.Dir(cfg)
+	if served := ServedDir(cfg); served != "" {
+		dir = served
+	}
 	path := SocketPath(dir)
 	attempt := func() (*Remote, error) {
 		r, err := ConnectRemote(path)
@@ -229,12 +232,27 @@ func spawnDaemon(cfg *config.OrbitConfig, dir string) error {
 	return nil
 }
 
-// IsServed reports whether an orbit already serves this project's socket.
-func IsServed(cfg *config.OrbitConfig) bool {
-	c, err := Connect(SocketPath(state.Dir(cfg)), 500*time.Millisecond)
-	if err != nil {
-		return false
+// IsServed reports whether an orbit already serves this project.
+func IsServed(cfg *config.OrbitConfig) bool { return ServedDir(cfg) != "" }
+
+// ServedDir is the state dir of the orbit serving this project, also under an older `name:`; "" if none.
+func ServedDir(cfg *config.OrbitConfig) string {
+	answers := func(dir string) bool {
+		c, err := Connect(SocketPath(dir), 500*time.Millisecond)
+		if err != nil {
+			return false
+		}
+		c.Close()
+		return true
 	}
-	c.Close()
-	return true
+	own := state.Dir(cfg)
+	if answers(own) {
+		return own
+	}
+	for _, dir := range state.DirsOfRoot(cfg.Root) {
+		if dir != own && answers(dir) {
+			return dir
+		}
+	}
+	return ""
 }

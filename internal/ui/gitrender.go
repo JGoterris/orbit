@@ -640,7 +640,11 @@ func (m *Model) renderGitDiff(v gitView, w, h int) []string {
 	} else if g.selOn {
 		parts = append(parts, "copy mode")
 	}
-	return panel(panelOpts{title: "Diff · " + titleTarget, bottom: strings.Join(parts, " · "), focused: m.focus == paneGitDiff, padX: 1}, w, h, content)
+	title := "Diff"
+	if titleTarget != "" {
+		title += " · " + titleTarget
+	}
+	return panel(panelOpts{title: title, bottom: strings.Join(parts, " · "), focused: m.focus == paneGitDiff, padX: 1}, w, h, content)
 }
 
 func (m *Model) renderGitCommands(v gitView, w, h int) []string {

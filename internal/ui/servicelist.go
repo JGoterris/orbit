@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/charmbracelet/x/ansi"
+
 	"github.com/JGoterris/orbit/internal/core/metrics"
 	"github.com/JGoterris/orbit/internal/core/resources"
 	"github.com/JGoterris/orbit/internal/core/supervisor"
@@ -30,7 +32,7 @@ func (m *Model) listColumns(names []string, w int, compact bool) listCols {
 	avail := w - 2 - 5 // the border, then the selection bar, the status icon and the watch mark
 	longest := 0
 	for _, n := range names {
-		longest = max(longest, len([]rune(n)))
+		longest = max(longest, ansi.StringWidth(n))
 	}
 	want := min(longest, max(12, (w-2)*45/100))
 	want = max(6, min(want, avail))
@@ -53,7 +55,7 @@ func (m *Model) listColumns(names []string, w int, compact bool) listCols {
 }
 
 func padStart(s string, w int) string {
-	n := len([]rune(s))
+	n := ansi.StringWidth(s)
 	if n >= w {
 		return s
 	}

@@ -12,7 +12,7 @@
       "oneOf": [{ "type": "string" }, { "type": "array", "items": { "type": "string" } }, { "const": false }]
     },
     "compose_project": { "type": "string", "description": "Compose project name used for the imported services." },
-    "env": { "$ref": "#/definitions/env", "description": "Variables for all services. ${VAR} and ${VAR:-def} are interpolated (also from .env)." },
+    "env": { "$ref": "#/definitions/env", "description": "Variables for all services. ${VAR}, ${VAR:-def}, ${VAR:?error} and ${VAR:+alt} are interpolated, as in compose (also from .env)." },
     "env_file": { "$ref": "#/definitions/envFile", "description": ".env files for all services." },
     "shell": { "type": "string", "description": "Shell that runs cmd, hooks, health and console (default: sh, or cmd.exe on Windows)." },
     "services": { "$ref": "#/definitions/services" },

@@ -43,6 +43,8 @@
   `orbit down` stops everything from outside. `orbit --no-daemon` runs the services inside the TUI instead:
   then *leave running* keeps the processes (own process group, output in
   `~/.local/state/orbit/<project>/logs/`) but nobody supervises them until the next `orbit` re-attaches.
+  Those files keep the output of earlier runs too (a crash and the restart after it read together): past 10 MB
+  the next start moves a file aside to `<service>.out.1.log` / `.err.1.log`.
 - **`oneshot` tasks** (builds, migrations, provisioning): count as ready once they finish with
   exit code 0, are shown as `✓ done`, and aren't re-run when another dependent starts.
 - **Profiles** (`--profile debug`, or `p` in the TUI): optional sets of changes that add, change or remove services

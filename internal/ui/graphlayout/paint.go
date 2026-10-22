@@ -1,6 +1,10 @@
 package graphlayout
 
-import "strings"
+import (
+	"strings"
+
+	"github.com/charmbracelet/x/ansi"
+)
 
 // Cell is one character of the painted grid.
 type Cell struct {
@@ -38,13 +42,7 @@ var lineChars = map[uint8]string{
 	dirN | dirE | dirS | dirW: "┼",
 }
 
-func truncate(s string, w int) string {
-	r := []rune(s)
-	if len(r) <= w {
-		return s
-	}
-	return string(r[:max(0, w-1)]) + "…"
-}
+func truncate(s string, w int) string { return ansi.Truncate(s, max(0, w), "…") }
 
 // Paint draws the layout onto a grid of cells.
 func Paint(l *Layout, opts PaintOptions) [][]Cell {
@@ -110,12 +108,21 @@ func Paint(l *Layout, opts PaintOptions) [][]Cell {
 		}
 		inner := b.W - 4
 		put(b.X+2, b.Y+1, Cell{Ch: st.Icon, Fg: st.IconColor, Bold: true})
-		for i, ch := range []rune(truncate(st.Title, inner-2)) {
-			put(b.X+4+i, b.Y+1, Cell{Ch: string(ch), Fg: opts.Text, Bold: true})
+		// wide characters take two cells; the second stays empty
+		text := func(x, y int, s string, c Cell) {
+			for _, ch := range s {
+				c.Ch = string(ch)
+				put(x, y, c)
+				if ansi.StringWidth(c.Ch) == 2 {
+					x++
+					c.Ch = ""
+					put(x, y, c)
+				}
+				x++
+			}
 		}
-		for i, ch := range []rune(truncate(st.Subtitle, inner)) {
-			put(b.X+2+i, b.Y+2, Cell{Ch: string(ch), Fg: st.SubtitleColor})
-		}
+		text(b.X+4, b.Y+1, truncate(st.Title, inner-2), Cell{Fg: opts.Text, Bold: true})
+		text(b.X+2, b.Y+2, truncate(st.Subtitle, inner), Cell{Fg: st.SubtitleColor})
 	}
 	for i, edges := range l.ports {
 		cy, cx := i/width, i%width

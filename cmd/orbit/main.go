@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
 	"runtime/debug"
 	"strconv"
 	"strings"
@@ -90,6 +91,25 @@ func run(args []string) int {
 		}
 		return cfg, true
 	}
+	// status and down also work while orbit.yaml is broken
+	loadRunning := func() (*config.OrbitConfig, bool) {
+		cfg, err := config.LoadConfig(opts)
+		if err == nil {
+			return cfg, true
+		}
+		file := config.FindConfigFile(inv.Dir)
+		if opts.File != "" {
+			file, _ = filepath.Abs(opts.File)
+		}
+		if file != "" {
+			if running := cli.RunningConfig(file); running != nil {
+				fmt.Fprintf(os.Stderr, "%s %v\n(acting on the orbit that is running, with the configuration it loaded)\n", red, err)
+				return running, true
+			}
+		}
+		fmt.Fprintf(os.Stderr, "%s %v\n", red, err)
+		return nil, false
+	}
 	// the commands that act on the project make a --profile its selection; the ones that only look do not
 	loadAndRemember := func() (*config.OrbitConfig, bool) {
 		cfg, ok := load()
@@ -135,7 +155,7 @@ func run(args []string) int {
 		}
 		return 1
 	case "status":
-		if cfg, ok := load(); ok {
+		if cfg, ok := loadRunning(); ok {
 			return cli.RunStatus(cfg, inv.Options.JSON)
 		}
 		return 1
@@ -159,7 +179,7 @@ func run(args []string) int {
 		}
 		return 1
 	case "down":
-		if cfg, ok := load(); ok {
+		if cfg, ok := loadRunning(); ok {
 			return cli.RunDown(cfg)
 		}
 		return 1

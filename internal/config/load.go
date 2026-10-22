@@ -3,11 +3,14 @@ package config
 import (
 	"fmt"
 	"math"
+	"net/url"
 	"os"
 	"path/filepath"
 	"slices"
 	"strconv"
 	"strings"
+
+	"github.com/bmatcuk/doublestar/v4"
 
 	"github.com/JGoterris/orbit/internal/graph"
 )
@@ -35,6 +38,39 @@ func FindConfigFile(start string) string {
 }
 
 func parseHealth(raw any, path string, port int) *HealthCheck {
+	h := parseHealthCheck(raw, path, port)
+	if h != nil {
+		validateHealth(h, path)
+	}
+	return h
+}
+
+// validateHealth rejects checks that can never pass or check nothing.
+func validateHealth(h *HealthCheck, path string) {
+	if h.Interval <= 0 {
+		fail("the health check interval must be greater than 0", path+".interval")
+	}
+	if h.Timeout <= 0 {
+		fail("the health check timeout must be greater than 0", path+".timeout")
+	}
+	switch {
+	case h.Http != "":
+		u, err := url.Parse(h.Http)
+		if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
+			fail(fmt.Sprintf("invalid health URL %s (use e.g. http://localhost:3000/health)", jsonOf(h.Http)), path)
+		}
+	case h.Tcp != "" || h.Cmd == "" && !h.Container:
+		target := h.Tcp
+		if i := strings.LastIndex(target, ":"); i != -1 {
+			target = target[i+1:]
+		}
+		if n, err := strconv.Atoi(target); err != nil || n < 1 || n > 65535 {
+			fail(fmt.Sprintf("invalid tcp health target %s (use a port, or host:port)", jsonOf(h.Tcp)), path)
+		}
+	}
+}
+
+func parseHealthCheck(raw any, path string, port int) *HealthCheck {
 	switch x := raw.(type) {
 	case bool:
 		if !x {
@@ -86,9 +122,15 @@ func parseWatch(raw any, path string) *WatchConfig {
 	if len(paths) == 0 {
 		fail("watch needs at least one path pattern", path)
 	}
+	ignore := orEmpty(asStringList(rec.Get("ignore"), path+".ignore"))
+	for _, p := range append(slices.Clone(paths), ignore...) {
+		if !doublestar.ValidatePattern(strings.TrimPrefix(p, "./")) {
+			fail(fmt.Sprintf("invalid glob %s", jsonOf(p)), path)
+		}
+	}
 	return &WatchConfig{
 		Paths:    paths,
-		Ignore:   orEmpty(asStringList(rec.Get("ignore"), path+".ignore")),
+		Ignore:   ignore,
 		Debounce: parseDuration(rec.Get("debounce"), path+".debounce", 1000),
 		Cooldown: parseDuration(rec.Get("cooldown"), path+".cooldown", 10_000),
 	}
@@ -218,7 +260,7 @@ func parseService(name string, raw any, root string, base *ServiceConfig, compos
 	port := base.Port
 	if rec.Has("port") {
 		n := toNumber(rec.Get("port"))
-		if math.IsNaN(n) || n != math.Trunc(n) || n <= 0 {
+		if math.IsNaN(n) || n != math.Trunc(n) || n <= 0 || n > 65535 {
 			fail(fmt.Sprintf("invalid port %s", jsonOf(rec.Get("port"))), path+".port")
 		}
 		port = int(n)
@@ -391,6 +433,28 @@ type LoadOptions struct {
 	ProfilesSet bool
 	// SavedProfiles gives the selection last saved for the project with this root and name, if any
 	SavedProfiles func(root, name string) ([]string, bool)
+	// errs collects errors instead of stopping at the first one (validate)
+	errs *[]error
+}
+
+// check runs fn; when collecting, a config error is recorded and check returns false.
+func (o LoadOptions) check(fn func()) (ok bool) {
+	if o.errs == nil {
+		fn()
+		return true
+	}
+	defer func() {
+		if r := recover(); r != nil {
+			ce, isConfig := r.(*ConfigError)
+			if !isConfig {
+				panic(r)
+			}
+			*o.errs = append(*o.errs, ce)
+			ok = false
+		}
+	}()
+	fn()
+	return true
 }
 
 func graphCycle(c *OrbitConfig) []string { return graph.FindCycle(c.DepMap()) }
@@ -405,7 +469,7 @@ func defaultProjectName(root string) string {
 }
 
 // validateGraph checks the dependencies. removed (service → what removed it) only improves the message.
-func validateGraph(c *OrbitConfig, removed map[string]string) {
+func validateGraph(c *OrbitConfig, removed map[string]string, check func(func()) bool) {
 	unknown := func(dep string) string {
 		msg := fmt.Sprintf("depends on unknown service %q", dep)
 		if by := removed[dep]; by != "" {
@@ -416,24 +480,38 @@ func validateGraph(c *OrbitConfig, removed map[string]string) {
 	for _, n := range c.Order {
 		svc := c.Services[n]
 		for _, dep := range svc.DependsOn {
-			if c.Services[dep] == nil {
-				fail(unknown(dep), "services."+svc.Name+".depends_on")
-			}
-			if dep == svc.Name {
-				fail("a service cannot depend on itself", "services."+svc.Name+".depends_on")
-			}
+			check(func() {
+				if c.Services[dep] == nil {
+					fail(unknown(dep), "services."+svc.Name+".depends_on")
+				}
+				if dep == svc.Name {
+					fail("a service cannot depend on itself", "services."+svc.Name+".depends_on")
+				}
+			})
 		}
 	}
 	for _, n := range c.TaskOrder {
 		for _, dep := range c.Tasks[n].DependsOn {
-			if c.Services[dep] == nil {
-				fail(unknown(dep), "tasks."+n+".depends_on")
-			}
+			check(func() {
+				if c.Services[dep] == nil {
+					fail(unknown(dep), "tasks."+n+".depends_on")
+				}
+			})
 		}
 	}
-	if cycle := graphCycle(c); cycle != nil {
-		fail("dependency cycle: "+strings.Join(cycle, " → "), "")
-	}
+	check(func() {
+		// unknown deps were already reported
+		for _, n := range c.Order {
+			for _, dep := range c.Services[n].DependsOn {
+				if c.Services[dep] == nil {
+					return
+				}
+			}
+		}
+		if cycle := graphCycle(c); cycle != nil {
+			fail("dependency cycle: "+strings.Join(cycle, " → "), "")
+		}
+	})
 }
 
 // LoadConfig reads orbit.yaml (searched upwards from Dir), importing the compose file next to it, or a plain
@@ -481,7 +559,7 @@ func LoadConfig(opts LoadOptions) (cfg *OrbitConfig, err error) {
 			c.Services[s.Name] = s
 			c.Order = append(c.Order, s.Name)
 		}
-		validateGraph(c, nil)
+		validateGraph(c, nil, opts.check)
 		return c, nil
 	}
 
@@ -578,7 +656,17 @@ func LoadConfig(opts LoadOptions) (cfg *OrbitConfig, err error) {
 		composeFirst = composeFiles[0]
 	}
 	for _, name := range rawServices.Keys() {
-		c.Services[name] = parseService(name, rawServices.Get(name), root, imported[name], composeFirst)
+		parsed := opts.check(func() {
+			// the CLI cannot address these
+			if strings.TrimSpace(name) == "" || strings.HasPrefix(name, "-") {
+				fail(fmt.Sprintf("invalid service name %s", jsonOf(name)), "services")
+			}
+			c.Services[name] = parseService(name, rawServices.Get(name), root, imported[name], composeFirst)
+		})
+		if !parsed {
+			// placeholder, so references to it don't fail too
+			c.Services[name] = &ServiceConfig{Name: name, Type: TypeProcess, Env: map[string]string{}, DependsOn: []string{}}
+		}
 		if !slices.Contains(c.Order, name) {
 			c.Order = append(c.Order, name)
 		}
@@ -600,9 +688,11 @@ func LoadConfig(opts LoadOptions) (cfg *OrbitConfig, err error) {
 		if svc.Type != TypeCompose {
 			svc.EnvFiles = append(slices.Clone(globalEnvFiles), svc.EnvFiles...)
 		}
-		if missing := MissingEnvFiles(svc.EnvFiles); len(missing) > 0 {
-			fail(fmt.Sprintf("env_file not found: %s (use { path, required: false } for optional files)", strings.Join(missing, ", ")), "services."+svc.Name+".env_file")
-		}
+		opts.check(func() {
+			if missing := MissingEnvFiles(svc.EnvFiles); len(missing) > 0 {
+				fail(fmt.Sprintf("env_file not found: %s (use { path, required: false } for optional files)", strings.Join(missing, ", ")), "services."+svc.Name+".env_file")
+			}
+		})
 		if svc.EnvFiles == nil {
 			svc.EnvFiles = []EnvFileRef{}
 		}
@@ -610,42 +700,54 @@ func LoadConfig(opts LoadOptions) (cfg *OrbitConfig, err error) {
 
 	groups := asRecord(doc.Get("groups"), "groups")
 	for _, g := range groups.Keys() {
-		members := orEmpty(asStringList(groups.Get(g), "groups."+g))
-		for _, m := range members {
-			if c.Services[m] == nil {
-				fail(fmt.Sprintf("unknown service %q", m), "groups."+g)
+		opts.check(func() {
+			// ambiguous on the CLI
+			if c.Services[g] != nil {
+				fail(fmt.Sprintf("a group cannot have the name of a service (%q)", g), "groups."+g)
 			}
-		}
-		c.Groups[g] = members
-		c.GroupOrder = append(c.GroupOrder, g)
+			members := orEmpty(asStringList(groups.Get(g), "groups."+g))
+			for _, m := range members {
+				if c.Services[m] == nil {
+					fail(fmt.Sprintf("unknown service %q", m), "groups."+g)
+				}
+			}
+			c.Groups[g] = members
+			c.GroupOrder = append(c.GroupOrder, g)
+		})
 	}
 
 	rawTasks := asRecord(doc.Get("tasks"), "tasks")
 	for _, name := range rawTasks.Keys() {
-		t := parseTask(name, rawTasks.Get(name), root)
-		merged := map[string]string{}
-		for k, v := range globalEnv {
-			merged[k] = v
-		}
-		for k, v := range t.Env {
-			merged[k] = v
-		}
-		t.Env = merged
-		if t.Shell == "" {
-			t.Shell = globalShell
-		}
-		t.EnvFiles = append(slices.Clone(globalEnvFiles), t.EnvFiles...)
-		if missing := MissingEnvFiles(t.EnvFiles); len(missing) > 0 {
-			fail(fmt.Sprintf("env_file not found: %s (use { path, required: false } for optional files)", strings.Join(missing, ", ")), "tasks."+name+".env_file")
-		}
-		c.Tasks[name] = t
-		c.TaskOrder = append(c.TaskOrder, name)
+		opts.check(func() {
+			c.addTask(name, parseTask(name, rawTasks.Get(name), root), globalEnv, globalEnvFiles, globalShell)
+		})
 	}
 
 	c.Name, _ = asString(doc.Get("name"), "name")
 	if c.Name == "" {
 		c.Name = defaultProjectName(root)
 	}
-	validateGraph(c, layers.removed)
+	validateGraph(c, layers.removed, opts.check)
 	return c, nil
+}
+
+// addTask completes a parsed task with the project-wide env, env files and shell.
+func (c *OrbitConfig) addTask(name string, t *TaskConfig, globalEnv map[string]string, globalEnvFiles []EnvFileRef, globalShell string) {
+	merged := map[string]string{}
+	for k, v := range globalEnv {
+		merged[k] = v
+	}
+	for k, v := range t.Env {
+		merged[k] = v
+	}
+	t.Env = merged
+	if t.Shell == "" {
+		t.Shell = globalShell
+	}
+	t.EnvFiles = append(slices.Clone(globalEnvFiles), t.EnvFiles...)
+	if missing := MissingEnvFiles(t.EnvFiles); len(missing) > 0 {
+		fail(fmt.Sprintf("env_file not found: %s (use { path, required: false } for optional files)", strings.Join(missing, ", ")), "tasks."+name+".env_file")
+	}
+	c.Tasks[name] = t
+	c.TaskOrder = append(c.TaskOrder, name)
 }

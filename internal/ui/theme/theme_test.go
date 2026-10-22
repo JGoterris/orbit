@@ -8,6 +8,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/charmbracelet/x/ansi"
+
 	"github.com/JGoterris/orbit/internal/userconfig"
 )
 
@@ -162,5 +164,18 @@ func TestFitMidKeepsBothEnds(t *testing.T) {
 	}
 	if got := FitMid("api-gateway-prod-eu-1", 11); !strings.HasPrefix(got, "api-g") || !strings.HasSuffix(got, "eu-1") || !strings.Contains(got, "…") {
 		t.Errorf("both ends must survive: %q", got)
+	}
+}
+
+func TestFitCountsTerminalCells(t *testing.T) {
+	for w := 1; w <= 16; w++ {
+		for _, f := range []func(string, int) string{Fit, FitMid} {
+			if got := f("日本語サービス", w); ansi.StringWidth(got) != w {
+				t.Errorf("fit(%d) = %q is %d cells wide", w, got, ansi.StringWidth(got))
+			}
+		}
+	}
+	if got := FitMid("日本語サービス", 9); got != "日本…ビス" {
+		t.Errorf("FitMid = %q", got)
 	}
 }

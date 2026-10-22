@@ -209,7 +209,7 @@ const helpKeyW = 24
 
 // helpSize is the height of the keys modal and how many rows of it fit at a given terminal height.
 func helpSize(H int) (h, page int) {
-	h = min(len(helpRows)+3, max(5, min(H-8, 24)))
+	h = min(len(helpRows)+3, max(5, H-4))
 	return h, h - 3
 }
 
@@ -405,11 +405,11 @@ func (m *Model) renderEnv(W, H int) ([]string, int, int, int) {
 
 func (m *Model) renderConfirm(W, H int) ([]string, int, int, int) {
 	p := theme.Active()
-	w := min(60, W-4)
+	w := min(76, W-4)
 	busy := m.mode == modeStopping
-	verb, title0 := "quit", "Quit"
+	verb, title0, resume := "quit", "Quit", "reopen orbit to resume them"
 	if m.pendingDir != "" {
-		verb, title0 = "switch project", "Switch project"
+		verb, title0, resume = "switch project", "Switch project", "reopen that project to resume them"
 	}
 	msg := fmt.Sprintf("%d service(s) running.", m.sup.OwnedRunningCount())
 	for _, n := range m.names() {
@@ -453,7 +453,7 @@ func (m *Model) renderConfirm(W, H int) ([]string, int, int, int) {
 		}
 		content = append(content,
 			newLine(p.PanelAlt).add(p.Green, "s").add(p.Dim, " stop all & "+verb).String(),
-			newLine(p.PanelAlt).add(p.Accent, "d").add(p.Dim, " leave running & "+verb+" (reopen that project to resume them)").String(),
+			newLine(p.PanelAlt).add(p.Accent, "d").add(p.Dim, " leave running & "+verb+" ("+resume+")").String(),
 			newLine(p.PanelAlt).add(p.Red, "n / esc").add(p.Dim, " cancel").String())
 	}
 	x, y := center(W, H, w, h)

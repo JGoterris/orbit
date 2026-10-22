@@ -191,3 +191,25 @@ func TestUnknownKeyInTask(t *testing.T) {
 		t.Fatalf("unknown keys = %+v", got)
 	}
 }
+
+func TestExtensionKeysAreNotUnknown(t *testing.T) {
+	res := ValidateFile(LoadOptions{Dir: orbitYAML(t, "x-defaults: &d { cmd: sleep 1 }\nservices:\n  a: *d\n"), Env: noEnv})
+	if len(res.Errors) != 0 {
+		t.Fatalf("errors = %v", res.Errors)
+	}
+}
+
+func TestValidateReportsEveryBrokenServiceGroupAndTask(t *testing.T) {
+	yaml := "services:\n  a: { cmd: x, port: -3 }\n  b: { cmd: x, depends_on: [nope] }\n  c: { cmd: x, restart: sometimes }\n  d: { cmd: x, depends_on: [a] }\n" +
+		"groups:\n  g: [b, ghost]\ntasks:\n  t: { cmd: x, depends_on: [missing] }\n"
+	res := ValidateFile(LoadOptions{Dir: orbitYAML(t, yaml), Env: noEnv})
+	got := strings.Join(res.Errors, "\n")
+	for _, want := range []string{"services.a.port", "services.b.depends_on", "services.c.restart", "groups.g", "tasks.t.depends_on"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("missing %s in:\n%s", want, got)
+		}
+	}
+	if strings.Contains(got, "services.d") || len(res.Errors) != 5 {
+		t.Errorf("errors:\n%s", got)
+	}
+}

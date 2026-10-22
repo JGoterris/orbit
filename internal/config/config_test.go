@@ -684,3 +684,46 @@ func TestValidateChecksEveryProfile(t *testing.T) {
 		t.Fatalf("errors = %v", res.Errors)
 	}
 }
+
+func TestRejectsChecksThatCouldNeverPassOrCheckNothing(t *testing.T) {
+	svc := func(body string) map[string]string {
+		return map[string]string{"orbit.yaml": "services:\n  a:\n    cmd: sleep 1\n" + body}
+	}
+	wantContains(t, loadErr(t, svc("    port: 99999\n")), "invalid port 99999")
+	wantContains(t, loadErr(t, svc("    health: 'tcp:'\n")), "invalid tcp health target")
+	wantContains(t, loadErr(t, svc("    health: { tcp: 'db:abc' }\n")), "invalid tcp health target")
+	wantContains(t, loadErr(t, svc("    health: { http: 'not a url' }\n")), "invalid health URL")
+	wantContains(t, loadErr(t, svc("    health: { cmd: 'true', interval: 0s }\n")), "greater than 0")
+	wantContains(t, loadErr(t, svc("    health: { cmd: 'true', interval: -5 }\n")), "invalid duration -5")
+	wantContains(t, loadErr(t, svc("    watch: ['[unclosed']\n")), "invalid glob")
+	for _, ok := range []string{"    health: 'tcp:5432'\n", "    health: 'tcp:db.example.com:5432'\n", "    port: 65535\n", "    watch: ['src/**', './go.mod']\n"} {
+		mustLoad(t, svc(ok))
+	}
+}
+
+func TestRejectsNamesTheCLICannotUse(t *testing.T) {
+	wantContains(t, loadErr(t, map[string]string{"orbit.yaml": "services:\n  '': { cmd: x }\n"}), `invalid service name ""`)
+	wantContains(t, loadErr(t, map[string]string{"orbit.yaml": "services:\n  -x: { cmd: x }\n"}), `invalid service name "-x"`)
+	wantContains(t, loadErr(t, map[string]string{"orbit.yaml": "services:\n  a: { cmd: x }\n  b: { cmd: y }\ngroups:\n  a: [b]\n"}), "name of a service")
+}
+
+func TestInterpolationOperatorsAreComposes(t *testing.T) {
+	vars := map[string]string{"SET": "v", "EMPTY": ""}
+	for in, want := range map[string]string{
+		"${SET}": "v", "${UNSET}": "", "${UNSET:-d}": "d", "${EMPTY:-d}": "d", "${EMPTY-d}": "", "${UNSET-d}": "d",
+		"${SET:+alt}": "alt", "${EMPTY:+alt}": "", "${EMPTY+alt}": "alt", "${UNSET+alt}": "", "${SET:?boom}": "v",
+	} {
+		m := NewMap()
+		m.Set("a", in)
+		if got := Interpolate(m, vars).(*Map).Get("a"); got != want {
+			t.Errorf("%s = %q, want %q", in, got, want)
+		}
+	}
+	files := map[string]string{"orbit.yaml": "services:\n  a: { cmd: 'echo ${TOKEN:?set it in .env}' }\n"}
+	wantContains(t, loadErr(t, files), "required variable TOKEN is missing a value: set it in .env")
+	wantContains(t, loadErr(t, files), "services.a.cmd")
+	files[".env"] = "TOKEN=t\n"
+	if got := mustLoad(t, files).Services["a"].Cmd; got != "echo t" {
+		t.Errorf("cmd = %q", got)
+	}
+}

@@ -575,6 +575,24 @@ func (s *Supervisor) Init() error {
 			}
 		}()
 	}
+	// stop what was left running for services no longer in orbit.yaml
+	known := s.Names()
+	project := s.Config().Name
+	for name, entry := range saved {
+		if slices.Contains(known, name) {
+			continue
+		}
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			switch {
+			case entry.Pid != 0 && runner.StopLeftover(name, entry, state.Files(s.stateDir, name)):
+				s.Logs.Append(name, logs.System, fmt.Sprintf("stopped pid %d: %s is no longer in orbit.yaml", entry.Pid, name))
+			case entry.Pid == 0 && runner.RemoveLeftoverContainer(project, name):
+				s.Logs.Append(name, logs.System, fmt.Sprintf("removed container %s: %s is no longer in orbit.yaml", runner.ContainerName(project, name), name))
+			}
+		}()
+	}
 	wg.Wait()
 	s.persist()
 	s.startWatchers()
@@ -613,6 +631,16 @@ func (s *Supervisor) Start(name string) bool {
 	}
 
 	s.mu.Lock()
+	// claim the run (new gen + Waiting) atomically, so a concurrent Start waits for it instead of failing
+	if s.isReadyLocked(name, st.Status) {
+		s.mu.Unlock()
+		return true
+	}
+	switch st.Status {
+	case Waiting, Starting, Unhealthy:
+		s.mu.Unlock()
+		return <-s.waitReadyChan(name)
+	}
 	if rt.restartTimer != nil {
 		rt.restartTimer.Stop()
 		rt.restartTimer = nil
@@ -620,7 +648,9 @@ func (s *Supervisor) Start(name string) bool {
 	rt.gen++
 	gen := rt.gen
 	postStop := rt.postStop
+	claimed := s.apply(name, func(st *ServiceState) { st.Status, st.WaitingOn, st.Error = Waiting, nil, "" })
 	s.mu.Unlock()
+	claimed()
 	// the previous run's post_stop must be over before this one begins
 	if postStop != nil {
 		<-postStop
@@ -748,7 +778,7 @@ func (s *Supervisor) Start(name string) bool {
 	}
 	pid, cid := r.Pid(), r.ContainerID()
 	if !s.updateIfGen(name, gen, func(st *ServiceState) {
-		st.Status, st.Pid, st.ContainerID = status, pid, cid
+		st.Status, st.Pid, st.ContainerID, st.Health = status, pid, cid, ""
 		st.StartedAt, st.StoppedAt, st.Adopted = time.Now().UnixMilli(), 0, false
 	}) {
 		return false
@@ -916,7 +946,7 @@ func (s *Supervisor) Stop(name string, opts StopOptions) {
 		s.runHook(name, hooks.PostStop, cur.Hooks.PostStop, nil)
 	}
 	s.update(name, func(st *ServiceState) {
-		st.Status, st.Pid, st.StoppedAt, st.Resources = Stopped, 0, time.Now().UnixMilli(), nil
+		st.Status, st.Pid, st.StoppedAt, st.Resources, st.Health = Stopped, 0, time.Now().UnixMilli(), nil, ""
 	})
 	s.persist()
 	s.Log(name, "stopped")
@@ -1303,7 +1333,7 @@ func (s *Supervisor) onExit(name string, r runner.Runner, code *int, signal stri
 	}
 	// a Stop (or Dispose) that came in meanwhile already settled the status: it must not turn back into crashed
 	if !s.updateIfGen(name, gen, func(st *ServiceState) {
-		st.Status, st.ExitCode, st.Pid, st.StoppedAt, st.Resources, st.Error = status, code, 0, time.Now().UnixMilli(), nil, errMsg
+		st.Status, st.ExitCode, st.Pid, st.StoppedAt, st.Resources, st.Error, st.Health = status, code, 0, time.Now().UnixMilli(), nil, errMsg, ""
 	}) {
 		return
 	}

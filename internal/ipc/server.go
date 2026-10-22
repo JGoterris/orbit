@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net"
 	"os"
+	"slices"
 	"sync"
 	"time"
 
@@ -62,6 +63,7 @@ type Server struct {
 	path       string
 	version    string
 	onShutdown func(how string)
+	daemon     bool
 
 	mu       sync.Mutex
 	listener net.Listener
@@ -75,11 +77,13 @@ type ServerOptions struct {
 	Version string
 	// OnShutdown runs when a client asks to quit ("stop" or "detach"), after the request was answered
 	OnShutdown func(how string)
+	// Daemon marks an `orbit daemon`
+	Daemon bool
 }
 
 func NewServer(sup supervisor.Like, opts ServerOptions) *Server {
 	return &Server{
-		sup: sup, path: SocketPath(sup.StateDir()), version: opts.Version, onShutdown: opts.OnShutdown,
+		sup: sup, path: SocketPath(sup.StateDir()), version: opts.Version, onShutdown: opts.OnShutdown, daemon: opts.Daemon,
 		conns: map[*serverConn]struct{}{},
 	}
 }
@@ -296,6 +300,11 @@ type params struct {
 
 // targets are the service names of the params; groups expand to their members.
 func (s *Server) targets(p params) ([]string, error) {
+	return s.targetsWhere(p, func(string) bool { return true })
+}
+
+// targetsWhere is targets, keeping only the group members memberOK accepts.
+func (s *Server) targetsWhere(p params, memberOK func(name string) bool) ([]string, error) {
 	if p.Services == nil {
 		return nil, paramsErr("services must be a list of names")
 	}
@@ -309,6 +318,8 @@ func (s *Server) targets(p params) ([]string, error) {
 				return nil, paramsErr("unknown service or group %q", n)
 			}
 			members = []string{n}
+		} else {
+			members = slices.DeleteFunc(slices.Clone(members), func(m string) bool { return !memberOK(m) })
 		}
 		for _, m := range members {
 			if !seen[m] {
@@ -358,7 +369,7 @@ func (s *Server) handle(c *serverConn, method string, raw json.RawMessage) (any,
 	ok := map[string]bool{"ok": true}
 	switch method {
 	case MethodHello:
-		return Hello{Protocol: Protocol, Version: s.version, Pid: os.Getpid(), StateDir: sup.StateDir(), Config: sup.Config(), Pending: sup.Pending()}, nil
+		return Hello{Protocol: Protocol, Version: s.version, Pid: os.Getpid(), Daemon: s.daemon, StateDir: sup.StateDir(), Config: sup.Config(), Pending: sup.Pending()}, nil
 	case MethodSnapshot:
 		return sup.Snapshot(), nil
 	case MethodLogs:
@@ -395,6 +406,10 @@ func (s *Server) handle(c *serverConn, method string, raw json.RawMessage) (any,
 		return lines, nil
 	case MethodStart, MethodStop, MethodRestart, MethodToggle:
 		names, err := s.targets(p)
+		if method == MethodRestart {
+			// of a group, only the running members
+			names, err = s.targetsWhere(p, sup.IsUp)
+		}
 		if err != nil {
 			return nil, err
 		}
@@ -402,7 +417,7 @@ func (s *Server) handle(c *serverConn, method string, raw json.RawMessage) (any,
 		case MethodStart:
 			return map[string]bool{"ok": parallel(names, sup.Start)}, nil
 		case MethodRestart:
-			return map[string]bool{"ok": parallel(names, sup.Restart)}, nil
+			return map[string]any{"ok": parallel(names, sup.Restart), "services": orEmptyNames(names)}, nil
 		case MethodStop:
 			parallel(names, func(n string) bool { sup.Stop(n, supervisor.StopOptions{}); return true })
 		default:
@@ -489,4 +504,11 @@ func (s *Server) handle(c *serverConn, method string, raw json.RawMessage) (any,
 		return ok, nil
 	}
 	return nil, &rpcError{ErrMethod, fmt.Sprintf("unknown method %q", method)}
+}
+
+func orEmptyNames(names []string) []string {
+	if names == nil {
+		return []string{}
+	}
+	return names
 }

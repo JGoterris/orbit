@@ -950,3 +950,16 @@ func TestProfileKeyIsPullInTheGitViewAndSaysSoWithoutProfiles(t *testing.T) {
 		t.Fatal("p belongs to the Git view there")
 	}
 }
+
+func TestWrapCellsNeverOverflowsARow(t *testing.T) {
+	line := "長い行 日本語テキスト; printf 'x' 😀 end"
+	rows := wrapCells(line, 9)
+	if strings.Join(rows, "") != line {
+		t.Fatalf("text was lost: %q", rows)
+	}
+	for _, r := range rows {
+		if ansi.StringWidth(r) > 9 {
+			t.Fatalf("row %q is %d cells wide", r, ansi.StringWidth(r))
+		}
+	}
+}

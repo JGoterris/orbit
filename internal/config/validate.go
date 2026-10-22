@@ -155,7 +155,8 @@ func UnknownKeys(doc any) []UnknownKey {
 			case *Map:
 				walk(child, ap, at)
 			case bool:
-				if !ap {
+				// x- extension keys, as in compose
+				if !ap && !strings.HasPrefix(key, "x-") {
 					out = append(out, UnknownKey{Path: path, Key: key, Suggestion: Suggest(key, props.Keys())})
 				}
 			}
@@ -178,12 +179,19 @@ type Validation struct {
 // keys it would silently ignore. Loader errors are returned in Errors.
 func ValidateFile(opts LoadOptions) Validation {
 	v := Validation{}
-	cfg, err := LoadConfig(opts)
+	var errs []error
+	collecting := opts
+	collecting.errs = &errs
+	cfg, err := LoadConfig(collecting)
+	for _, e := range errs {
+		v.Errors = append(v.Errors, e.Error())
+	}
 	if err != nil {
 		v.Errors = append(v.Errors, err.Error())
 	}
 	v.Config = cfg
-	if cfg != nil {
+	// with errors above, each profile would only repeat them
+	if cfg != nil && len(errs) == 0 {
 		// a profile that is not active is not evaluated by the load above: try each one on its own
 		for _, p := range cfg.AvailableProfiles {
 			alone := opts

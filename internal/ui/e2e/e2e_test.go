@@ -150,9 +150,9 @@ func TestOverlays(t *testing.T) {
 	sc := start(t, projectDir(t, project), 120, 40, "--no-daemon")
 	sc.waitFor("ready", "Services 0/3")
 	sc.send("?")
-	sc.waitFor("help", "Keys", "j/k scroll", "1-21/")
+	sc.waitFor("help", "Keys", "j/k scroll", "1-33/")
 	sc.send("j") // the list is taller than the terminal: it scrolls
-	sc.waitFor("scrolled", "2-22/")
+	sc.waitFor("scrolled", "2-34/")
 	sc.send("x") // any other key closes it... and must not stop anything
 	sc.waitFor("closed", "Services 0/3")
 	sc.send(":")

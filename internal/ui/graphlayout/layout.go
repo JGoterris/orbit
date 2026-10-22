@@ -9,7 +9,8 @@ package graphlayout
 import (
 	"sort"
 	"strconv"
-	"unicode/utf8"
+
+	"github.com/charmbracelet/x/ansi"
 
 	"github.com/JGoterris/orbit/internal/graph"
 )
@@ -82,7 +83,7 @@ const (
 // EdgeKey names the edge dep -> dependent.
 func EdgeKey(dep, dependent string) string { return dep + ">" + dependent }
 
-func nameWidth(s string) int { return utf8.RuneCountInString(s) }
+func nameWidth(s string) int { return ansi.StringWidth(s) }
 
 // LayoutGraph places the services of deps in layers; order is the declaration order, which breaks ties.
 func LayoutGraph(deps graph.DepMap, order []string) *Layout {

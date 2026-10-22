@@ -9,6 +9,8 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+
+	"github.com/charmbracelet/x/ansi"
 )
 
 var (
@@ -239,34 +241,39 @@ func AreaChart(values []float64, width, rows int, max float64) []string {
 
 // ---------------------------------------------------------------- text
 
-// Fit cuts s with … or pads it with spaces to exactly width columns (counted in runes).
+// Fit cuts s with … or pads it with spaces to exactly width columns.
 func Fit(s string, width int) string {
 	if width <= 0 {
 		return ""
 	}
-	r := []rune(s)
-	if len(r) > width {
-		return string(r[:max(0, width-1)]) + "…"
+	w := ansi.StringWidth(s)
+	if w > width {
+		s = ansi.Truncate(s, width, "…")
+		w = ansi.StringWidth(s)
 	}
-	return s + strings.Repeat(" ", width-len(r))
+	return s + strings.Repeat(" ", max(0, width-w))
 }
 
 // FitMid is Fit for names: a name that does not fit loses its middle, not its end, because the end is usually what
 // tells two similar names apart (api-gateway-pr…eu-1 against api-gateway-pr…us-2).
 func FitMid(s string, width int) string {
-	r := []rune(s)
 	if width <= 0 {
 		return ""
 	}
-	if len(r) <= width {
-		return s + strings.Repeat(" ", width-len(r))
+	w := ansi.StringWidth(s)
+	if w <= width {
+		return s + strings.Repeat(" ", width-w)
 	}
 	if width < 5 {
 		return Fit(s, width)
 	}
-	head := width / 2
-	tail := width - 1 - head
-	return string(r[:head]) + "…" + string(r[len(r)-tail:])
+	head := ansi.Truncate(s, width/2, "")
+	r := []rune(s)
+	tailW, i := width-1-ansi.StringWidth(head), len(r)
+	for i > 0 && ansi.StringWidth(string(r[i-1:])) <= tailW {
+		i--
+	}
+	return Fit(head+"…"+string(r[i:]), width)
 }
 
 // Mix blends colour over base (both #rrggbb), amount 0..1 of colour: a tint for diff backgrounds.

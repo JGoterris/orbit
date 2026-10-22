@@ -146,3 +146,38 @@ func TestExternalRunnerDoesNothing(t *testing.T) {
 		t.Fatal("an external runner must be a no-op")
 	}
 }
+
+func TestProcessLogsSurviveARestartAndRotate(t *testing.T) {
+	dir := t.TempDir()
+	files := state.Files(filepath.Join(dir, "c"), "p")
+	run := func(cmd string) *events {
+		ev := &events{}
+		r := newProcess(procSvc(cmd, dir), ev.cb(), files)
+		if err := r.Start(); err != nil {
+			t.Fatal(err)
+		}
+		until(t, "the exit", ev.exited)
+		r.stopTails()
+		return ev
+	}
+	run("echo first run")
+	second := run("echo second run")
+	if data, _ := os.ReadFile(files.Out); string(data) != "first run\nsecond run\n" {
+		t.Fatalf("log file = %q", data)
+	}
+	for _, l := range second.lines {
+		if l == "first run" {
+			t.Fatal("the second run replayed the first one's output")
+		}
+	}
+
+	defer func(old int64) { maxLogSize = old }(maxLogSize)
+	maxLogSize = 5
+	run("echo third run")
+	if data, _ := os.ReadFile(files.Out); string(data) != "third run\n" {
+		t.Fatalf("after rotating, log file = %q", data)
+	}
+	if data, _ := os.ReadFile(strings.TrimSuffix(files.Out, ".log") + ".1.log"); !strings.HasPrefix(string(data), "first run") {
+		t.Fatalf("rotated file = %q", data)
+	}
+}

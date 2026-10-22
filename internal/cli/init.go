@@ -193,9 +193,13 @@ func RunInit(dir string, force bool) int {
 	if abs, err := filepath.Abs(dir); err == nil {
 		dir = abs
 	}
+	if st, err := os.Stat(dir); err != nil || !st.IsDir() {
+		errorln(fmt.Sprintf("no such directory: %s", dir))
+		return 1
+	}
 	target := filepath.Join(dir, "orbit.yaml")
 	if fileExists(target) && !force {
-		fmt.Fprintln(os.Stderr, red(target+" already exists (use --force to overwrite)"))
+		errorln(target + " already exists (use --force to overwrite)")
 		return 1
 	}
 	var found []detected
@@ -206,7 +210,7 @@ func RunInit(dir string, force bool) int {
 		text, _ := os.ReadFile(compose)
 		svcs, err := config.ParseComposeFile(compose, string(text), "", nil)
 		if err != nil {
-			fmt.Fprintln(os.Stderr, red(err.Error()))
+			errorln(err.Error())
 			return 1
 		}
 		composeServices = svcs
@@ -257,12 +261,12 @@ func RunInit(dir string, force bool) int {
 	enc := yaml.NewEncoder(&buf)
 	enc.SetIndent(2)
 	if err := enc.Encode(doc); err != nil {
-		fmt.Fprintln(os.Stderr, red(err.Error()))
+		errorln(err.Error())
 		return 1
 	}
 	enc.Close()
 	if err := os.WriteFile(target, []byte(strings.Join(header, "\n")+"\n\n"+buf.String()), 0o644); err != nil {
-		fmt.Fprintln(os.Stderr, red(err.Error()))
+		errorln(err.Error())
 		return 1
 	}
 	fmt.Println(green("wrote " + target))

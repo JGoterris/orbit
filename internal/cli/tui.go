@@ -4,10 +4,12 @@ import (
 	"fmt"
 	"os"
 	"os/signal"
+	"runtime"
 	"sync"
 	"syscall"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/x/term"
 
 	"github.com/JGoterris/orbit/internal/config"
 	"github.com/JGoterris/orbit/internal/core/supervisor"
@@ -30,8 +32,30 @@ type TUIOptions struct {
 	Bare bool
 }
 
+// terminalAvailable reports whether Bubble Tea will find a terminal to read keys from.
+func terminalAvailable() bool {
+	if term.IsTerminal(os.Stdin.Fd()) {
+		return true
+	}
+	name := "/dev/tty"
+	if runtime.GOOS == "windows" {
+		name = "CONIN$"
+	}
+	f, err := os.Open(name)
+	if err != nil {
+		return false
+	}
+	f.Close()
+	return true
+}
+
 // RunTUI opens the interface for a project (`orbit`).
 func RunTUI(cfg *config.OrbitConfig, opts TUIOptions) int {
+	// before spawning a daemon that would be left behind
+	if !terminalAvailable() {
+		errorln("the interface needs a terminal (without one: `orbit up -d`, `orbit status`, `orbit logs`)")
+		return 1
+	}
 	custom, customNames, themeErrors := theme.LoadCustom()
 	themes := map[string]theme.Palette{}
 	order := append([]string(nil), theme.Builtin...)
@@ -59,7 +83,7 @@ func RunTUI(cfg *config.OrbitConfig, opts TUIOptions) int {
 	if useDaemon {
 		remote, err := ipc.ConnectProject(cfg)
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "\x1b[31morbit:\x1b[0m %v\n", err)
+			errorln(err.Error())
 			return 1
 		}
 		// shown once as a toast: an old daemon keeps running its old code after an upgrade
@@ -74,7 +98,7 @@ func RunTUI(cfg *config.OrbitConfig, opts TUIOptions) int {
 	} else {
 		local := supervisor.New(cfg, supervisor.Options{})
 		if holder := state.AcquireLock(local.StateDir()); holder != 0 {
-			fmt.Fprintf(os.Stderr, "\x1b[31morbit:\x1b[0m already open for this project (pid %d). Quit it first.\n", holder)
+			errorln(fmt.Sprintf("already open for this project (pid %d). Quit it first.", holder))
 			return 1
 		}
 		first = local
@@ -221,7 +245,7 @@ func RunTUI(cfg *config.OrbitConfig, opts TUIOptions) int {
 		return 0
 	}
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "\x1b[31morbit:\x1b[0m %v\n", err)
+		errorln(err.Error())
 		return 1
 	}
 	return 0
@@ -254,7 +278,7 @@ func RunProjects() int {
 			mark = "★"
 		}
 		label := mark + " " + p.Name
-		width = max(width, len([]rune(label)))
+		width = max(width, cellWidth(label))
 		rows = append(rows, row{label, p.Path, joinSpace(flags)})
 	}
 	for _, r := range rows {

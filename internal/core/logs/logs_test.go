@@ -62,6 +62,8 @@ func TestCleanLine(t *testing.T) {
 		"10%\r50%\r100%":             "100%",
 		"a\tb":                       "a  b",
 		"bell\x07 and \x1b]0;t\x07x": "bell and x",
+		"$ echo a\necho b\n":         "$ echo a echo b",
+		"a\r\nb":                     "a b",
 	}
 	for in, want := range cases {
 		if got := CleanLine(in); got != want {

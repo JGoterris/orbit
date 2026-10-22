@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/charmbracelet/x/ansi"
+
 	"github.com/JGoterris/orbit/internal/core/logs"
 	"github.com/JGoterris/orbit/internal/ui/theme"
 )
@@ -23,7 +25,7 @@ func (m *Model) newLogLayout(lines []logs.Line, w, h int, perService bool) logLa
 	if !perService {
 		longest := 4
 		for _, n := range names {
-			longest = max(longest, len([]rune(n)))
+			longest = max(longest, ansi.StringWidth(n))
 		}
 		prefixW = min(14, longest) + 1
 	}
@@ -54,11 +56,33 @@ func (m *Model) bodyOf(l logs.Line) string {
 	return fmt.Sprintf("▸ %s ⋯ %s+%d lines", l.Text, summary, t.Frames)
 }
 
+// wrapCells splits s into rows of at most width columns.
+func wrapCells(s string, width int) []string {
+	if width <= 0 || ansi.StringWidth(s) <= width {
+		return []string{s}
+	}
+	var rows []string
+	var row strings.Builder
+	w := 0
+	for _, r := range s {
+		g := string(r)
+		gw := ansi.StringWidth(g)
+		if w+gw > width && w > 0 {
+			rows = append(rows, row.String())
+			row.Reset()
+			w = 0
+		}
+		row.WriteString(g)
+		w += gw
+	}
+	return append(rows, row.String())
+}
+
 func (lay logLayout) rowsOf(m *Model, l logs.Line) int {
 	if !m.wrap {
 		return 1
 	}
-	return max(1, (len([]rune(m.bodyOf(l)))+lay.textW-1)/lay.textW)
+	return len(wrapCells(m.bodyOf(l), lay.textW))
 }
 
 // window is the slice of lines on screen: first..end, how far back from the bottom it is, and how far it can go.
@@ -158,14 +182,12 @@ func (m *Model) renderLogView(title string, w, h int, focused bool) []string {
 	for k, l := range visible {
 		body := m.bodyOf(l)
 		idx := first + k
-		r := []rune(body)
-		if !m.wrap || len(r) <= lay.textW {
+		if !m.wrap {
 			shown = append(shown, shownRow{l, idx, 0, theme.Fit(body, lay.textW)})
 			continue
 		}
-		for at, i := 0, 0; at < len(r); at, i = at+lay.textW, i+1 {
-			chunk := string(r[at:min(len(r), at+lay.textW)])
-			shown = append(shown, shownRow{l, idx, i, chunk + strings.Repeat(" ", max(0, lay.textW-len([]rune(chunk))))})
+		for i, chunk := range wrapCells(body, lay.textW) {
+			shown = append(shown, shownRow{l, idx, i, theme.Fit(chunk, lay.textW)})
 		}
 	}
 	if len(shown) > lay.height {

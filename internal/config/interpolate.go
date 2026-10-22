@@ -1,6 +1,7 @@
 package config
 
 import (
+	"fmt"
 	"regexp"
 	"strings"
 )
@@ -32,30 +33,55 @@ func ParseDotEnv(text string) map[string]string {
 	return out
 }
 
-var varRe = regexp.MustCompile(`\$\{([A-Za-z_][A-Za-z0-9_]*)(?::-([^}]*))?\}`)
+var varRe = regexp.MustCompile(`\$\{([A-Za-z_][A-Za-z0-9_]*)(?:(:?[-?+])([^}]*))?\}`)
 
-// Interpolate replaces `${VAR}` and `${VAR:-default}` in every string of a YAML value (an unset or empty variable
-// takes the default, or ""). It returns a new value.
-func Interpolate(value any, vars map[string]string) any {
+// Interpolate expands ${VAR} in every string of a YAML value with compose's syntax (:-, -, :?, ?, :+, +). It
+// returns a new value.
+func Interpolate(value any, vars map[string]string) any { return interpolateAt(value, vars, "") }
+
+func interpolateAt(value any, vars map[string]string, path string) any {
 	switch x := value.(type) {
 	case string:
 		return varRe.ReplaceAllStringFunc(x, func(s string) string {
 			m := varRe.FindStringSubmatch(s)
-			if v := vars[m[1]]; v != "" {
-				return v
+			v, set := vars[m[1]]
+			// with a colon, an empty value counts as unset
+			present := set && (v != "" || !strings.HasPrefix(m[2], ":"))
+			switch strings.TrimPrefix(m[2], ":") {
+			case "-":
+				if !present {
+					return m[3]
+				}
+			case "?":
+				if !present {
+					msg := "required variable " + m[1] + " is missing a value"
+					if m[3] != "" {
+						msg += ": " + m[3]
+					}
+					fail(msg, path)
+				}
+			case "+":
+				if present {
+					return m[3]
+				}
+				return ""
 			}
-			return m[2]
+			return v
 		})
 	case []any:
 		out := make([]any, len(x))
 		for i, v := range x {
-			out[i] = Interpolate(v, vars)
+			out[i] = interpolateAt(v, vars, fmt.Sprintf("%s[%d]", path, i))
 		}
 		return out
 	case *Map:
 		out := NewMap()
 		for _, k := range x.keys {
-			out.Set(k, Interpolate(x.vals[k], vars))
+			at := k
+			if path != "" {
+				at = path + "." + k
+			}
+			out.Set(k, interpolateAt(x.vals[k], vars, at))
 		}
 		return out
 	}

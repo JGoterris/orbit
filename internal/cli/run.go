@@ -47,7 +47,7 @@ type prefixer struct {
 func newPrefixer(names []string) *prefixer {
 	w := 0
 	for _, n := range names {
-		w = max(w, len([]rune(n)))
+		w = max(w, cellWidth(n))
 	}
 	return &prefixer{names: names, width: w}
 }
@@ -113,7 +113,7 @@ func expand(cfg *config.OrbitConfig, names []string) []string {
 // RunUp starts services headless, streaming their logs, until interrupted (`orbit up`).
 func RunUp(cfg *config.OrbitConfig, names []string, detach bool) int {
 	if n, bad := unknownTargets(cfg, names); bad {
-		fmt.Fprintln(os.Stderr, red(fmt.Sprintf("unknown service or group %q", n)))
+		errorln(fmt.Sprintf("unknown service or group %q", n))
 		return 1
 	}
 	if ipc.IsServed(cfg) {
@@ -122,7 +122,7 @@ func RunUp(cfg *config.OrbitConfig, names []string, detach bool) int {
 	// -d: the services run in an `orbit daemon` and this returns once they are ready
 	if detach {
 		if err := ipc.EnsureDaemon(cfg); err != nil {
-			fmt.Fprintln(os.Stderr, red(err.Error()))
+			errorln(err.Error())
 			return 1
 		}
 		return upRunning(cfg, names, true)
@@ -213,11 +213,14 @@ func RunDown(cfg *config.OrbitConfig) int {
 	code := 0
 	dir := state.Dir(cfg)
 	// an orbit that is running (TUI, `orbit up` or daemon) answers on its socket: ask it to stop everything and quit
+	if served := ipc.ServedDir(cfg); served != "" {
+		dir = served
+	}
 	if client := connectIPC(cfg); client != nil {
 		err := client.Call(ipc.MethodShutdown, map[string]any{"how": "stop"}, nil)
 		client.Close()
 		if err != nil {
-			fmt.Fprintln(os.Stderr, red(err.Error()))
+			errorln(err.Error())
 			return 1
 		}
 		for i := 0; i < 300; i++ {
@@ -228,17 +231,28 @@ func RunDown(cfg *config.OrbitConfig) int {
 			again.Close()
 			time.Sleep(100 * time.Millisecond)
 		}
-		if left := connectIPC(cfg); left != nil {
-			left.Close()
-			fmt.Fprintln(os.Stderr, red("orbit is taking too long to stop"))
+		// the daemon closes its socket before stopping the services: wait for the lock too
+		for i := 0; i < 300 && state.ReadLock(dir) != 0; i++ {
+			time.Sleep(100 * time.Millisecond)
+		}
+		if left := connectIPC(cfg); left != nil || state.ReadLock(dir) != 0 {
+			if left != nil {
+				left.Close()
+			}
+			errorln("orbit is taking too long to stop")
 			return 1
 		}
 		fmt.Println(green("orbit stopped"))
 		return 0
 	}
 	if holder := state.ReadLock(dir); holder != 0 && holder != os.Getpid() {
-		fmt.Fprintln(os.Stderr, red(fmt.Sprintf("orbit is open for this project (pid %d) but does not answer: quit it first, or stop services from there", holder)))
+		errorln(fmt.Sprintf("orbit is open for this project (pid %d) but does not answer: quit it first, or stop services from there", holder))
 		return 1
+	}
+	said := false
+	report := func(format string, a ...any) {
+		said = true
+		printf(format, a...)
 	}
 	// processes a previous orbit session left running
 	saved := state.Read(dir)
@@ -246,14 +260,29 @@ func RunDown(cfg *config.OrbitConfig) int {
 		svc := cfg.Services[name]
 		entry, ok := saved.Services[name]
 		if !ok || svc.Type != config.TypeProcess {
+			delete(saved.Services, name)
 			continue
 		}
 		r := runner.New(svc, cfg.Name, runner.Callbacks{Log: func(logs.Stream, string) {}, Exit: func(*int, string) {}}, state.Files(dir, name))
 		if attached, _ := r.Attach(&entry); attached {
 			r.Stop(svc.StopTimeout)
-			printf("%s %s %s\n", padEnd(name, 16), green("stopped"), dim(fmt.Sprintf("pid %d", entry.Pid)))
+			report("%s %s %s\n", padEnd(name, 16), green("stopped"), dim(fmt.Sprintf("pid %d", entry.Pid)))
 		}
 		delete(saved.Services, name)
+	}
+	// services removed from orbit.yaml since they were started
+	for name, entry := range saved.Services {
+		if cfg.Services[name] != nil {
+			continue
+		}
+		switch {
+		case entry.Pid != 0 && runner.StopLeftover(name, entry, state.Files(dir, name)):
+			report("%s %s %s\n", padEnd(name, 16), green("stopped"), dim(fmt.Sprintf("pid %d, no longer in orbit.yaml", entry.Pid)))
+			delete(saved.Services, name)
+		case entry.Pid == 0 && runner.RemoveLeftoverContainer(cfg.Name, name):
+			report("%s %s %s\n", padEnd(name, 16), green("removed"), dim(runner.ContainerName(cfg.Name, name)+", no longer in orbit.yaml"))
+			delete(saved.Services, name)
+		}
 	}
 	state.Write(dir, saved)
 	for _, name := range cfg.Order {
@@ -261,12 +290,12 @@ func RunDown(cfg *config.OrbitConfig) int {
 		switch svc.Type {
 		case config.TypeDocker:
 			cname := runner.ContainerName(cfg.Name, svc.Name)
-			err := exec.Command("docker", "rm", "-f", cname).Run()
-			status := green("removed")
-			if err != nil {
-				status = dim("not running")
+			// docker rm -f also succeeds when there is no container
+			status := dim("not running")
+			if exec.Command("docker", "inspect", "-f", "{{.Id}}", cname).Run() == nil && exec.Command("docker", "rm", "-f", cname).Run() == nil {
+				status = green("removed")
 			}
-			printf("%s %s %s\n", padEnd(svc.Name, 16), status, dim(cname))
+			report("%s %s %s\n", padEnd(svc.Name, 16), status, dim(cname))
 		case config.TypeCompose:
 			argv := []string{"compose", "-f", svc.ComposeFile}
 			if svc.ComposeProject != "" {
@@ -280,12 +309,15 @@ func RunDown(cfg *config.OrbitConfig) int {
 				if msg == "" {
 					msg = "error"
 				}
-				printf("%s %s\n", padEnd(svc.Name, 16), red(msg))
+				report("%s %s\n", padEnd(svc.Name, 16), red(msg))
 				code = 1
 			} else {
-				printf("%s %s\n", padEnd(svc.Name, 16), green("stopped"))
+				report("%s %s\n", padEnd(svc.Name, 16), green("stopped"))
 			}
 		}
+	}
+	if !said {
+		fmt.Println(dim("nothing was running"))
 	}
 	return code
 }
@@ -311,7 +343,7 @@ type jsonLine struct {
 // RunLogs prints recent logs, optionally following them (`orbit logs`).
 func RunLogs(cfg *config.OrbitConfig, names []string, opts LogsOptions) int {
 	if n, bad := unknownTargets(cfg, names); bad {
-		fmt.Fprintln(os.Stderr, red(fmt.Sprintf("unknown service or group %q", n)))
+		errorln(fmt.Sprintf("unknown service or group %q", n))
 		return 1
 	}
 	targets := cfg.Order
@@ -334,10 +366,22 @@ func RunLogs(cfg *config.OrbitConfig, names []string, opts LogsOptions) int {
 	emit := func(service string, stream logs.Stream, raw string) {
 		show(logs.Line{Service: service, Stream: stream, Text: logs.CleanLine(raw)})
 	}
-	// an orbit that is running has everything in memory, system lines and container output included
-	if opts.Follow {
+	// a running orbit has the logs in memory, already interleaved (--since needs docker)
+	if opts.Follow || opts.Since == "" {
 		if client := connectIPC(cfg); client != nil {
-			return followLive(client, targets, opts, show)
+			if opts.Follow {
+				return followLive(client, targets, opts, show)
+			}
+			history, err := liveHistory(client, targets, opts.Lines)
+			client.Close()
+			if err != nil {
+				errorln(err.Error())
+				return 1
+			}
+			for _, l := range history {
+				show(l)
+			}
+			return 0
 		}
 	}
 	dir := state.Dir(cfg)
@@ -357,8 +401,9 @@ func RunLogs(cfg *config.OrbitConfig, names []string, opts LogsOptions) int {
 				fmt.Fprintln(os.Stderr, yellow("--since is ignored for process services (their log files have no timestamps)"))
 			}
 			files := state.Files(dir, name)
-			out := logs.ReadTail(files.Out, opts.Lines, 0)
+			// no timestamps in the files: stdout, then stderr
 			errl := logs.ReadTail(files.Err, opts.Lines, 0)
+			out := logs.ReadTail(files.Out, opts.Lines-len(errl), 0)
 			if len(out) == 0 && len(errl) == 0 {
 				emit(name, logs.System, "no logs")
 			}

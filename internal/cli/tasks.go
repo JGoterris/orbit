@@ -30,7 +30,7 @@ func RunTask(cfg *config.OrbitConfig, name string, args []string) int {
 		} else if len(cfg.TaskOrder) > 0 {
 			msg += " (tasks: " + strings.Join(cfg.TaskOrder, ", ") + ")"
 		}
-		fmt.Fprintln(os.Stderr, red(msg))
+		errorln(msg)
 		return 1
 	}
 	if len(task.DependsOn) > 0 {
@@ -40,7 +40,7 @@ func RunTask(cfg *config.OrbitConfig, name string, args []string) int {
 	}
 	spec, err := tasks.Command(task, args)
 	if err != nil {
-		fmt.Fprintln(os.Stderr, red(err.Error()))
+		errorln(err.Error())
 		return 1
 	}
 	cmd := exec.Command(spec.Argv[0], spec.Argv[1:]...)
@@ -53,7 +53,7 @@ func RunTask(cfg *config.OrbitConfig, name string, args []string) int {
 	restoreTerminal := prepareTask(cmd)
 	defer restoreTerminal()
 	if err := cmd.Start(); err != nil {
-		fmt.Fprintln(os.Stderr, red(fmt.Sprintf("task %s could not start: %v", name, err)))
+		errorln(fmt.Sprintf("task %s could not start: %v", name, err))
 		return 1
 	}
 	// orbit waits for the task instead of dying first. What reaches orbit alone (a kill, a closed terminal) is passed
@@ -90,8 +90,8 @@ func startTaskDeps(cfg *config.OrbitConfig, task *config.TaskConfig) int {
 	deps := strings.Join(task.DependsOn, " ")
 	client := connectIPC(cfg)
 	if client == nil {
-		fmt.Fprintln(os.Stderr, red(fmt.Sprintf("%s needs %s: start %s with `orbit up %s` (or open orbit) and run it again",
-			task.Name, strings.Join(task.DependsOn, ", "), pluralWord(len(task.DependsOn), "it", "them"), deps)))
+		errorln(fmt.Sprintf("%s needs %s: start %s with `orbit up %s` (or open orbit) and run it again",
+			task.Name, strings.Join(task.DependsOn, ", "), pluralWord(len(task.DependsOn), "it", "them"), deps))
 		return 1
 	}
 	defer client.Close()
@@ -100,11 +100,11 @@ func startTaskDeps(cfg *config.OrbitConfig, task *config.TaskConfig) int {
 	}
 	fmt.Println(dim("» starting " + strings.Join(task.DependsOn, ", ")))
 	if err := client.Call(ipc.MethodStart, map[string]any{"services": task.DependsOn}, &res); err != nil {
-		fmt.Fprintln(os.Stderr, red(err.Error()))
+		errorln(err.Error())
 		return 1
 	}
 	if !res.OK {
-		fmt.Fprintln(os.Stderr, red(task.Name+": some of its services did not become ready (see `orbit logs`)"))
+		errorln(task.Name + ": some of its services did not become ready (see `orbit logs`)")
 		return 1
 	}
 	return 0
@@ -124,7 +124,7 @@ func listTasks(cfg *config.OrbitConfig) int {
 	}
 	width := 0
 	for _, n := range cfg.TaskOrder {
-		width = max(width, len([]rune(n)))
+		width = max(width, cellWidth(n))
 	}
 	for _, n := range cfg.TaskOrder {
 		t := cfg.Tasks[n]

@@ -62,6 +62,12 @@ func (t *FileTail) Start(backlog *Backlog) {
 	}()
 }
 
+// StartAt begins following at offset, without replaying anything before it.
+func (t *FileTail) StartAt(offset int64) {
+	t.offset = offset
+	t.Start(nil)
+}
+
 func (t *FileTail) read() {
 	t.mu.Lock()
 	defer t.mu.Unlock()

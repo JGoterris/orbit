@@ -3,6 +3,8 @@ package cli
 import (
 	"fmt"
 	"os"
+
+	xansi "github.com/charmbracelet/x/ansi"
 )
 
 var useColor = func() bool {
@@ -29,9 +31,15 @@ var (
 	cyan   = ansi("36")
 )
 
-// padEnd pads s with spaces to width runes.
+// errorln prints msg to stderr with the orbit: prefix.
+func errorln(msg string) { fmt.Fprintln(os.Stderr, red("orbit:")+" "+msg) }
+
+// cellWidth is the width of s in terminal columns.
+func cellWidth(s string) int { return xansi.StringWidth(s) }
+
+// padEnd pads s with spaces to width columns.
 func padEnd(s string, width int) string {
-	n := len([]rune(s))
+	n := cellWidth(s)
 	for ; n < width; n++ {
 		s += " "
 	}

@@ -40,8 +40,11 @@ func TestStateRoundTrip(t *testing.T) {
 }
 
 func TestFilesNames(t *testing.T) {
+	if f := Files("/d", "my-svc"); f.Out != filepath.Join("/d", "logs", "my-svc.out.log") || f.Exit != filepath.Join("/d", "logs", "my-svc.exit") {
+		t.Fatalf("files = %+v", f)
+	}
 	f := Files("/d", "my svc")
-	if f.Out != filepath.Join("/d", "logs", "my-svc.out.log") || f.Exit != filepath.Join("/d", "logs", "my-svc.exit") {
+	if !strings.HasPrefix(filepath.Base(f.Out), "my-svc-") || f.Out == Files("/d", "my-svc").Out || f.Out == Files("/d", "my/svc").Out {
 		t.Fatalf("files = %+v", f)
 	}
 }

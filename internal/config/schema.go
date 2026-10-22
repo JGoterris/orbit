@@ -184,8 +184,14 @@ func parseDuration(v any, path string, fallback int64) int64 {
 	case nil:
 		return fallback
 	case int64:
+		if x < 0 {
+			fail(fmt.Sprintf("invalid duration %d (use e.g. 500ms, 2s, 1m)", x), path)
+		}
 		return x
 	case float64:
+		if x < 0 || math.IsNaN(x) || math.IsInf(x, 0) {
+			fail(fmt.Sprintf("invalid duration %s (use e.g. 500ms, 2s, 1m)", jsonOf(x)), path)
+		}
 		return int64(math.Round(x))
 	case string:
 		m := durationRe.FindStringSubmatch(strings.TrimSpace(x))

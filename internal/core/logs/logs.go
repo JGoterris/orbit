@@ -67,6 +67,8 @@ func StripANSI(s string) string { return ansiRe.ReplaceAllString(s, "") }
 
 // CleanLine cleans a raw line: ANSI sequences, carriage-return progress bars, tabs and control characters.
 func CleanLine(raw string) string {
+	// one log line, one row (e.g. a multi-line cmd)
+	raw = strings.NewReplacer("\r\n", " ", "\n", " ").Replace(strings.TrimRight(raw, "\r\n"))
 	s := StripANSI(raw)
 	if i := strings.LastIndex(s, "\r"); i != -1 {
 		s = s[i+1:]

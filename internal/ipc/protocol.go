@@ -69,9 +69,11 @@ const (
 
 // Hello is the answer to the first request: who is serving and what.
 type Hello struct {
-	Protocol int                 `json:"protocol"`
-	Version  string              `json:"version"`
-	Pid      int                 `json:"pid"`
+	Protocol int    `json:"protocol"`
+	Version  string `json:"version"`
+	Pid      int    `json:"pid"`
+	// Daemon is false for a TUI (--no-daemon) or `orbit up`
+	Daemon   bool                `json:"daemon,omitempty"`
 	StateDir string              `json:"stateDir"`
 	Config   *config.OrbitConfig `json:"config"`
 	// Pending: orbit.yaml changed on disk and nobody applied it yet

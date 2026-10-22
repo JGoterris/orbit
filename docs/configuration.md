@@ -231,7 +231,9 @@ inside the `docker-compose.yml`).
 
 The `.env` next to `orbit.yaml` (and the one next to each compose) is used to interpolate `${VAR}`
 in the configuration, just like in docker compose. It is not injected into the services unless you
-put it in `env_file`.
+put it in `env_file`. The forms are compose's: `${VAR}`, `${VAR:-default}` (unset or empty) / `${VAR-default}`
+(unset), `${VAR:?message}` / `${VAR?message}` (loading fails with the message, e.g. for a token that must be set)
+and `${VAR:+alt}` / `${VAR+alt}` (`alt` when it is set). `$$` is left alone, so a shell `$$` in a `cmd` still works.
 
 ## Healthchecks
 

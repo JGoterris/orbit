@@ -679,3 +679,80 @@ func TestDaemonStartsWithTheActiveProfiles(t *testing.T) {
 		t.Fatalf("the daemon loaded profiles %v with services %v", got.Profiles, got.Order)
 	}
 }
+
+func TestRunningOrbitIsFoundAfterTheProjectIsRenamed(t *testing.T) {
+	t.Setenv("XDG_STATE_HOME", t.TempDir())
+	dir := filepath.Join(t.TempDir(), "proj")
+	os.MkdirAll(dir, 0o755)
+	load := func(name string) *config.OrbitConfig {
+		os.WriteFile(filepath.Join(dir, "orbit.yaml"), []byte("name: "+name+"\nservices:\n  w: { cmd: sleep 300, autostart: false }\n"), 0o644)
+		cfg, err := config.LoadConfig(config.LoadOptions{Dir: dir, Env: map[string]string{}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return cfg
+	}
+	before := load("before")
+	t.Cleanup(func() {
+		if pid := state.ReadLock(state.Dir(before)); pid != 0 {
+			syscall.Kill(pid, syscall.SIGKILL)
+		}
+	})
+	if err := EnsureDaemon(before); err != nil {
+		t.Fatal(err)
+	}
+	after := load("after")
+	if got := ServedDir(after); got != state.Dir(before) {
+		t.Fatalf("served dir = %q, want %q", got, state.Dir(before))
+	}
+	r, err := ConnectProject(after)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer r.Dispose()
+	if r.Config().Name != "before" {
+		t.Fatalf("connected to %q", r.Config().Name)
+	}
+	c, err := Connect(SocketPath(ServedDir(after)), time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var hello Hello
+	if c.Call(MethodHello, nil, &hello); !hello.Daemon {
+		t.Fatalf("hello = %+v", hello)
+	}
+	c.Close()
+	var notDaemon Hello
+	if e := setup(t, "tui"); e.client.Call(MethodHello, nil, &notDaemon) != nil || notDaemon.Daemon {
+		t.Fatalf("a plain server says daemon: %+v", notDaemon)
+	}
+	if pid := state.ReadLock(state.Dir(after)); pid != 0 {
+		syscall.Kill(pid, syscall.SIGKILL)
+		t.Fatal("a second daemon was started under the new name")
+	}
+}
+
+func TestRestartOfAGroupLeavesItsStoppedMembersAlone(t *testing.T) {
+	e := setup(t, "restart", svc("a", "sleep 30"), svc("b", "sleep 30", func(c *config.ServiceConfig) { c.Autostart = false }))
+	e.sup.Start("a")
+	pid := e.sup.State("a").Pid
+	var res struct {
+		OK       bool
+		Services []string
+	}
+	if err := e.client.Call(MethodRestart, map[string]any{"services": []string{"all"}}, &res); err != nil || !res.OK {
+		t.Fatalf("restart: %v %+v", err, res)
+	}
+	if !reflect.DeepEqual(res.Services, []string{"a"}) || e.sup.State("a").Pid == pid {
+		t.Fatalf("restarted %v (a: pid %d → %d)", res.Services, pid, e.sup.State("a").Pid)
+	}
+	if st := e.sup.State("b").Status; st != supervisor.Stopped {
+		t.Fatalf("b = %s, the stopped member was started", st)
+	}
+	if err := e.client.Call(MethodRestart, map[string]any{"services": []string{"b"}}, &res); err != nil || !res.OK {
+		t.Fatalf("restart b: %v %+v", err, res)
+	}
+	if st := e.sup.State("b").Status; st != supervisor.Running {
+		t.Fatalf("b = %s, a service named on its own must start", st)
+	}
+}

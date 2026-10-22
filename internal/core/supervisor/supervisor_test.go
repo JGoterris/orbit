@@ -511,6 +511,68 @@ func TestRecycledPidIsNotAdopted(t *testing.T) {
 	syscall.Kill(-pid, syscall.SIGKILL)
 }
 
+func TestProcessOfAServiceRemovedMeanwhileIsStopped(t *testing.T) {
+	dir := t.TempDir()
+	first := New(cfgOf(svc("keep", "sleep 30"), svc("gone", "sleep 30")), Options{StateDir: dir})
+	first.StartMany([]string{"keep", "gone"})
+	gone := first.State("gone").Pid
+	first.Detach()
+
+	second := New(cfgOf(svc("keep", "sleep 30")), Options{StateDir: dir})
+	t.Cleanup(func() { second.Dispose() })
+	second.Init()
+	if !pidGone(gone) {
+		syscall.Kill(-gone, syscall.SIGKILL)
+		t.Fatal("the process of the removed service is still running")
+	}
+	if st := second.State("keep"); st.Status != Running {
+		t.Fatalf("keep = %+v", st)
+	}
+	if _, ok := state.Read(dir).Services["gone"]; ok {
+		t.Fatal("state.json still lists the removed service")
+	}
+}
+
+func TestConcurrentStartsOfADependencyDoNotFailItsDependents(t *testing.T) {
+	for round := 0; round < 5; round++ {
+		var svcs []*config.ServiceConfig
+		for i := 0; i < 30; i++ {
+			svcs = append(svcs, svc(fmt.Sprintf("s%d", i), "sleep 30", func(c *config.ServiceConfig) {
+				if i > 0 {
+					c.DependsOn = []string{fmt.Sprintf("s%d", i-1)}
+				}
+			}))
+		}
+		s := newSup(t, cfgOf(svcs...))
+		s.StartAll()
+		for _, n := range s.Names() {
+			if st := s.State(n); st.Status != Running {
+				t.Fatalf("round %d: %s = %s (%s)", round, n, st.Status, st.Error)
+			}
+		}
+		s.Dispose()
+	}
+}
+
+func TestHealthDetailIsClearedWhenTheServiceStops(t *testing.T) {
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ln.Close()
+	port := ln.Addr().(*net.TCPAddr).Port
+	s := newSup(t, cfgOf(svc("web", "sleep 30", func(c *config.ServiceConfig) {
+		c.Health = &config.HealthCheck{Tcp: fmt.Sprint(port), Interval: 100, Timeout: 300}
+	})))
+	if !s.Start("web") || s.State("web").Health == "" {
+		t.Fatalf("web = %+v", s.State("web"))
+	}
+	s.Stop("web", StopOptions{})
+	if h := s.State("web").Health; h != "" {
+		t.Fatalf("health after stop = %q", h)
+	}
+}
+
 // ---------------------------------------------------------------- external services
 
 func external(name, url string, edit ...func(*config.ServiceConfig)) *config.ServiceConfig {

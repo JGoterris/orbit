@@ -11,7 +11,7 @@ service name can also be a group name from `orbit.yaml`, which expands to its me
 | `orbit up -d [svc…]` | no | Starts the services in the background daemon (starting the daemon if needed), applies pending edits to `orbit.yaml`, and returns once they are ready. Exit code 1 if some did not become ready. |
 | `orbit up [svc…]` | **yes** | Runs the services in this terminal, streaming logs until ctrl+c. Do not use from an agent. |
 | `orbit ctl start [svc…]` | no | Starts services (all autostart ones with no names) and waits until ready. Starts the daemon when nothing runs. |
-| `orbit ctl restart <svc…>` | no | Restarts and waits until ready. Starts the daemon when nothing runs. |
+| `orbit ctl restart <svc…>` | no | Restarts and waits until ready (of a group, only the members that are up; a service named alone starts if it was down). Starts the daemon when nothing runs. |
 | `orbit ctl toggle <svc…>` | no | Starts what is stopped, stops what is running. |
 | `orbit ctl stop [svc…]` | no | Stops services (all with no names). Exit code 1 when nothing runs. |
 | `orbit ctl reload` | no | Applies the edits to `orbit.yaml` to the running orbit; only changed services restart. |
@@ -77,6 +77,8 @@ One object per line:
 ```
 
 - `stream`: `stdout`, `stderr` or `system` (orbit's own messages).
-- `ts` (milliseconds) is only present with `-f`, when the lines come from the running orbit.
+- `ts` (milliseconds) is only present when the lines come from a running orbit (then stdout, stderr and system lines
+  come interleaved, in the order orbit read them, to within a fraction of a second). With nothing running they are read from the log files: each
+  service's stdout first, then its stderr, `-n` lines in all.
 - Without `-f`, a process service prints its recent stdout lines and then its recent stderr lines, so the two
   streams are not interleaved in time.

@@ -83,16 +83,26 @@ func (r *ProcessRunner) Start() error {
 		return err
 	}
 	os.Remove(r.files.Exit)
-	out, err := os.OpenFile(r.files.Out, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o644)
+	// append across restarts so a crash stays readable
+	rotateLog(r.files.Out)
+	rotateLog(r.files.Err)
+	out, err := os.OpenFile(r.files.Out, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
 	if err != nil {
 		return err
 	}
 	defer out.Close()
-	errf, err := os.OpenFile(r.files.Err, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o644)
+	errf, err := os.OpenFile(r.files.Err, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
 	if err != nil {
 		return err
 	}
 	defer errf.Close()
+	// offsets taken before the process can write
+	var from [2]int64
+	for i, f := range []*os.File{out, errf} {
+		if st, err := f.Stat(); err == nil {
+			from[i] = st.Size()
+		}
+	}
 
 	argv, err := r.argv()
 	if err != nil {
@@ -121,7 +131,7 @@ func (r *ProcessRunner) Start() error {
 	exited := r.exited
 	pid := r.pid
 	r.mu.Unlock()
-	r.follow(nil)
+	r.followFrom(from)
 
 	go func() {
 		err := cmd.Wait()
@@ -175,6 +185,26 @@ func signalName(s syscall.Signal) string {
 	return "signal " + strconv.Itoa(int(s))
 }
 
+// maxLogSize: past this, the next start moves the log to <name>.1.log.
+var maxLogSize int64 = 10 << 20
+
+func rotateLog(path string) {
+	if st, err := os.Stat(path); err == nil && st.Size() > maxLogSize {
+		os.Rename(path, strings.TrimSuffix(path, ".log")+".1.log")
+	}
+}
+
+// StopLeftover stops the process of a service no longer in orbit.yaml. It reports whether it was running.
+func StopLeftover(name string, saved state.SavedService, files state.ProcFiles) bool {
+	r := newProcess(&config.ServiceConfig{Name: name, Type: config.TypeProcess},
+		Callbacks{Log: func(logs.Stream, string) {}, Exit: func(*int, string) {}}, files)
+	if attached, _ := r.Attach(&saved); !attached {
+		return false
+	}
+	r.Stop(8_000)
+	return true
+}
+
 func (r *ProcessRunner) Attach(saved *state.SavedService) (bool, error) {
 	if saved == nil || saved.Pid == 0 || !r.isSame(saved.Pid, saved.StartTime) {
 		return false, nil
@@ -202,13 +232,29 @@ func (r *ProcessRunner) Attach(saved *state.SavedService) (bool, error) {
 	return true, nil
 }
 
-func (r *ProcessRunner) follow(b *logs.Backlog) {
-	tails := []*logs.FileTail{
+func (r *ProcessRunner) newTails() []*logs.FileTail {
+	return []*logs.FileTail{
 		logs.NewFileTail(r.files.Out, func(l string) { r.cb.Log(logs.Stdout, l) }),
 		logs.NewFileTail(r.files.Err, func(l string) { r.cb.Log(logs.Stderr, l) }),
 	}
+}
+
+// follow follows the log files, replaying b first (adopted processes).
+func (r *ProcessRunner) follow(b *logs.Backlog) {
+	tails := r.newTails()
 	for _, t := range tails {
 		t.Start(b)
+	}
+	r.mu.Lock()
+	r.tails = tails
+	r.mu.Unlock()
+}
+
+// followFrom follows the log files from the given offsets.
+func (r *ProcessRunner) followFrom(from [2]int64) {
+	tails := r.newTails()
+	for i, t := range tails {
+		t.StartAt(from[i])
 	}
 	r.mu.Lock()
 	r.tails = tails
