@@ -175,6 +175,17 @@ func ConnectProject(cfg *config.OrbitConfig) (*Remote, error) {
 	return nil, fmt.Errorf("the orbit daemon did not start; see %s", filepath.Join(dir, "daemon.log"))
 }
 
+// EnsureDaemon makes sure an orbit serves this project, starting an `orbit daemon` when there is none, and
+// returns once it answers on its socket.
+func EnsureDaemon(cfg *config.OrbitConfig) error {
+	r, err := ConnectProject(cfg)
+	if err != nil {
+		return err
+	}
+	r.Detach()
+	return nil
+}
+
 func isTimeout(err error) bool {
 	var t interface{ Timeout() bool }
 	return errors.As(err, &t) && t.Timeout()

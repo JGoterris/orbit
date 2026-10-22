@@ -1,0 +1,11 @@
+{
+  "name": "orbit",
+  "owner": { "name": "Jesús Goterris", "email": "contact@jgoterris.com" },
+  "plugins": [
+    {
+      "name": "orbit",
+      "source": "./",
+      "description": "Let Claude start, restart and read the logs of the local services orbit runs for a project."
+    }
+  ]
+}

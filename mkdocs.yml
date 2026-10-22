@@ -17,6 +17,7 @@ nav:
   - Git: git.md
   - Themes: themes.md
   - Scripting & editors: scripting.md
+  - AI agents: agents.md
   - Platforms: platforms.md
   - Upgrading from 0.x: upgrading.md
 

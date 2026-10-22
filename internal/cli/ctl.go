@@ -16,7 +16,7 @@ import (
 	"github.com/JGoterris/orbit/internal/state"
 )
 
-const notRunning = "orbit is not running for this project (open it with `orbit` or `orbit up`)"
+const notRunning = "orbit is not running for this project (open it with `orbit`, or `orbit up -d` in the background)"
 
 // connectIPC connects to the orbit that has this project open (TUI, `orbit up` or daemon), if any.
 func connectIPC(cfg *config.OrbitConfig) *ipc.Client {
@@ -197,6 +197,15 @@ func RunCtl(cfg *config.OrbitConfig, args []string, sendConfig bool) int {
 		return 1
 	}
 	client := connectIPC(cfg)
+	if client == nil && action != "stop" {
+		// starting something with nothing running: start the daemon in the background, as `orbit up -d` does
+		if err := ipc.EnsureDaemon(cfg); err != nil {
+			fmt.Fprintln(os.Stderr, red(err.Error()))
+			return 1
+		}
+		fmt.Println(dim("started orbit in the background"))
+		client = connectIPC(cfg)
+	}
 	if client == nil {
 		fmt.Fprintln(os.Stderr, red(notRunning))
 		return 1
@@ -231,7 +240,7 @@ func RunCtl(cfg *config.OrbitConfig, args []string, sendConfig bool) int {
 
 // upRunning is `orbit up` while orbit already runs the project: like `docker compose up` on a running stack, it
 // applies what changed in orbit.yaml (asking first on a terminal) and starts what was asked for.
-func upRunning(cfg *config.OrbitConfig, names []string) int {
+func upRunning(cfg *config.OrbitConfig, names []string, detached bool) int {
 	client := connectIPC(cfg)
 	if client == nil {
 		fmt.Fprintln(os.Stderr, red(notRunning))
@@ -283,7 +292,11 @@ func upRunning(cfg *config.OrbitConfig, names []string) int {
 	} else {
 		fmt.Println(red("some services did not become ready (see `orbit logs`)"))
 	}
-	fmt.Println(dim("orbit is already running for this project: `orbit logs -f` follows the services, `orbit down` stops them"))
+	if detached {
+		fmt.Println(dim("orbit runs in the background: `orbit status` shows the services, `orbit logs` their output, `orbit down` stops them"))
+	} else {
+		fmt.Println(dim("orbit is already running for this project: `orbit logs -f` follows the services, `orbit down` stops them"))
+	}
 	if res.OK {
 		return 0
 	}

@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
 	"os/exec"
@@ -110,13 +111,21 @@ func expand(cfg *config.OrbitConfig, names []string) []string {
 }
 
 // RunUp starts services headless, streaming their logs, until interrupted (`orbit up`).
-func RunUp(cfg *config.OrbitConfig, names []string) int {
+func RunUp(cfg *config.OrbitConfig, names []string, detach bool) int {
 	if n, bad := unknownTargets(cfg, names); bad {
 		fmt.Fprintln(os.Stderr, red(fmt.Sprintf("unknown service or group %q", n)))
 		return 1
 	}
 	if ipc.IsServed(cfg) {
-		return upRunning(cfg, names)
+		return upRunning(cfg, names, detach)
+	}
+	// -d: the services run in an `orbit daemon` and this returns once they are ready
+	if detach {
+		if err := ipc.EnsureDaemon(cfg); err != nil {
+			fmt.Fprintln(os.Stderr, red(err.Error()))
+			return 1
+		}
+		return upRunning(cfg, names, true)
 	}
 	sup := supervisor.New(cfg, supervisor.Options{})
 	stopNotifier := notify.Attach(sup, notify.Options{})
@@ -287,6 +296,16 @@ type LogsOptions struct {
 	Lines  int
 	Grep   string
 	Since  string
+	// JSON prints one JSON object per line instead of `svc │ text`
+	JSON bool
+}
+
+// jsonLine is a log line of `orbit logs --json`; Ts is only known for lines that come from a running orbit.
+type jsonLine struct {
+	Ts      int64       `json:"ts,omitempty"`
+	Service string      `json:"service"`
+	Stream  logs.Stream `json:"stream"`
+	Text    string      `json:"text"`
 }
 
 // RunLogs prints recent logs, optionally following them (`orbit logs`).
@@ -301,20 +320,24 @@ func RunLogs(cfg *config.OrbitConfig, names []string, opts LogsOptions) int {
 	}
 	pf := newPrefixer(cfg.Order)
 	keep := logs.Matcher(opts.Grep)
-	emit := func(service string, stream logs.Stream, raw string) {
-		text := logs.CleanLine(raw)
-		if keep(logs.Line{Service: service, Stream: stream, Text: text}) {
-			pf.print(service, stream, text)
+	show := func(l logs.Line) {
+		if !keep(l) {
+			return
 		}
+		if opts.JSON {
+			b, _ := json.Marshal(jsonLine{Ts: l.Ts, Service: l.Service, Stream: l.Stream, Text: l.Text})
+			printf("%s\n", b)
+			return
+		}
+		pf.print(l.Service, l.Stream, l.Text)
+	}
+	emit := func(service string, stream logs.Stream, raw string) {
+		show(logs.Line{Service: service, Stream: stream, Text: logs.CleanLine(raw)})
 	}
 	// an orbit that is running has everything in memory, system lines and container output included
 	if opts.Follow {
 		if client := connectIPC(cfg); client != nil {
-			return followLive(client, targets, opts, func(l logs.Line) {
-				if keep(l) {
-					pf.print(l.Service, l.Stream, l.Text)
-				}
-			})
+			return followLive(client, targets, opts, show)
 		}
 	}
 	dir := state.Dir(cfg)

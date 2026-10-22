@@ -9,15 +9,18 @@ orbit --up           # TUI starting all autostart services
 orbit --no-daemon    # TUI that runs the services itself (nothing keeps supervising after you quit)
 orbit daemon [dir]   # the background supervisor on its own (the TUI starts it when needed; --idle <min> to auto-quit)
 orbit up [svc|group] # without TUI: starts and shows logs (ctrl+c to stop)
+orbit up -d [svc|group]        # starts them in the background daemon and returns once they are ready
 orbit down           # stops whatever orbit left running; also quits an orbit that is open (TUI or `up`)
 orbit status [--json]          # state of the services of a running orbit (TUI or `orbit up`)
 orbit ctl start|stop|restart|toggle [svc|group…]   # drives a running orbit from another terminal
+                     # (with nothing running, start / restart / toggle start the daemon first)
 orbit ctl reload     # applies the edits made to orbit.yaml to a running orbit
 orbit graph          # prints the dependency graph
 orbit ls             # lists services (and tasks, and profiles)
 orbit run [task] [-- args]   # runs a task of orbit.yaml on this terminal (no task: lists them)
-orbit logs [svc|group…] [-f] [-n 200] [--grep re] [--since 10m]
-                     # prints recent logs without the TUI (works while orbit is open or closed)
+orbit logs [svc|group…] [-f] [-n 200] [--grep re] [--since 10m] [--json]
+                     # prints recent logs without the TUI (works while orbit is open or closed);
+                     # --json prints one {"service","stream","text"} object per line ("ts" too with -f)
 orbit init [dir]     # generates an orbit.yaml by scanning the project
 orbit validate [dir] # checks the orbit.yaml (errors and unknown keys, e.g. a typo like `helth:`); exit code 1 if invalid
 

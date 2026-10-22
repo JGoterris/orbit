@@ -155,7 +155,7 @@ func run(args []string) int {
 		return 1
 	case "up":
 		if cfg, ok := loadAndRemember(); ok {
-			return cli.RunUp(cfg, inv.Rest)
+			return cli.RunUp(cfg, inv.Rest, inv.Options.Detach)
 		}
 		return 1
 	case "down":
@@ -176,6 +176,7 @@ func run(args []string) int {
 		if cfg, ok := load(); ok {
 			return cli.RunLogs(cfg, inv.Rest, cli.LogsOptions{
 				Follow: inv.Options.Follow, Lines: lines, Grep: inv.Options.Grep, Since: inv.Options.Since,
+				JSON: inv.Options.JSON,
 			})
 		}
 		return 1

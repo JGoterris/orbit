@@ -22,11 +22,11 @@ func TestParseArgsOptions(t *testing.T) {
 }
 
 func TestParseArgsShortClusters(t *testing.T) {
-	opts, _, err := ParseArgs([]string{"-fn5", "-u"})
+	opts, _, err := ParseArgs([]string{"-fn5", "-ud"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !opts.Follow || opts.Lines != "5" || !opts.Up {
+	if !opts.Follow || opts.Lines != "5" || !opts.Up || !opts.Detach {
 		t.Fatalf("options = %+v", opts)
 	}
 }

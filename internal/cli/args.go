@@ -10,6 +10,7 @@ import (
 type Options struct {
 	Config   string
 	Up       bool
+	Detach   bool
 	Help     bool
 	Version  bool
 	Force    bool
@@ -34,6 +35,7 @@ type optSpec struct {
 var optSpecs = []optSpec{
 	{long: "config", short: "c", takesValue: true, set: func(o *Options, v string) { o.Config = v }},
 	{long: "up", short: "u", set: func(o *Options, _ string) { o.Up = true }},
+	{long: "detach", short: "d", set: func(o *Options, _ string) { o.Detach = true }},
 	{long: "help", short: "h", set: func(o *Options, _ string) { o.Help = true }},
 	{long: "version", short: "V", set: func(o *Options, _ string) { o.Version = true }},
 	{long: "force", set: func(o *Options, _ string) { o.Force = true }},

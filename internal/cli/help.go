@@ -7,11 +7,12 @@ usage
   orbit [dir]                open the TUI for the orbit.yaml found in dir (or above)
   orbit open <project>       open a remembered project by name or path (P inside orbit switches)
   orbit projects             list the projects orbit remembers
-  orbit up [service…]        start services headless, streaming logs (ctrl+c stops)
-  orbit logs [service…]      print recent logs (-f to follow, -n lines, --grep, --since)
+  orbit up [service…]        start services headless, streaming logs (ctrl+c stops; -d runs them in the background)
+  orbit logs [service…]      print recent logs (-f to follow, -n lines, --grep, --since, --json)
   orbit down                 stop everything orbit left running (also quits an orbit that is open)
   orbit status [--json]      show the state of the services of an orbit that is running
-  orbit ctl <action> [svc…]  start|stop|restart|toggle services of a running orbit (no svc: start/stop all)
+  orbit ctl <action> [svc…]  start|stop|restart|toggle services of a running orbit (no svc: start/stop all;
+                             with nothing running, start, restart and toggle start the daemon first)
   orbit ctl reload           apply the edits made to orbit.yaml to a running orbit (restarts only what changed)
   orbit run [task] [-- args] run a task of orbit.yaml (no task: list them); args go to the task
   orbit graph                print the dependency graph
@@ -25,8 +26,9 @@ options
   -c, --config <file>        use a specific config file
       --profile <names>      activate profiles of orbit.yaml (a,b or repeat the flag); it is remembered for the project
       --no-profiles          deactivate every profile (ORBIT_PROFILES and the saved selection are ignored too)
+  -d, --detach               (up) start the services in an orbit daemon and return once they are ready
   -f, --follow               (logs) keep streaming new lines
-      --json                 (status) machine-readable output
+      --json                 (status, logs) machine-readable output (logs: one JSON object per line)
   -n, --lines <n>            (logs) lines per service, default 200
       --grep <regex>         (logs) only lines matching the regex
       --since <dur>          (logs) docker/compose only, e.g. 10m, 2h
