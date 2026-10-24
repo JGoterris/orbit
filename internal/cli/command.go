@@ -7,7 +7,7 @@ import (
 )
 
 // Subcommands are the words that select a command; anything else in first position is the TUI's directory.
-var Subcommands = []string{"up", "down", "logs", "graph", "ls", "init", "validate", "open", "projects", "status", "ctl", "daemon", "run"}
+var Subcommands = []string{"up", "down", "logs", "graph", "ls", "init", "validate", "open", "projects", "status", "ctl", "daemon", "run", "update"}
 
 // Invocation is a parsed command line: which command, its arguments and the directory it works on.
 type Invocation struct {

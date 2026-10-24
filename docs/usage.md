@@ -35,6 +35,24 @@ neither, the TUI opens with no services and the project picker (other commands r
 The TUI opens with a short animation of the logo; any key skips it. To turn it off, set `"splash": false` in
 `~/.config/orbit/config.json` (it is also left out with `NO_COLOR`).
 
+## Updating
+
+`orbit update` updates orbit through the channel it was installed with:
+
+- **Homebrew**: `brew update` and `brew upgrade JGoterris/tap/orbit` (the full name, because other packages are called orbit).
+- **go install**: `go install github.com/JGoterris/orbit/cmd/orbit@latest`.
+- **apt / rpm**: prints `sudo apt update && sudo apt install --only-upgrade orbit` (or the dnf one); orbit never runs sudo.
+  If the package that owns the binary is not the one from JGoterris, nothing is touched.
+- **a binary from GitHub Releases**: downloads the archive of your platform, checks it against `checksums.txt` and
+  replaces the executable.
+
+`orbit update --check` only reports whether there is a newer version (exit code 1 if so). A daemon that is already
+running keeps the old version until `orbit down`.
+
+The TUI shows a toast when a newer release exists. It asks GitHub at most once a day, in the background, and only the
+TUI does (`up`, `logs`, `status`... never). To turn it off, set `"updateCheck": false` in `~/.config/orbit/config.json`
+or define `ORBIT_NO_UPDATE_CHECK`.
+
 See [keys.md](keys.md) for the keyboard shortcuts.
 
 ## Editing `orbit.yaml` while running

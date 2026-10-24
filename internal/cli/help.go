@@ -19,6 +19,7 @@ usage
   orbit ls                   list services
   orbit init [dir]           generate an orbit.yaml by scanning the project
   orbit validate [dir]       check the orbit.yaml (errors and unknown keys); exit code 1 if invalid
+  orbit update [--check]     update orbit through the channel it was installed with (brew, apt, go, binary)
   orbit daemon [dir]         run the supervisor of a project in the background, without UI (the TUI starts it
                              by itself and reconnects to it, so closing the terminal does not stop anything)
 
@@ -35,6 +36,7 @@ options
   -u, --up                   (TUI) start all autostart services on launch
       --no-daemon            (TUI) run the services inside the TUI itself, as before
       --idle <min>           (daemon) quit after this many minutes with nothing running and nobody connected
+      --check                (update) only say whether there is a newer version (exit code 1 if so)
   -V, --version              show the version
   -h, --help                 show this help
 `

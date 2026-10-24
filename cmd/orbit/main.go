@@ -61,6 +61,10 @@ func run(args []string) int {
 		return 0
 	}
 
+	if inv.Sub == "update" {
+		return cli.RunUpdate(inv.Options.Check, version != "dev")
+	}
+
 	// `orbit open <project>` opens a remembered project by name or path
 	if inv.Sub == "open" {
 		entry, err := projects.Find(inv.Rest[0], projects.Read())

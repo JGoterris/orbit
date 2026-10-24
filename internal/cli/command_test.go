@@ -76,6 +76,11 @@ func TestParseSubcommands(t *testing.T) {
 		t.Fatalf("up: %+v, %v", inv, err)
 	}
 
+	inv, err = Parse([]string{"update", "--check"})
+	if err != nil || inv.Sub != "update" || !inv.Options.Check {
+		t.Fatalf("update: %+v, %v", inv, err)
+	}
+
 	inv, err = Parse([]string{dir})
 	if err != nil || inv.Sub != "" || inv.Dir != dir {
 		t.Fatalf("tui: %+v, %v", inv, err)

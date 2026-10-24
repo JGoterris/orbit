@@ -1,12 +1,14 @@
 package cli
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"os/signal"
 	"runtime"
 	"sync"
 	"syscall"
+	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/x/term"
@@ -15,6 +17,7 @@ import (
 	"github.com/JGoterris/orbit/internal/core/supervisor"
 	"github.com/JGoterris/orbit/internal/ipc"
 	"github.com/JGoterris/orbit/internal/projects"
+	"github.com/JGoterris/orbit/internal/selfupdate"
 	"github.com/JGoterris/orbit/internal/session"
 	"github.com/JGoterris/orbit/internal/state"
 	"github.com/JGoterris/orbit/internal/ui"
@@ -73,6 +76,19 @@ func RunTUI(cfg *config.OrbitConfig, opts TUIOptions) int {
 	if _, ok := themes[initial]; !ok {
 		themeErrors = append(themeErrors, fmt.Sprintf("unknown theme %q, using %s", initial, theme.DefaultName))
 		initial = theme.DefaultName
+	}
+
+	// the notice of a newer release comes from the last daily check; the next one runs in the background, so
+	// opening the TUI never waits for the network
+	if Version != "dev" && os.Getenv("ORBIT_NO_UPDATE_CHECK") == "" && userconfig.Read().UpdateCheckEnabled() {
+		if latest := selfupdate.Cached(); selfupdate.Newer(latest, Version) {
+			themeErrors = append(themeErrors, fmt.Sprintf("orbit %s is available: run `orbit update`", latest))
+		}
+		go func() {
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+			selfupdate.RefreshIfStale(ctx)
+		}()
 	}
 
 	// Services run in an `orbit daemon` that this TUI only mirrors, unless the folder has none or the user opted

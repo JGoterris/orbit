@@ -46,6 +46,11 @@ go install github.com/JGoterris/orbit/cmd/orbit@latest
 # or grab a binary from the GitHub Releases page (Linux, macOS, Windows) and put it in your PATH
 ```
 
+To update, run `orbit update`: it uses the channel you installed with (Homebrew, `go install`, or it replaces the
+binary of a GitHub release; for the apt / rpm packages it prints the `sudo` command). `orbit update --check` only
+looks. The TUI shows a notice when a newer release exists (one check a day; turn it off with
+`"updateCheck": false` in `~/.config/orbit/config.json` or `ORBIT_NO_UPDATE_CHECK=1`).
+
 orbit is one self-contained executable: it needs no runtime. Docker is only needed for `docker`/`compose`
 services, and [lazygit](https://github.com/jesseduffield/lazygit) only for the `L` key.
 

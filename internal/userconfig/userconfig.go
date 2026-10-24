@@ -21,6 +21,8 @@ type Config struct {
 	Notifications *bool `json:"notifications,omitempty"`
 	// Splash: the animated logo when the TUI opens (on unless false)
 	Splash *bool `json:"splash,omitempty"`
+	// UpdateCheck: the once-a-day look for a newer release that makes the TUI show a notice (on unless false)
+	UpdateCheck *bool `json:"updateCheck,omitempty"`
 }
 
 // NotificationsEnabled is whether desktop notifications are on.
@@ -28,6 +30,9 @@ func (c Config) NotificationsEnabled() bool { return c.Notifications == nil || *
 
 // SplashEnabled is whether the TUI opens with its animated logo.
 func (c Config) SplashEnabled() bool { return c.Splash == nil || *c.Splash }
+
+// UpdateCheckEnabled is whether the TUI may look for a newer release.
+func (c Config) UpdateCheckEnabled() bool { return c.UpdateCheck == nil || *c.UpdateCheck }
 
 // Read returns the saved settings; an empty Config when there are none or the file is unreadable.
 func Read() Config {
@@ -39,6 +44,7 @@ func Read() Config {
 		Theme         any `json:"theme"`
 		Notifications any `json:"notifications"`
 		Splash        any `json:"splash"`
+		UpdateCheck   any `json:"updateCheck"`
 	}
 	if json.Unmarshal(data, &raw) != nil {
 		return Config{}
@@ -52,6 +58,9 @@ func Read() Config {
 	}
 	if b, ok := raw.Splash.(bool); ok {
 		c.Splash = &b
+	}
+	if b, ok := raw.UpdateCheck.(bool); ok {
+		c.UpdateCheck = &b
 	}
 	return c
 }
@@ -88,6 +97,9 @@ func Write(patch Config) bool {
 	}
 	if patch.Splash != nil {
 		cur.Splash = patch.Splash
+	}
+	if patch.UpdateCheck != nil {
+		cur.UpdateCheck = patch.UpdateCheck
 	}
 	return WriteJSONAtomic(filepath.Join(Dir(), "config.json"), cur)
 }
