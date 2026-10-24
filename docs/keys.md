@@ -7,9 +7,11 @@
 | `s` `x` `r` | start / stop / restart the selected one |
 | `S` `X` `R` | start / stop / restart everything |
 | `W` | pause / resume file watching of the selected service |
+| `U` | review and apply the edits made to `orbit.yaml` (shown when the header says `⟳ orbit.yaml changed`) |
 | `1` `2` `3` `4` | Dashboard / Graph / Logs / Git |
 | `tab` / `shift+tab` | move focus between panels |
 | `z` · `esc` | zoom the focused panel to full screen · back |
+| `h` (dashboard) | cycle the CPU / memory history window: 2m · 15m · 1h |
 | `+` `-` `=` | grow / shrink the focused panel · reset sizes |
 | `j k` `ctrl+u/d` `g G` (logs focused) | scroll logs by line / half page / top / bottom |
 | `enter` / `l` | logs of the selected one · `a` toggles selected ⇄ all |

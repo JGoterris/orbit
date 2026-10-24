@@ -23,9 +23,11 @@ orbit logs [svc|group…] [-f] [-n 200] [--grep re] [--since 10m] [--json]
                      # prints recent logs without the TUI (works while orbit is open or closed: open, the
                      # streams come interleaved; closed, from the log files, stdout first and then stderr);
                      # --json prints one {"service","stream","text"} object per line ("ts" too while orbit runs)
+orbit update [--check]         # updates orbit through the channel it was installed with (see Updating below)
 orbit init [dir]     # generates an orbit.yaml by scanning the project
 orbit validate [dir] # checks the orbit.yaml (errors and unknown keys, e.g. a typo like `helth:`); exit code 1 if invalid
 
+orbit -c <file>      # (any command) use that config file instead of looking for orbit.yaml
 orbit --profile debug[,…] # (any command) activate profiles of orbit.yaml; the TUI, `up` and `ctl` remember them. --no-profiles clears
 ```
 
