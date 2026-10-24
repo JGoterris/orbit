@@ -83,8 +83,9 @@ services:
 
 [![skills.sh](https://skills.sh/b/jgoterris/orbit)](https://skills.sh/jgoterris/orbit)
 
-Coding agents (Claude Code, Codex, Cursor…) can drive orbit through its CLI: start the services they need, read
-their logs after a change and restart them. They share the daemon with your TUI, so you see everything they do.
+Coding agents (Claude Code, Codex, Cursor…) can drive orbit through its CLI: start the services they need and
+restart them. They can also read the logs directly, so when something fails they get the error output and can debug
+it without you pasting anything. They share the daemon with your TUI, so you see everything they do.
 
 An optional skill teaches them how, without getting stuck on commands that never return. Nothing installs it for
 you:

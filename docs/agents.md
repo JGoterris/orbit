@@ -1,7 +1,8 @@
 # AI agents
 
 Coding agents (Claude Code, Codex, Cursor, OpenCode…) can drive orbit through its CLI: start the services they need,
-read their logs after a change, restart one and check it came back healthy. They talk to the same daemon as the
+restart one and check it came back healthy. They can also read the logs directly, so when something fails they get
+the error output themselves and can debug it without you pasting anything. They talk to the same daemon as the
 TUI, so whatever an agent does shows up in your orbit window.
 
 orbit ships an optional [Agent Skill](https://github.com/JGoterris/orbit/tree/main/skills/orbit) that teaches
