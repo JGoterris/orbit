@@ -2,6 +2,7 @@ package selfupdate
 
 import (
 	"archive/tar"
+	"archive/zip"
 	"bytes"
 	"compress/gzip"
 	"context"
@@ -84,12 +85,19 @@ func release(t *testing.T, content string, sumOverride string) {
 	t.Helper()
 	archive, binName := archiveName("9.9.9")
 	var buf bytes.Buffer
-	gz := gzip.NewWriter(&buf)
-	tw := tar.NewWriter(gz)
-	tw.WriteHeader(&tar.Header{Name: binName, Mode: 0o755, Size: int64(len(content)), Typeflag: tar.TypeReg})
-	tw.Write([]byte(content))
-	tw.Close()
-	gz.Close()
+	if strings.HasSuffix(archive, ".zip") {
+		zw := zip.NewWriter(&buf)
+		w, _ := zw.Create(binName)
+		w.Write([]byte(content))
+		zw.Close()
+	} else {
+		gz := gzip.NewWriter(&buf)
+		tw := tar.NewWriter(gz)
+		tw.WriteHeader(&tar.Header{Name: binName, Mode: 0o755, Size: int64(len(content)), Typeflag: tar.TypeReg})
+		tw.Write([]byte(content))
+		tw.Close()
+		gz.Close()
+	}
 	sum := sha256.Sum256(buf.Bytes())
 	hexsum := hex.EncodeToString(sum[:])
 	if sumOverride != "" {
