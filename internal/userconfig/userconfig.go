@@ -23,6 +23,17 @@ type Config struct {
 	Splash *bool `json:"splash,omitempty"`
 	// UpdateCheck: the once-a-day look for a newer release that makes the TUI show a notice (on unless false)
 	UpdateCheck *bool `json:"updateCheck,omitempty"`
+	// Plugins holds, by plugin name, whether this user turned it off and the settings they gave it
+	Plugins map[string]PluginSetting `json:"plugins,omitempty"`
+	// Keys rebinds the keys of plugin actions: "<plugin>.<action>" → key ("none" unbinds it)
+	Keys map[string]string `json:"keys,omitempty"`
+}
+
+// PluginSetting is the entry of a plugin in the plugins of config.json.
+type PluginSetting struct {
+	// Enabled is nil unless the user said something: plugins are on once installed
+	Enabled  *bool          `json:"enabled,omitempty"`
+	Settings map[string]any `json:"settings,omitempty"`
 }
 
 // NotificationsEnabled is whether desktop notifications are on.
@@ -41,10 +52,12 @@ func Read() Config {
 		return Config{}
 	}
 	var raw struct {
-		Theme         any `json:"theme"`
-		Notifications any `json:"notifications"`
-		Splash        any `json:"splash"`
-		UpdateCheck   any `json:"updateCheck"`
+		Theme         any                        `json:"theme"`
+		Notifications any                        `json:"notifications"`
+		Splash        any                        `json:"splash"`
+		UpdateCheck   any                        `json:"updateCheck"`
+		Plugins       map[string]json.RawMessage `json:"plugins"`
+		Keys          map[string]any             `json:"keys"`
 	}
 	if json.Unmarshal(data, &raw) != nil {
 		return Config{}
@@ -61,6 +74,23 @@ func Read() Config {
 	}
 	if b, ok := raw.UpdateCheck.(bool); ok {
 		c.UpdateCheck = &b
+	}
+	for name, entry := range raw.Plugins {
+		var ps PluginSetting
+		if json.Unmarshal(entry, &ps) == nil {
+			if c.Plugins == nil {
+				c.Plugins = map[string]PluginSetting{}
+			}
+			c.Plugins[name] = ps
+		}
+	}
+	for action, key := range raw.Keys {
+		if k, ok := key.(string); ok {
+			if c.Keys == nil {
+				c.Keys = map[string]string{}
+			}
+			c.Keys[action] = k
+		}
 	}
 	return c
 }
@@ -86,6 +116,18 @@ func WriteJSONAtomic(file string, data any) bool {
 	return true
 }
 
+// Forget removes what config.json says about a plugin: its entry and the keys the user gave its actions.
+func Forget(plugin string) bool {
+	cur := Read()
+	delete(cur.Plugins, plugin)
+	for k := range cur.Keys {
+		if len(k) > len(plugin) && k[:len(plugin)+1] == plugin+"." {
+			delete(cur.Keys, k)
+		}
+	}
+	return WriteJSONAtomic(filepath.Join(Dir(), "config.json"), cur)
+}
+
 // Write merges patch into config.json: only the fields that are set replace the saved ones.
 func Write(patch Config) bool {
 	cur := Read()
@@ -100,6 +142,18 @@ func Write(patch Config) bool {
 	}
 	if patch.UpdateCheck != nil {
 		cur.UpdateCheck = patch.UpdateCheck
+	}
+	for name, ps := range patch.Plugins {
+		if cur.Plugins == nil {
+			cur.Plugins = map[string]PluginSetting{}
+		}
+		cur.Plugins[name] = ps
+	}
+	for action, key := range patch.Keys {
+		if cur.Keys == nil {
+			cur.Keys = map[string]string{}
+		}
+		cur.Keys[action] = key
 	}
 	return WriteJSONAtomic(filepath.Join(Dir(), "config.json"), cur)
 }

@@ -138,6 +138,21 @@ func ConfigBase() string {
 	return filepath.Join(home(), ".config")
 }
 
+// DataBase is where data that is installed for the user goes: $XDG_DATA_HOME, %LOCALAPPDATA% on Windows,
+// ~/.local/share elsewhere.
+func DataBase() string {
+	if s := os.Getenv("XDG_DATA_HOME"); s != "" {
+		return s
+	}
+	if IsWindows {
+		if s := os.Getenv("LOCALAPPDATA"); s != "" {
+			return s
+		}
+		return filepath.Join(home(), "AppData", "Local")
+	}
+	return filepath.Join(home(), ".local", "share")
+}
+
 var (
 	totalMemOnce  sync.Once
 	totalMemBytes int64
