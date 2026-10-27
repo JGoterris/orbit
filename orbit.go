@@ -7,3 +7,8 @@ import _ "embed"
 //
 //go:embed orbit.schema.json
 var Schema []byte
+
+// PluginSchema is orbit-plugin.schema.json: the JSON schema of the manifest of a plugin.
+//
+//go:embed orbit-plugin.schema.json
+var PluginSchema []byte
