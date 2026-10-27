@@ -3,6 +3,7 @@ package ipc
 import (
 	"errors"
 	"fmt"
+	"github.com/JGoterris/orbit/internal/plugins"
 	"io/fs"
 	"os"
 	"os/exec"
@@ -38,7 +39,7 @@ type DaemonOptions struct {
 // socket, and keeps health checks, restarts and watchers running while clients come and go. It returns the exit
 // code once a client asks it to quit (shutdown) or after IdleMinutes with nothing running and nobody connected.
 func RunDaemon(cfg *config.OrbitConfig, opts DaemonOptions) int {
-	sup := supervisor.New(cfg, supervisor.Options{})
+	sup := supervisor.New(cfg, supervisor.Options{Plugins: plugins.ForProject(cfg, opts.Version)})
 	if holder := state.AcquireLock(sup.StateDir()); holder != 0 {
 		fmt.Fprintf(os.Stderr, "already open for this project (pid %d)\n", holder)
 		return 1

@@ -24,8 +24,10 @@ import (
 	"github.com/JGoterris/orbit/internal/core/watch"
 	"github.com/JGoterris/orbit/internal/graph"
 	"github.com/JGoterris/orbit/internal/platform"
+	"github.com/JGoterris/orbit/internal/plugins"
 	"github.com/JGoterris/orbit/internal/proc"
 	"github.com/JGoterris/orbit/internal/state"
+	"github.com/JGoterris/orbit/pluginsdk/protocol"
 )
 
 type Status string
@@ -92,6 +94,9 @@ type ServiceState struct {
 type Options struct {
 	// StateDir overrides the per-project state directory (tests)
 	StateDir string
+	// Plugins are the plugins of the project (see plugins.ForProject); the supervisor starts and stops them.
+	// Nil means none: tests do not pick up the plugins installed on the machine.
+	Plugins *plugins.Manager
 }
 
 // StopOptions of Stop.
@@ -187,6 +192,9 @@ type Supervisor struct {
 
 	configWatcher *configWatch
 
+	// plugins is never nil: a project without plugins has a manager with none
+	plugins *plugins.Manager
+
 	changeBus  Bus[string]
 	configBus  Bus[config.ConfigDiff]
 	pendingBus Bus[*PendingConfig]
@@ -202,6 +210,10 @@ func New(cfg *config.OrbitConfig, opts Options) *Supervisor {
 		sampler:    metrics.NewProcessSampler(),
 		resHistory: resources.NewHistory(),
 		stateDir:   opts.StateDir,
+		plugins:    opts.Plugins,
+	}
+	if s.plugins == nil {
+		s.plugins = plugins.NewManager(plugins.Options{})
 	}
 	if s.stateDir == "" {
 		s.stateDir = state.Dir(cfg)
@@ -492,6 +504,7 @@ func (s *Supervisor) ClearLogs(name string) {
 // Init re-attaches to what is already running: containers, and processes a previous orbit session left behind
 // (recorded in state.json). It starts the metrics loop and the watchers.
 func (s *Supervisor) Init() error {
+	s.startPlugins()
 	s.mu.Lock()
 	s.stopMetric = make(chan struct{})
 	stop := s.stopMetric
@@ -540,7 +553,7 @@ func (s *Supervisor) Init() error {
 			}
 			rt.runner = r
 			// a container orbit did not start itself stays up when orbit quits; anything recorded in state.json is ours
-			rt.adopted = svc.Type != config.TypeProcess && !hasEntry
+			rt.adopted = config.IsCoreType(svc.Type) && svc.Type != config.TypeProcess && !hasEntry
 			rt.logReady = true // it printed its line before we got here
 			rt.gen++
 			gen := rt.gen
@@ -553,6 +566,9 @@ func (s *Supervisor) Init() error {
 				msg = fmt.Sprintf("monitoring external service (%s)", svc.Health.Describe())
 			case svc.Type == config.TypeProcess:
 				msg = fmt.Sprintf("re-attached to running process (pid %d)", r.Pid())
+			case !config.IsCoreType(svc.Type):
+				msg = "re-attached to the running service"
+
 			case adopted:
 				msg = "attached to already running container (left running when orbit quits)"
 			default:
@@ -1007,6 +1023,33 @@ func (s *Supervisor) closeMetrics() {
 	}
 }
 
+// Plugins is the plugins of the project.
+func (s *Supervisor) Plugins() plugins.Host { return s.plugins }
+
+// startPlugins launches the plugins and tells them what happens to the services.
+func (s *Supervisor) startPlugins() {
+	s.plugins.Start()
+	if s.plugins.Wants(protocol.EventState) {
+		s.changeBus.On(func(name string) {
+			if name == "" {
+				return
+			}
+			st := s.State(name)
+			s.plugins.Notify(protocol.Event{Kind: protocol.EventState, Service: name, Status: string(st.Status), Ready: s.IsReady(name)})
+		})
+	}
+	if s.plugins.Wants(protocol.EventConfig) {
+		s.configBus.On(func(config.ConfigDiff) {
+			s.plugins.Notify(protocol.Event{Kind: protocol.EventConfig, Services: plugins.ServiceRefs(s.Config())})
+		})
+	}
+	if s.plugins.Wants(protocol.EventLog) {
+		s.Logs.OnLine(func(l logs.Line) {
+			s.plugins.Notify(protocol.Event{Kind: protocol.EventLog, Service: l.Service, Stream: string(l.Stream), Text: l.Text})
+		})
+	}
+}
+
 // Dispose stops everything this session owns (adopted containers are only let go) and releases timers.
 func (s *Supervisor) Dispose() {
 	s.mu.Lock()
@@ -1032,6 +1075,7 @@ func (s *Supervisor) Dispose() {
 	}
 	s.mu.Unlock()
 	s.persist()
+	s.plugins.Stop()
 }
 
 // Detach quits without stopping anything: it records what is running (state.json) and stops following it.
@@ -1069,6 +1113,7 @@ func (s *Supervisor) Detach() {
 	for _, w := range waiters {
 		w <- false
 	}
+	s.plugins.Stop()
 }
 
 // KillAllSync is the last resort on process exit: SIGKILL every process group we own. It does not wait.
@@ -1091,6 +1136,7 @@ func (s *Supervisor) KillAllSync() {
 	for _, p := range hooksPids {
 		platform.KillTree(p, syscall.SIGKILL)
 	}
+	s.plugins.KillSync()
 }
 
 // ToggleWatch pauses / resumes file watching of a service. It returns "" if the service has no `watch`.
@@ -1262,7 +1308,7 @@ func (s *Supervisor) newRunnerLocked(name string, env map[string]string) runner.
 		svc = &c
 	}
 	var r runner.Runner
-	r = runner.New(svc, s.cfg.Name, runner.Callbacks{
+	cb := runner.Callbacks{
 		Log: func(stream logs.Stream, text string) {
 			s.Logs.Append(name, stream, text)
 			if stream == logs.System {
@@ -1281,7 +1327,12 @@ func (s *Supervisor) newRunnerLocked(name string, env map[string]string) runner.
 			}
 		},
 		Exit: func(code *int, signal string) { s.onExit(name, r, code, signal) },
-	}, state.Files(s.stateDir, name))
+	}
+	if config.IsCoreType(svc.Type) {
+		r = runner.New(svc, s.cfg.Name, cb, state.Files(s.stateDir, name))
+	} else {
+		r = s.plugins.NewRunner(svc, cb)
+	}
 	return r
 }
 
@@ -1906,6 +1957,8 @@ func (s *Supervisor) checkConfig() {
 // this process) and by ipc.Remote (they run in an `orbit daemon` and this one mirrors it over the socket).
 type Like interface {
 	Config() *config.OrbitConfig
+	// Plugins is the plugins of the project: the ones running here, or the ones of the daemon
+	Plugins() plugins.Host
 	LogStore() *logs.Store
 	Deps() graph.DepMap
 	Dependents() map[string][]string

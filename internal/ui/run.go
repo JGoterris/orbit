@@ -11,6 +11,7 @@ import (
 
 	"github.com/JGoterris/orbit/internal/core/logs"
 	"github.com/JGoterris/orbit/internal/core/supervisor"
+	"github.com/JGoterris/orbit/internal/plugins"
 )
 
 // Run opens the interface and blocks until the user quits. It returns the final model's error, if any.
@@ -74,7 +75,25 @@ func Attach(p *tea.Program, opts Options) (stop func()) {
 			}
 		}
 	}()
+	// what a plugin does on its own goes through a queue too: its reader must not wait for the interface
+	pluginQueue := make(chan plugins.Update, 256)
+	go func() {
+		for {
+			select {
+			case <-done:
+				return
+			case u := <-pluginQueue:
+				p.Send(pluginUpdateMsg{u: u})
+			}
+		}
+	}()
 	cancels := []func(){
+		sup.Plugins().OnUpdate(func(u plugins.Update) {
+			select {
+			case pluginQueue <- u:
+			default:
+			}
+		}),
 		sup.OnChange(func(name string) {
 			if name != "" {
 				select {

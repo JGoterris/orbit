@@ -3,6 +3,7 @@ package cli
 import (
 	"context"
 	"fmt"
+	"github.com/JGoterris/orbit/internal/plugins"
 	"os"
 	"os/signal"
 	"runtime"
@@ -112,7 +113,7 @@ func RunTUI(cfg *config.OrbitConfig, opts TUIOptions) int {
 		}
 		first = remote
 	} else {
-		local := supervisor.New(cfg, supervisor.Options{})
+		local := supervisor.New(cfg, supervisor.Options{Plugins: plugins.ForProject(cfg, Version)})
 		if holder := state.AcquireLock(local.StateDir()); holder != 0 {
 			errorln(fmt.Sprintf("already open for this project (pid %d). Quit it first.", holder))
 			return 1
@@ -214,7 +215,8 @@ func RunTUI(cfg *config.OrbitConfig, opts TUIOptions) int {
 	err := ui.Run(ui.Options{
 		Sup: first, OnQuit: quit,
 		Themes: themes, ThemeOrder: order, CustomThemes: customNames, InitialTheme: initial, ThemeErrors: themeErrors,
-		Relaunch: relaunch, StartWithPicker: opts.Bare,
+		PluginKeys: userconfig.Read().Keys,
+		Relaunch:   relaunch, StartWithPicker: opts.Bare,
 		// without colours the splash is only noise
 		Splash: userconfig.Read().SplashEnabled() && os.Getenv("NO_COLOR") == "", Version: Version,
 		LoadProfiles: func(names []string) (*config.OrbitConfig, error) {

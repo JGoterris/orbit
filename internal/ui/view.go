@@ -33,13 +33,17 @@ func (m *Model) viewApp() string {
 	rows := make([]string, 0, H)
 	rows = append(rows, clamp(m.renderHeader(W), W, p.PanelAlt))
 
+	pluginFilter := m.plug.filtering != nil
 	bodyH := H - 2
-	if m.mode == modeFilter {
+	if m.mode == modeFilter || pluginFilter {
 		bodyH--
 	}
 	rows = append(rows, m.renderBody(W, bodyH)...)
-	if m.mode == modeFilter {
+	switch {
+	case m.mode == modeFilter:
 		rows = append(rows, clamp(m.renderFilterBar(W), W, p.PanelAlt))
+	case pluginFilter:
+		rows = append(rows, clamp(m.renderPluginFilterBar(W), W, p.PanelAlt))
 	}
 	rows = append(rows, clamp(m.renderFooter(W), W, p.PanelAlt))
 	for len(rows) < H {
@@ -73,6 +77,8 @@ func (m *Model) viewApp() string {
 		if m.reload != nil {
 			modal, mw, mx, my = m.renderReload(W, H)
 		}
+	case modePlugin:
+		modal, mw, mx, my = m.renderPluginDialog(W, H)
 	case modeProjects:
 		modal, mw, mx, my = m.renderProjects(W, H)
 	case modeQuit, modeStopping, modeSwitch:
@@ -97,7 +103,7 @@ func (m *Model) renderHeader(W int) string {
 	}
 	l.add(p.Dim, "    ")
 	var tabs []tabHit
-	for i, v := range views {
+	for i, v := range m.allViews() {
 		label := fmt.Sprintf(" %d %s ", i+1, v.label)
 		x0 := l.width()
 		if v.id == m.view {
@@ -112,6 +118,9 @@ func (m *Model) renderHeader(W int) string {
 	m.geo.mu.Unlock()
 	if m.zoomed {
 		l.add(p.Accent, "  ⛶ zoom")
+	}
+	if m.plug.running != "" {
+		l.add(p.Yellow, "  "+theme.StatusIcon("starting", m.tick, false)+" "+m.plug.running)
 	}
 	if pend := m.sup.Pending(); pend != nil {
 		if pend.Error != "" {
@@ -131,9 +140,19 @@ func (m *Model) renderHeader(W int) string {
 		right.add(p.Red, fmt.Sprintf("  ✖ %d", bad))
 	}
 	right.add(p.Dim, fmt.Sprintf("  ○ %d ", total-up-bad-busy))
-	gap := max(1, W-l.width()-right.width())
+	badges, badgeHits := m.headerPluginLine(p.PanelAlt)
+	gap := max(1, W-l.width()-right.width()-badges.width())
 	l.add("", strings.Repeat(" ", gap))
+	x0 := l.width()
+	l.raw(badges.String(), badges.width())
 	l.raw(right.String(), right.width())
+	for i := range badgeHits {
+		badgeHits[i].x0 += x0
+		badgeHits[i].x1 += x0
+	}
+	m.geo.mu.Lock()
+	m.geo.badges = badgeHits
+	m.geo.mu.Unlock()
 	return l.String()
 }
 
@@ -162,13 +181,15 @@ func (m *Model) renderBody(W, H int) []string {
 	}
 	rightW := W - listW
 	var right []string
-	switch m.view {
-	case "graph":
+	switch {
+	case vd.plugin != nil:
+		right = m.renderPluginView(vd, rightW, H, listW)
+	case m.view == "graph":
 		right = m.renderGraph(rightW, H, m.focus == paneGraph)
 		m.geo.mu.Lock()
 		m.geo.graphX, m.geo.graphY = listW, 1
 		m.geo.mu.Unlock()
-	case "logs":
+	case m.view == "logs":
 		title := "Logs · all services  (a: only selected)"
 		if m.logScope != "all" {
 			title = "Logs · " + m.selected + "  (a: all)"
@@ -177,7 +198,7 @@ func (m *Model) renderBody(W, H int) []string {
 		m.geo.mu.Lock()
 		m.geo.logX, m.geo.logY = listW, 1
 		m.geo.mu.Unlock()
-	case "git":
+	case m.view == "git":
 		right = m.renderGit(rightW, H)
 	default:
 		right = m.renderDashboard(rightW, H, listW)
@@ -194,7 +215,7 @@ func (m *Model) renderDashboard(w, H, x int) []string {
 		msg := newLine(p.Panel).add(p.Muted, "This project has no services. Add an orbit.yaml or a docker-compose.yml.").String()
 		return panel(panelOpts{}, w, H, []string{"", msg})
 	}
-	detailRows := m.detailRows()
+	detailRows := m.detailRows() + m.pluginDetailExtra(m.selected, w-4)
 	switch {
 	case m.zoomed && m.focus == paneDetail:
 		m.hit(paneDetail, x, 1, w, H, 0, 0)
@@ -287,6 +308,15 @@ func fitHints(hints [][2]string, width int) [][2]string {
 	return append(keep, tail...)
 }
 
+func (m *Model) renderPluginFilterBar(W int) string {
+	p := theme.Active()
+	l := newLine(p.PanelAlt)
+	l.add("", " ").add(p.Accent, "filter ")
+	w := max(1, W-8)
+	l.raw(m.plug.filterBar.viewWithPlaceholder(w, "narrow the list · enter keep · esc clear", p.Text, p.Dim, p.PanelAlt, true), w)
+	return l.String()
+}
+
 func (m *Model) renderFooter(W int) string {
 	p := theme.Active()
 	l := newLine(p.PanelAlt)
@@ -306,6 +336,8 @@ func (m *Model) renderFooter(W int) string {
 			hints = copyHints
 		case m.view == "git":
 			hints = m.gitHints()
+		case m.viewDef().plugin != nil:
+			hints = m.pluginHints()
 		}
 		for _, h := range fitHints(hints, W-1) {
 			l.add(p.Accent, h[0]).add(p.Dim, " "+h[1]+"   ")

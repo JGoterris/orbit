@@ -24,6 +24,9 @@ service name can also be a group name from `orbit.yaml`, which expands to its me
 | `orbit graph` | no | Dependency graph. |
 | `orbit validate` | no | Checks `orbit.yaml` (errors, unknown keys). Exit code 1 if invalid. |
 | `orbit init` | no | Writes an `orbit.yaml` by scanning the project. Only when the user asks. |
+| `orbit plugin ls [--json]` | no | The installed plugins. |
+| `orbit <plugin> …` | depends | The command a plugin provides; the arguments are the plugin's. Only the ones the user asked for. |
+| `orbit plugin install\|upgrade\|remove\|enable\|disable\|link` | no | Changes what code orbit runs. **Never** from an agent: only when the user asks, and never with `-y` on a plugin they did not name. |
 | `orbit`, `orbit open` | **yes** | Interactive TUI. Never from an agent. |
 
 ## `orbit status --json`

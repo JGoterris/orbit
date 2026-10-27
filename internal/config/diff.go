@@ -29,6 +29,8 @@ type ConfigDiff struct {
 	Groups bool `json:"groups"`
 	// Tasks: the `tasks:` section differs (applied without restarting anything)
 	Tasks bool `json:"tasks"`
+	// Plugins: the `plugins:` section differs; plugins start with orbit, so it takes effect after `orbit down`
+	Plugins bool `json:"plugins,omitempty"`
 	// Profiles: a different set of profiles is active (applied without restarting anything by itself)
 	Profiles bool `json:"profiles"`
 	// ActiveProfiles is the new set when Profiles is true
@@ -114,6 +116,7 @@ func DiffConfig(prev, next *OrbitConfig) ConfigDiff {
 	}
 	d.Groups = stableJSON(normGroups(prev.Groups)) != stableJSON(normGroups(next.Groups))
 	d.Tasks = (len(prev.Tasks) > 0 || len(next.Tasks) > 0) && stableJSON(prev.Tasks) != stableJSON(next.Tasks)
+	d.Plugins = (len(prev.Plugins) > 0 || len(next.Plugins) > 0) && stableJSON(prev.Plugins) != stableJSON(next.Plugins)
 	if d.Profiles = !slices.Equal(prev.Profiles, next.Profiles); d.Profiles {
 		d.ActiveProfiles = next.Profiles
 	}
@@ -132,7 +135,7 @@ func normGroups(g map[string][]string) map[string][]string {
 }
 
 func (d ConfigDiff) IsEmpty() bool {
-	return len(d.Added) == 0 && len(d.Removed) == 0 && len(d.Changed) == 0 && !d.Groups && !d.Tasks && !d.Profiles && d.NameChanged == nil
+	return len(d.Added) == 0 && len(d.Removed) == 0 && len(d.Changed) == 0 && !d.Groups && !d.Tasks && !d.Plugins && !d.Profiles && d.NameChanged == nil
 }
 
 // RestartNames are the services a running instance of prev has to restart for d (the changed ones that need it).
@@ -167,6 +170,9 @@ func (d ConfigDiff) Describe() []string {
 	}
 	if d.Tasks {
 		out = append(out, "~ tasks")
+	}
+	if d.Plugins {
+		out = append(out, "! plugins: not applied while running (`orbit down` and reopen)")
 	}
 	if d.Profiles {
 		out = append(out, "~ profiles: "+profilesLabel(d.ActiveProfiles))

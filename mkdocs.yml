@@ -15,6 +15,13 @@ nav:
   - Keys: keys.md
   - Configuration: configuration.md
   - Git: git.md
+  - Plugins:
+      - Using plugins: plugins/index.md
+      - Writing a plugin: plugins/authoring.md
+      - Manifest: plugins/manifest.md
+      - Widgets: plugins/widgets.md
+      - Protocol: plugins/protocol.md
+      - Community: plugins/community.md
   - Themes: themes.md
   - Scripting & editors: scripting.md
   - AI agents: agents.md

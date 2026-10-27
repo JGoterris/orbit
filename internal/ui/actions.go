@@ -69,7 +69,7 @@ func (m *Model) setView(id string) {
 		return
 	}
 	m.view = id
-	m.focus = viewByID(id).defaultPane
+	m.focus = m.viewByID(id).defaultPane
 	m.zoomed = false
 	m.scrollBack = 0
 	if id == "git" {
@@ -454,7 +454,13 @@ func (m *Model) doQuit(how string) tea.Cmd {
 }
 
 // loadHistory fetches the buckets of the 15m / 1h charts (the 2m range uses the live samples).
+// loadHistory is called whenever the view or the selected service may have changed: it loads what the new screen
+// needs, the resource history and what the plugins show.
 func (m *Model) loadHistory() tea.Cmd {
+	return tea.Batch(m.loadHistoryData(), m.pluginOnSelection())
+}
+
+func (m *Model) loadHistoryData() tea.Cmd {
 	if m.resRange == resources.Range2m || m.view != "dashboard" || m.selected == "" {
 		return nil
 	}

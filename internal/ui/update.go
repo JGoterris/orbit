@@ -1,6 +1,7 @@
 package ui
 
 import (
+	"fmt"
 	"strings"
 	"time"
 
@@ -24,6 +25,11 @@ func (m *Model) Init() tea.Cmd {
 	case r != nil:
 		m.reload = &reloadOffer{diff: r.Diff, cfg: r.Config}
 		m.mode = modeReload
+	}
+	for _, info := range m.plug.infos {
+		if info.Missing {
+			cmds = append(cmds, m.notify(fmt.Sprintf("this project uses plugin %s, which is not installed: orbit plugin install %s", info.Name, info.Name), theme.Active().Yellow))
+		}
 	}
 	if errs := m.opts.ThemeErrors; len(errs) > 0 {
 		text := errs[0]
@@ -293,6 +299,18 @@ func (m *Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, m.notify(msg.err.Error(), theme.Active().Red)
 	case projectSwitchedMsg:
 		return m.switched(msg)
+	case pluginUpdateMsg:
+		return m, m.onPluginUpdate(msg.u)
+	case pluginDataMsg:
+		return m, m.onPluginData(msg)
+	case pluginSectionsMsg:
+		m.onPluginSections(msg)
+		return m, nil
+	case pluginOptionsMsg:
+		m.onPluginOptions(msg)
+		return m, nil
+	case pluginInvokedMsg:
+		return m, m.onPluginInvoked(msg)
 	case tea.KeyMsg:
 		return m.handleKey(msg)
 	case tea.MouseMsg:
@@ -341,9 +359,12 @@ func (m *Model) keyInMode(k tea.KeyMsg) tea.Cmd {
 			m.console.session.Write(b)
 		}
 		return nil
+	case modePlugin:
+		return m.keyInPluginDialog(k)
 	case modeHelp:
-		_, page := helpSize(m.height)
-		clampTo := func(v int) int { return max(0, min(v, max(0, len(helpRows)-page))) }
+		rows := len(m.helpRows())
+		_, page := helpSize(rows, m.height)
+		clampTo := func(v int) int { return max(0, min(v, max(0, rows-page))) }
 		switch s {
 		case "down", "j":
 			m.helpScroll = clampTo(m.helpScroll + 1)
@@ -356,7 +377,7 @@ func (m *Model) keyInMode(k tea.KeyMsg) tea.Cmd {
 		case "g", "home":
 			m.helpScroll = 0
 		case "G", "end":
-			m.helpScroll = clampTo(len(helpRows))
+			m.helpScroll = clampTo(rows)
 		default:
 			m.mode = modeNormal
 		}
@@ -502,6 +523,12 @@ func (m *Model) keyInMode(k tea.KeyMsg) tea.Cmd {
 	}
 
 	// ---- normal mode
+	if m.plug.filtering != nil {
+		return m.pluginFilterKeys(k)
+	}
+	if a := m.pluginActionForKey(s); a != nil {
+		return m.pluginRun(a, m.selected)
+	}
 	// a text prompt, a question or the diff's copy mode inside the Git view takes every key, except the way out
 	if m.view == "git" {
 		g := m.gs()
@@ -568,6 +595,13 @@ func (m *Model) keyInMode(k tea.KeyMsg) tea.Cmd {
 		m.resetSize()
 		return nil
 	case "esc":
+		if pn := m.focusedPluginPane(); pn != nil && pn.filter != "" {
+			pn.filter = ""
+			if pn.refresh() {
+				return m.pluginSelectionChanged(pn)
+			}
+			return nil
+		}
 		if m.view == "git" {
 			if cmd, handled := m.gitKeys(k); handled {
 				return cmd
@@ -583,8 +617,8 @@ func (m *Model) keyInMode(k tea.KeyMsg) tea.Cmd {
 		return nil
 	}
 	if len(s) == 1 && s[0] >= '1' && s[0] <= '9' {
-		if i := int(s[0] - '1'); i < len(views) {
-			m.setView(views[i].id)
+		if vs := m.allViews(); int(s[0]-'1') < len(vs) {
+			m.setView(vs[int(s[0]-'1')].id)
 			return m.loadHistory()
 		}
 	}
@@ -592,6 +626,14 @@ func (m *Model) keyInMode(k tea.KeyMsg) tea.Cmd {
 		// the view's own keys; the service shortcuts do not apply in a view with no service list
 		cmd, _ := m.gitKeys(k)
 		return cmd
+	}
+	if vd := m.viewDef(); vd.plugin != nil {
+		if cmd, handled := m.pluginPaneKeys(k); handled {
+			return cmd
+		}
+		if m.focus != paneServices {
+			return nil
+		}
 	}
 	if s == "h" && m.view == "dashboard" {
 		return m.cycleRange()
@@ -887,6 +929,16 @@ func (m *Model) handleMouse(e tea.MouseMsg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		if e.Y == 0 {
+			for _, b := range g.badges {
+				if e.X >= b.x0 && e.X < b.x1 {
+					for i := range m.plug.actions {
+						if a := &m.plug.actions[i]; a.plugin == b.plugin && a.def.ID == b.action {
+							return m, m.pluginRun(a, m.selected)
+						}
+					}
+					return m, nil
+				}
+			}
 			for _, t := range g.tabs {
 				if e.X >= t.x0 && e.X < t.x1 {
 					m.setView(t.view)
@@ -945,6 +997,9 @@ func regionAt(hits []hitRegion, x, y int) (hitRegion, bool) {
 
 // clickRegion focuses the panel under the mouse and, in a list, selects the row that was clicked.
 func (m *Model) clickRegion(r hitRegion, y int) tea.Cmd {
+	if strings.HasPrefix(string(r.pane), pluginViewPrefix) {
+		return m.pluginClick(r, y)
+	}
 	m.focus = r.pane
 	if r.items == 0 {
 		return nil
@@ -970,6 +1025,9 @@ func (m *Model) clickRegion(r hitRegion, y int) tea.Cmd {
 
 // wheelRegion scrolls the panel under the mouse: lists move their selection, the diff scrolls.
 func (m *Model) wheelRegion(r hitRegion, delta int) tea.Cmd {
+	if strings.HasPrefix(string(r.pane), pluginViewPrefix) {
+		return m.pluginWheel(r, delta)
+	}
 	g := m.gs()
 	step := -delta / 3
 	switch {

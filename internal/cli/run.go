@@ -3,6 +3,7 @@ package cli
 import (
 	"encoding/json"
 	"fmt"
+	"github.com/JGoterris/orbit/internal/plugins"
 	"os"
 	"os/exec"
 	"os/signal"
@@ -127,7 +128,7 @@ func RunUp(cfg *config.OrbitConfig, names []string, detach bool) int {
 		}
 		return upRunning(cfg, names, true)
 	}
-	sup := supervisor.New(cfg, supervisor.Options{})
+	sup := supervisor.New(cfg, supervisor.Options{Plugins: plugins.ForProject(cfg, Version)})
 	stopNotifier := notify.Attach(sup, notify.Options{})
 	defer stopNotifier()
 

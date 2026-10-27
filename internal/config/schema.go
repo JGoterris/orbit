@@ -123,6 +123,8 @@ type ServiceConfig struct {
 	Ports      []string `json:"ports"`
 	Volumes    []string `json:"volumes"`
 	DockerArgs []string `json:"dockerArgs"`
+	// With is what the plugin that provides this service's type is given (`with:`); nil for orbit's own types
+	With map[string]any `json:"with,omitempty"`
 	// compose
 	ComposeFile    string `json:"composeFile,omitempty"`
 	ComposeProject string `json:"composeProject,omitempty"`
@@ -163,6 +165,15 @@ type OrbitConfig struct {
 	Profiles []string `json:"profiles"`
 	// AvailableProfiles are the ones orbit.yaml declares
 	AvailableProfiles []ProfileInfo `json:"availableProfiles"`
+	// Plugins is the `plugins:` section: the plugins the project asks for (or turns off) and their settings
+	Plugins map[string]*PluginConfig `json:"plugins,omitempty"`
+}
+
+// PluginConfig is the entry of a plugin in `plugins:`: `name: true` asks for it, `name: false` turns it off in this
+// project and `name: {…}` asks for it with settings.
+type PluginConfig struct {
+	Enabled  bool           `json:"enabled"`
+	Settings map[string]any `json:"settings,omitempty"`
 }
 
 // DepMap is the dependency graph of the services, in declaration order.

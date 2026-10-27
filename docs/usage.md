@@ -24,6 +24,8 @@ orbit logs [svc|group…] [-f] [-n 200] [--grep re] [--since 10m] [--json]
                      # streams come interleaved; closed, from the log files, stdout first and then stderr);
                      # --json prints one {"service","stream","text"} object per line ("ts" too while orbit runs)
 orbit update [--check]         # updates orbit through the channel it was installed with (see Updating below)
+orbit plugin install|link|ls|upgrade|remove|enable|disable|doctor|logs|dir|new   # plugins: see Plugins
+orbit <plugin> [args…]         # the command of a plugin, with the arguments as typed (`orbit plugin ls` lists them)
 orbit init [dir]     # generates an orbit.yaml by scanning the project
 orbit validate [dir] # checks the orbit.yaml (errors and unknown keys, e.g. a typo like `helth:`); exit code 1 if invalid
 

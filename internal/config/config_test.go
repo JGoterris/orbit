@@ -727,3 +727,114 @@ func TestInterpolationOperatorsAreComposes(t *testing.T) {
 		t.Errorf("cmd = %q", got)
 	}
 }
+
+func withPluginTypes(t *testing.T, types map[string]string) {
+	t.Helper()
+	old := PluginTypes
+	PluginTypes = func() map[string]string { return types }
+	t.Cleanup(func() { PluginTypes = old })
+}
+
+func TestPluginServiceType(t *testing.T) {
+	withPluginTypes(t, map[string]string{"k8s": "kube"})
+	cfg := mustLoad(t, map[string]string{"orbit.yaml": `
+services:
+  web:
+    type: k8s
+    with:
+      context: prod
+      ports: [8080, 9090]
+      nested: { deep: true }
+  api: { cmd: run-api }
+`})
+	web := cfg.Services["web"]
+	if web.Type != "k8s" || IsCoreType(web.Type) {
+		t.Fatalf("type = %q", web.Type)
+	}
+	if web.With["context"] != "prod" || !reflect.DeepEqual(web.With["ports"], []any{int64(8080), int64(9090)}) && !reflect.DeepEqual(web.With["ports"], []any{8080, 9090}) {
+		t.Fatalf("with = %#v", web.With)
+	}
+	if nested, _ := web.With["nested"].(map[string]any); nested["deep"] != true {
+		t.Fatalf("nested with = %#v", web.With["nested"])
+	}
+	if cfg.Services["api"].With != nil {
+		t.Fatal("a core service has no with")
+	}
+}
+
+func TestUnknownServiceTypeSuggests(t *testing.T) {
+	withPluginTypes(t, map[string]string{"k8s": "kube"})
+	msg := loadErr(t, map[string]string{"orbit.yaml": "services:\n  a: { type: k8z }\n"})
+	wantContains(t, msg, `unknown type "k8z"`)
+	wantContains(t, msg, `did you mean "k8s"`)
+	msg = loadErr(t, map[string]string{"orbit.yaml": "services:\n  a: { type: dokcer }\n"})
+	wantContains(t, msg, `did you mean "docker"`)
+	withPluginTypes(t, nil)
+	wantContains(t, loadErr(t, map[string]string{"orbit.yaml": "services:\n  a: { type: k8s }\n"}), "orbit plugin ls")
+}
+
+func TestWithOnlyForPluginTypes(t *testing.T) {
+	withPluginTypes(t, map[string]string{"k8s": "kube"})
+	wantContains(t, loadErr(t, map[string]string{"orbit.yaml": "services:\n  a: { cmd: x, with: { a: 1 } }\n"}), "`with`")
+	wantContains(t, loadErr(t, map[string]string{"orbit.yaml": "services:\n  a: { type: k8s, with: nope }\n"}), "mapping")
+}
+
+func TestPluginsSection(t *testing.T) {
+	cfg := mustLoad(t, map[string]string{"orbit.yaml": `
+plugins:
+  forge: true
+  kube:
+    context: prod
+  noisy: false
+  bare:
+services:
+  a: { cmd: x }
+`})
+	p := cfg.Plugins
+	if !p["forge"].Enabled || p["forge"].Settings != nil {
+		t.Fatalf("forge = %+v", p["forge"])
+	}
+	if !p["kube"].Enabled || p["kube"].Settings["context"] != "prod" {
+		t.Fatalf("kube = %+v", p["kube"])
+	}
+	if p["noisy"].Enabled {
+		t.Fatal("false must turn the plugin off")
+	}
+	if !p["bare"].Enabled {
+		t.Fatal("an empty entry asks for the plugin")
+	}
+	wantContains(t, loadErr(t, map[string]string{"orbit.yaml": "plugins:\n  Bad_Name: true\nservices:\n  a: { cmd: x }\n"}), "invalid plugin name")
+	wantContains(t, loadErr(t, map[string]string{"orbit.yaml": "plugins:\n  forge: 3\nservices:\n  a: { cmd: x }\n"}), "expected true, false")
+}
+
+func TestPluginsAndWithAreKnownToTheSchema(t *testing.T) {
+	withPluginTypes(t, map[string]string{"k8s": "kube"})
+	dir := project(t, map[string]string{"orbit.yaml": "plugins: { kube: { context: prod } }\nservices:\n  a: { type: k8s, with: { anything: [1, 2] } }\n"})
+	v := ValidateFile(LoadOptions{Dir: dir, Env: noEnv})
+	if len(v.Errors) != 0 {
+		t.Fatalf("errors: %v", v.Errors)
+	}
+	doc := readYAMLDoc(filepath.Join(dir, "orbit.yaml"))
+	if keys := UnknownKeys(doc); len(keys) != 0 {
+		t.Fatalf("plugins and with must not be reported as unknown: %+v", keys)
+	}
+}
+
+func TestDiffSeesPluginsAndWith(t *testing.T) {
+	withPluginTypes(t, map[string]string{"k8s": "kube"})
+	load := func(yaml string) *OrbitConfig { return mustLoad(t, map[string]string{"orbit.yaml": yaml}) }
+	a := load("services:\n  w: { type: k8s, with: { ctx: a } }\n")
+	b := load("services:\n  w: { type: k8s, with: { ctx: b } }\n")
+	d := DiffConfig(a, b)
+	if len(d.Changed) != 1 || !slices.Contains(d.Changed[0].Fields, "with") || !d.Changed[0].Restart {
+		t.Fatalf("a change of with must restart the service: %+v", d)
+	}
+	c := load("plugins: { kube: true }\nservices:\n  w: { type: k8s, with: { ctx: a } }\n")
+	d = DiffConfig(a, c)
+	if !d.Plugins || d.IsEmpty() {
+		t.Fatalf("a change of plugins: must be a change: %+v", d)
+	}
+	if desc := strings.Join(d.Describe(), "\n"); !strings.Contains(desc, "plugins: not applied while running") {
+		t.Fatalf("the user must be told it needs a restart: %q", desc)
+	}
+}

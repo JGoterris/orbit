@@ -129,6 +129,18 @@ type Badge struct {
 	Color string
 }
 
+var (
+	pluginBadgesMu sync.RWMutex
+	pluginBadges   map[string]string
+)
+
+// SetPluginBadges registers the short tags of the service types plugins provide (type → tag).
+func SetPluginBadges(tags map[string]string) {
+	pluginBadgesMu.Lock()
+	pluginBadges = tags
+	pluginBadgesMu.Unlock()
+}
+
 // TypeBadge is the badge of a service type.
 func TypeBadge(serviceType string) Badge {
 	p := Active()
@@ -139,8 +151,16 @@ func TypeBadge(serviceType string) Badge {
 		return Badge{"comp", p.Accent2}
 	case "external":
 		return Badge{"ext", p.Orange}
+	case "process", "":
+		return Badge{"proc", p.Accent}
 	}
-	return Badge{"proc", p.Accent}
+	pluginBadgesMu.RLock()
+	tag, ok := pluginBadges[serviceType]
+	pluginBadgesMu.RUnlock()
+	if !ok {
+		tag = serviceType
+	}
+	return Badge{truncateRunes(tag, 4), p.Yellow}
 }
 
 // ServiceColor is a stable colour per service name, for prefixes in the combined log view.
@@ -287,4 +307,12 @@ func Mix(base, color string, amount float64) string {
 		out += fmt.Sprintf("%02x", int(math.Round(ch(base, i)*(1-amount)+ch(color, i)*amount)))
 	}
 	return out
+}
+
+func truncateRunes(s string, n int) string {
+	r := []rune(s)
+	if len(r) > n {
+		return string(r[:n])
+	}
+	return s
 }

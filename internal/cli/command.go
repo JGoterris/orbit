@@ -7,7 +7,7 @@ import (
 )
 
 // Subcommands are the words that select a command; anything else in first position is the TUI's directory.
-var Subcommands = []string{"up", "down", "logs", "graph", "ls", "init", "validate", "open", "projects", "status", "ctl", "daemon", "run", "update"}
+var Subcommands = []string{"up", "down", "logs", "graph", "ls", "init", "validate", "open", "projects", "status", "ctl", "daemon", "run", "update", "plugin"}
 
 // Invocation is a parsed command line: which command, its arguments and the directory it works on.
 type Invocation struct {
@@ -58,7 +58,7 @@ func Parse(args []string) (Invocation, error) {
 
 	maxExtra := 0
 	switch inv.Sub {
-	case "up", "logs", "ctl":
+	case "up", "logs", "ctl", "plugin":
 		maxExtra = -1 // any number
 	case "init", "open", "daemon", "validate", "run":
 		maxExtra = 1

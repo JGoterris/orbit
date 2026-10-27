@@ -12,6 +12,8 @@ import (
 	"github.com/JGoterris/orbit/internal/config"
 	"github.com/JGoterris/orbit/internal/core/logs"
 	"github.com/JGoterris/orbit/internal/core/supervisor"
+	"github.com/JGoterris/orbit/internal/plugins"
+	"github.com/JGoterris/orbit/pluginsdk/protocol"
 )
 
 // outQueue is how many messages a client may have waiting; one that lets that many pile up unread is cut off
@@ -165,6 +167,16 @@ func (s *Server) Start() (bool, error) {
 					Pending *supervisor.PendingConfig `json:"pending"`
 				}{p})
 		}),
+		s.sup.Plugins().OnUpdate(func(u plugins.Update) {
+			notice := PluginNotice{Update: u}
+			switch u.Kind {
+			case plugins.UpdateBadges:
+				notice.Badges = s.sup.Plugins().Badges()
+			case plugins.UpdateStatus:
+				notice.Plugins = s.sup.Plugins().Plugins()
+			}
+			s.broadcast(NotifyPlugin, func(sub subscription) bool { return sub.states }, notice)
+		}),
 		s.sup.LogStore().OnLine(func(l logs.Line) {
 			s.broadcast(NotifyLog, func(sub subscription) bool { return sub.logs && wants(sub, l.Service) }, l)
 		}),
@@ -296,6 +308,8 @@ type params struct {
 	How      string          `json:"how"`
 	States   *bool           `json:"states"`
 	Logs     bool            `json:"logs"`
+	Plugin   string          `json:"plugin"`
+	Data     json.RawMessage `json:"data"`
 }
 
 // targets are the service names of the params; groups expand to their members.
@@ -369,7 +383,34 @@ func (s *Server) handle(c *serverConn, method string, raw json.RawMessage) (any,
 	ok := map[string]bool{"ok": true}
 	switch method {
 	case MethodHello:
-		return Hello{Protocol: Protocol, Version: s.version, Pid: os.Getpid(), Daemon: s.daemon, StateDir: sup.StateDir(), Config: sup.Config(), Pending: sup.Pending()}, nil
+		return Hello{Protocol: Protocol, Version: s.version, Pid: os.Getpid(), Daemon: s.daemon, StateDir: sup.StateDir(), Config: sup.Config(), Pending: sup.Pending(),
+			Plugins: sup.Plugins().Plugins(), Badges: sup.Plugins().Badges()}, nil
+	case MethodPlugins:
+		return PluginsState{Plugins: sup.Plugins().Plugins(), Badges: sup.Plugins().Badges()}, nil
+	case MethodPluginData:
+		var req protocol.ViewDataParams
+		if err := json.Unmarshal(p.Data, &req); err != nil {
+			return nil, paramsErr("data must be the params of view.data")
+		}
+		return sup.Plugins().Data(p.Plugin, req)
+	case MethodPluginAction:
+		var req protocol.InvokeParams
+		if err := json.Unmarshal(p.Data, &req); err != nil {
+			return nil, paramsErr("data must be the params of action.invoke")
+		}
+		return sup.Plugins().Invoke(p.Plugin, req)
+	case MethodPluginOptions:
+		var req protocol.OptionsParams
+		if err := json.Unmarshal(p.Data, &req); err != nil {
+			return nil, paramsErr("data must be the params of action.options")
+		}
+		return sup.Plugins().Options(p.Plugin, req)
+	case MethodPluginSections:
+		var req protocol.SectionsParams
+		if err := json.Unmarshal(p.Data, &req); err != nil {
+			return nil, paramsErr("data must be the params of service.sections")
+		}
+		return sup.Plugins().Sections(p.Plugin, req)
 	case MethodSnapshot:
 		return sup.Snapshot(), nil
 	case MethodLogs:

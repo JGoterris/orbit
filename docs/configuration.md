@@ -191,6 +191,29 @@ services:
 - Editing it shows `⟳ orbit.yaml changed · U` like any other config file, and `orbit validate` checks it too.
 - It is ignored in a directory that only has a `docker-compose.yml`.
 
+## Plugins
+
+`plugins:` says which [plugins](plugins/index.md) the project uses, and a plugin can provide new values for a service's
+`type:`, configured with `with:`:
+
+```yaml
+plugins:
+  forge: true                  # the project needs it: orbit warns when it is not installed
+  kube: { context: staging }   # the same, with settings for the plugin
+  noisy: false                 # off in this project
+
+services:
+  pods:
+    type: k8s                  # provided by the kube plugin
+    with: { namespace: shop }  # what the plugin accepts is up to the plugin
+    depends_on: [db]           # dependencies, health, restart and logs work as in any service
+```
+
+`true`, or settings, means the project needs the plugin (orbit never installs it by itself); `false` turns it off in
+this project. A type that no installed plugin provides is an error when loading, with the way out. `orbit validate`
+asks the plugins to check the `with:` of their services. Changes to `plugins:` apply the next time orbit starts for the
+project.
+
 ## Editor support
 
 `orbit.schema.json` (shipped with the package) gives autocompletion, hover docs and

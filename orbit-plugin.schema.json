@@ -1,0 +1,132 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "orbit-plugin.yaml",
+  "description": "The manifest of an orbit plugin: what it contributes to orbit and how it is run.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["name", "version", "api"],
+  "properties": {
+    "name": { "type": "string", "pattern": "^[a-z][a-z0-9-]{0,31}$", "description": "Lowercase letters, digits and dashes. It is also the command: `orbit <name> …`." },
+    "version": { "type": "string", "description": "Version of the plugin, shown by `orbit plugin ls`." },
+    "api": { "const": 1, "description": "Version of the plugin protocol the plugin was written for." },
+    "minOrbit": { "type": "string", "description": "The oldest orbit that can run the plugin." },
+    "description": { "type": "string" },
+    "run": { "$ref": "#/definitions/command", "description": "The process orbit talks to. Needed for everything except a plugin that only has a command." },
+    "cli": { "$ref": "#/definitions/command", "description": "What `orbit <name> …` runs; the arguments are passed as typed." },
+    "events": {
+      "type": "array",
+      "items": { "enum": ["state", "config", "log"] },
+      "description": "What the plugin wants to be told about. `log` is every line of every service: ask for it only if you need it."
+    },
+    "contributes": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "views": { "type": "array", "items": { "$ref": "#/definitions/view" }, "description": "Tabs of the header." },
+        "actions": { "type": "array", "items": { "$ref": "#/definitions/action" }, "description": "Commands: an entry in the palette, and a key if you give one." },
+        "serviceSections": { "type": "array", "items": { "$ref": "#/definitions/section" }, "description": "Blocks added to the detail of a service." },
+        "serviceColumn": { "$ref": "#/definitions/column", "description": "A column in the list of services, with the badges the plugin sets." },
+        "headerBadges": { "type": "boolean", "description": "The plugin shows badges in the header." },
+        "serviceTypes": { "type": "array", "items": { "$ref": "#/definitions/serviceType" }, "description": "Values of `type:` in orbit.yaml that the plugin runs." }
+      }
+    }
+  },
+  "definitions": {
+    "command": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["command"],
+      "properties": {
+        "command": { "type": "array", "items": { "type": "string" }, "minItems": 1, "description": "The command and its arguments, without a shell. Paths starting with ./ are in the folder of the plugin." },
+        "windows": { "type": "array", "items": { "type": "string" }, "description": "The same on Windows." }
+      }
+    },
+    "view": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "title", "panes"],
+      "properties": {
+        "id": { "type": "string", "pattern": "^[a-z0-9][a-z0-9_-]{0,31}$" },
+        "title": { "type": "string" },
+        "sidebar": { "enum": ["none", "services"], "description": "`services` puts the list of services on the left, like the Graph view." },
+        "panes": { "type": "array", "minItems": 1, "maxItems": 6, "items": { "$ref": "#/definitions/pane" }, "description": "The first one goes on the left, the rest are stacked on its right." }
+      }
+    },
+    "pane": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "widget"],
+      "properties": {
+        "id": { "type": "string", "pattern": "^[a-z0-9][a-z0-9_-]{0,31}$" },
+        "widget": { "enum": ["list", "detail", "text"] },
+        "title": { "type": "string" },
+        "weight": { "type": "integer", "minimum": 0, "description": "Share of the space (default 1)." },
+        "bind": { "type": "string", "description": "A pane declared before this one: this one is asked again whenever the selection of that one changes." },
+        "follow": { "type": "boolean", "description": "A text pane that keeps its end in view." }
+      }
+    },
+    "action": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "title"],
+      "properties": {
+        "id": { "type": "string", "pattern": "^[a-z0-9][a-z0-9_-]{0,31}$" },
+        "title": { "type": "string" },
+        "key": { "type": "string", "description": "An action of no view works everywhere, so its key must be alt+<key> or f1-f12. The user can change it in config.json." },
+        "scope": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "view": { "type": "string" },
+            "pane": { "type": "string" },
+            "service": { "type": "boolean", "description": "One palette entry per service." }
+          }
+        },
+        "confirm": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["title"],
+          "properties": {
+            "title": { "type": "string", "description": "The question. {item}, {service} and {<input name>} are replaced." },
+            "danger": { "type": "boolean" }
+          }
+        },
+        "inputs": { "type": "array", "items": { "$ref": "#/definitions/input" } }
+      }
+    },
+    "input": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "kind"],
+      "properties": {
+        "name": { "type": "string" },
+        "kind": { "enum": ["text", "pick"] },
+        "title": { "type": "string" },
+        "default": { "type": "string" },
+        "options": { "type": "array", "items": { "type": "string" } },
+        "optionsFrom": { "type": "boolean", "description": "The plugin gives the options (action.options)." }
+      }
+    },
+    "section": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "title"],
+      "properties": { "id": { "type": "string" }, "title": { "type": "string" } }
+    },
+    "column": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id"],
+      "properties": { "id": { "type": "string" }, "title": { "type": "string" }, "width": { "type": "integer", "minimum": 3 } }
+    },
+    "serviceType": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name"],
+      "properties": {
+        "name": { "type": "string", "pattern": "^[a-z][a-z0-9-]{0,31}$", "not": { "enum": ["process", "docker", "compose", "external"] } },
+        "badge": { "type": "string", "description": "Up to four letters, next to the services of this type." }
+      }
+    }
+  }
+}

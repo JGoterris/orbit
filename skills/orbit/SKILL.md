@@ -51,6 +51,9 @@ dependents before stopping or restarting a service others depend on.
   touch, and leave running what you started unless the user asks you to stop it.
 - Do not pass `--profile` / `--no-profiles` unless asked: the selection is remembered for the project and changes
   what the user's TUI runs too.
+- Plugins run code with the user's permissions: do not install, upgrade, enable or remove one. `orbit plugin ls`
+  shows what is installed; a plugin may add commands (`orbit <plugin> …`) and service types to `orbit.yaml`: use
+  them when the user's task calls for it, as any other command.
 - Do not edit `orbit.yaml` to work around a failing service without saying so; report what the logs show.
 
 For every command and flag, and the JSON shapes, see [references/cli.md](references/cli.md).
