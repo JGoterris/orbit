@@ -22,6 +22,8 @@ type Options struct {
 	Grep     string
 	Since    string
 	Check    bool
+	Yes      bool
+	Purge    bool
 	// Profile is every --profile given, joined with commas
 	Profile    string
 	NoProfiles bool
@@ -48,6 +50,8 @@ var optSpecs = []optSpec{
 	{long: "grep", takesValue: true, set: func(o *Options, v string) { o.Grep = v }},
 	{long: "since", takesValue: true, set: func(o *Options, v string) { o.Since = v }},
 	{long: "check", set: func(o *Options, _ string) { o.Check = true }},
+	{long: "purge", set: func(o *Options, _ string) { o.Purge = true }},
+	{long: "yes", short: "y", set: func(o *Options, _ string) { o.Yes = true }},
 	{long: "profile", takesValue: true, set: addProfiles},
 	{long: "profiles", takesValue: true, set: addProfiles},
 	{long: "no-profiles", set: func(o *Options, _ string) { o.NoProfiles = true }},

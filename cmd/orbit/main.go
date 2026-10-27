@@ -3,6 +3,7 @@ package main
 import (
 	"errors"
 	"fmt"
+	"github.com/JGoterris/orbit/internal/plugins"
 	"os"
 	"path/filepath"
 	"runtime/debug"
@@ -38,9 +39,14 @@ func buildVersion() string {
 
 func run(args []string) int {
 	cli.Version = buildVersion()
+	plugins.Configure(cli.Version)
 	// the hidden wrapper a process service runs under on Windows (see runner.RunWrap)
 	if len(args) > 0 && args[0] == runner.WrapCommand {
 		return runner.RunWrap(args[1:])
+	}
+	// `orbit <plugin> …`: the arguments belong to the plugin, so they must not be parsed as orbit's own
+	if code, ok := cli.RunPluginCommand(args); ok {
+		return code
 	}
 	inv, err := cli.Parse(args)
 	if err != nil {
@@ -124,6 +130,8 @@ func run(args []string) int {
 	}
 
 	switch inv.Sub {
+	case "plugin":
+		return cli.RunPlugin(inv.Options, inv.Rest)
 	case "projects":
 		return cli.RunProjects()
 	case "init":
