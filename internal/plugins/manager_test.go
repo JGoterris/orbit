@@ -79,6 +79,11 @@ func TestManagerBadgesAndUpdates(t *testing.T) {
 	}
 
 	m.procs["fake"].Stop()
+	// the status change that clears the badges is published by the supervisor, just after Stop returns
+	deadline := time.Now().Add(2 * time.Second)
+	for len(m.Badges()["service:api"]) != 0 && time.Now().Before(deadline) {
+		time.Sleep(10 * time.Millisecond)
+	}
 	if len(m.Badges()["service:api"]) != 0 {
 		t.Fatal("the badges of a plugin that stopped must go away")
 	}
