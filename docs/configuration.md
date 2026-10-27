@@ -199,7 +199,7 @@ services:
 ```yaml
 plugins:
   forge: true                  # the project needs it: orbit warns when it is not installed
-  kube: { context: staging }   # the same, with settings for the plugin
+  kube: { from: acme/orbit-kube, context: staging }   # the same, with settings; from: says where to install it
   noisy: false                 # off in this project
 
 services:
@@ -210,7 +210,8 @@ services:
 ```
 
 `true`, or settings, means the project needs the plugin (orbit never installs it by itself); `false` turns it off in
-this project. A type that no installed plugin provides is an error when loading, with the way out. `orbit validate`
+this project. `from: owner/repo[@tag]` says where to install the plugin from, so the warning for a missing plugin gives
+the exact command (`from` is not passed to the plugin as a setting). A type that no installed plugin provides is an error when loading, with the way out. `orbit validate`
 asks the plugins to check the `with:` of their services. Changes to `plugins:` apply the next time orbit starts for the
 project.
 

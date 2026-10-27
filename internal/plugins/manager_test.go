@@ -36,7 +36,7 @@ func TestManagerCleansWhatThePluginSends(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := d.List.Items[0].Cells["name"].Text; got != "a[31mb" {
+	if got := d.List.Items[0].Cells["name"].Text; got != "ab" {
 		t.Fatalf("escape sequences must not reach the screen, got %q", got)
 	}
 }
@@ -60,7 +60,7 @@ func TestManagerBadgesAndUpdates(t *testing.T) {
 		t.Fatal(err)
 	}
 	b := m.Badges()
-	if len(b["service:api"]) != 1 || b["service:api"][0].Text != "[31m!41" || b["service:api"][0].Tone != "" {
+	if len(b["service:api"]) != 1 || b["service:api"][0].Text != "!41" || b["service:api"][0].Tone != "" {
 		t.Fatalf("service badge must be cleaned: %+v", b)
 	}
 	if len(b["header"]) != 0 {
@@ -79,6 +79,11 @@ func TestManagerBadgesAndUpdates(t *testing.T) {
 	}
 
 	m.procs["fake"].Stop()
+	// the status change that clears the badges is published by the supervisor, just after Stop returns
+	deadline := time.Now().Add(2 * time.Second)
+	for len(m.Badges()["service:api"]) != 0 && time.Now().Before(deadline) {
+		time.Sleep(10 * time.Millisecond)
+	}
 	if len(m.Badges()["service:api"]) != 0 {
 		t.Fatal("the badges of a plugin that stopped must go away")
 	}
@@ -95,13 +100,24 @@ func TestManagerListsMissingPlugins(t *testing.T) {
 	}
 }
 
+func TestInstallCommand(t *testing.T) {
+	if got := InstallCommand("kube", ""); got != "orbit plugin install <owner>/kube" {
+		t.Errorf("without a source: %q", got)
+	}
+	if got := InstallCommand("kube", "acme/orbit-kube@v1"); got != "orbit plugin install acme/orbit-kube@v1" {
+		t.Errorf("with a source: %q", got)
+	}
+}
+
 func TestClean(t *testing.T) {
 	for in, want := range map[string]string{
-		"plain":              "plain",
-		"a\tb":               "a  b",
-		"x\ny\r\nz":          "xyz",
-		"\x1b]0;title\x07ok": "]0;titleok",
-		"ñ ✓ 日本":             "ñ ✓ 日本",
+		"plain":                 "plain",
+		"a\tb":                  "a  b",
+		"x\ny\r\nz":             "xyz",
+		"\x1b]0;title\x07ok":    "ok",
+		"\x1b[31mred\x1b[0m":    "red",
+		"\x1b[1;38;5;9mx\x1b[K": "x",
+		"ñ ✓ 日本":                "ñ ✓ 日本",
 	} {
 		if got := Clean(in); got != want {
 			t.Errorf("Clean(%q) = %q, want %q", in, got, want)

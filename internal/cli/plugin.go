@@ -103,13 +103,30 @@ func confirmed(question string, yes bool) bool {
 	if yes {
 		return true
 	}
-	if st, err := os.Stdin.Stat(); err != nil || st.Mode()&os.ModeCharDevice == 0 {
+	if !interactive() {
 		errorln("nobody to ask: run it from a terminal, or pass -y")
 		return false
 	}
 	fmt.Print(question + " [y/N] ")
 	line, _ := bufio.NewReader(os.Stdin).ReadString('\n')
 	return strings.EqualFold(strings.TrimSpace(line), "y") || strings.EqualFold(strings.TrimSpace(line), "yes")
+}
+
+// interactive reports whether there is a terminal to ask on.
+func interactive() bool {
+	st, err := os.Stdin.Stat()
+	return err == nil && st.Mode()&os.ModeCharDevice != 0
+}
+
+// WarnMissingPlugins says which plugins orbit.yaml asks for and are not installed; the project still works without them.
+func WarnMissingPlugins(cfg *config.OrbitConfig) {
+	if len(cfg.Plugins) == 0 || os.Getenv("ORBIT_NO_PLUGINS") != "" {
+		return
+	}
+	_, missing := plugins.Resolve(cfg, userconfig.Read())
+	for _, name := range missing {
+		fmt.Fprintln(os.Stderr, yellow("warning: plugin "+name+" is not installed: "+plugins.InstallCommand(name, cfg.Plugins[name].From)))
+	}
 }
 
 func checkName(name string) error {
@@ -277,6 +294,9 @@ func pluginUpgrade(ctx context.Context, names []string, yes bool) int {
 		describe(st, p)
 		if !confirmed("Upgrade "+name+"?", yes) {
 			st.Discard()
+			if !yes && !interactive() {
+				code = 1
+			}
 			continue
 		}
 		if _, err := st.Commit(); err != nil {
@@ -303,15 +323,21 @@ func pluginRemove(name string, purge bool) int {
 		fmt.Println(dim("its settings (" + cfg + ") and data (" + data + ") were kept: --purge deletes them"))
 		return 0
 	}
+	found := removeErr == nil
 	for _, dir := range []string{cfg, data} {
 		if _, err := os.Stat(dir); err != nil {
 			continue
 		}
+		found = true
 		if err := os.RemoveAll(dir); err != nil {
 			errorln(err.Error())
 			return 1
 		}
 		fmt.Println(green("deleted " + dir))
+	}
+	if !found {
+		errorln(removeErr.Error())
+		return 1
 	}
 	// the choices the user made about it in config.json go too
 	userconfig.Forget(name)
@@ -319,8 +345,8 @@ func pluginRemove(name string, purge bool) int {
 }
 
 func pluginSetEnabled(name string, on bool) int {
-	if _, err := plugins.Load(name); err != nil {
-		errorln(fmt.Sprintf("plugin %q is not installed (%v)", name, err))
+	if err := checkInstalled(name); err != nil {
+		errorln(err.Error())
 		return 1
 	}
 	if !userconfig.Write(userconfig.Config{Plugins: map[string]userconfig.PluginSetting{name: {Enabled: &on}}}) {
@@ -331,6 +357,18 @@ func pluginSetEnabled(name string, on bool) int {
 	fmt.Println(green(name + " " + word))
 	fmt.Println(dim("it takes effect the next time orbit starts (`orbit down` first if it runs)"))
 	return 0
+}
+
+// checkInstalled is nil when name is an installed plugin, even a broken one; otherwise it says what is wrong.
+func checkInstalled(name string) error {
+	list, broken := plugins.Installed()
+	if slices.ContainsFunc(list, func(p *plugins.Plugin) bool { return p.Manifest.Name == name }) {
+		return nil
+	}
+	if err, ok := broken[name]; ok {
+		return fmt.Errorf("plugin %q is broken: %v", name, err)
+	}
+	return fmt.Errorf("plugin %q is not installed", name)
 }
 
 func pluginDir(args []string) int {
@@ -361,6 +399,10 @@ func pluginLogs(name, lines string, follow bool) int {
 	f, err := os.Open(file)
 	if err != nil {
 		if os.IsNotExist(err) {
+			if err := checkInstalled(name); err != nil {
+				errorln(err.Error())
+				return 1
+			}
 			fmt.Println(dim("no log yet: " + file))
 			return 0
 		}
@@ -405,10 +447,12 @@ func pluginDoctor(names []string) int {
 	_, keyProblems := ui.ResolvePluginKeys(infos, userconfig.Read().Keys)
 
 	bad := 0
+	seen := map[string]bool{}
 	report := func(name, version string, problems []string) {
 		if len(names) > 0 && !slices.Contains(names, name) {
 			return
 		}
+		seen[name] = true
 		fmt.Println(strings.TrimSpace(bold(name) + " " + version))
 		if len(problems) == 0 {
 			fmt.Println("  " + green("✓ ok"))
@@ -450,6 +494,12 @@ func pluginDoctor(names []string) int {
 		}
 		report(m.Name, m.Version, problems)
 	}
+	for _, n := range names {
+		if !seen[n] {
+			errorln(fmt.Sprintf("plugin %q is not installed", n))
+			bad++
+		}
+	}
 	if bad > 0 {
 		return 1
 	}
@@ -480,6 +530,12 @@ func RunPluginCommand(args []string) (code int, handled bool) {
 	root := cwd
 	if file := config.FindConfigFile(cwd); file != "" {
 		root = filepath.Dir(file)
+		if cfg, err := config.LoadConfig(config.LoadOptions{File: file}); err == nil {
+			if pc, ok := cfg.Plugins[name]; ok && !pc.Enabled {
+				errorln(fmt.Sprintf("plugin %s is turned off in %s", name, filepath.Base(file)))
+				return 1, true
+			}
+		}
 	}
 	argv := append(plugins.Argv(p.Manifest.CLI, p.Dir), args[1:]...)
 	cmd := exec.Command(argv[0], argv[1:]...)

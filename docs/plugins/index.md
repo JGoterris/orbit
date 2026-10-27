@@ -78,12 +78,14 @@ orbit starts it again up to three times. To open orbit without any plugin (to se
 ```yaml
 plugins:
   forge: true                  # the project needs it: orbit warns when it is not installed
-  kube: { context: staging }   # the same, with settings for the plugin
+  kube: { from: acme/orbit-kube, context: staging }   # the same, with settings; from: says where to install it
   noisy: false                 # off in this project
 ```
 
 orbit never installs anything by itself: a missing plugin is a warning in the header and a message with the command
-to run. Changes to `plugins:` apply the next time orbit starts for the project.
+to run. `from: owner/repo[@tag]` says where to install the plugin from, so that command is exact (without it, the
+message has `<owner>/name` for you to fill in); `from` is for orbit and is not passed to the plugin as a setting.
+Changes to `plugins:` apply the next time orbit starts for the project.
 
 ## Per user
 

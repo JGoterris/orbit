@@ -17,6 +17,7 @@ import (
 	"runtime"
 	"strings"
 	"testing"
+	"time"
 )
 
 const testManifest = `name: demo
@@ -301,5 +302,32 @@ func TestInstallFallsBackToCloning(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(st.Plugin.Dir, ".git")); err == nil {
 		t.Fatal(".git must be removed")
+	}
+}
+
+func TestStageSweepsOldStagingAndRefusesDotOwners(t *testing.T) {
+	isolate(t)
+	must(t, os.MkdirAll(Root(), 0o755))
+	old, fresh := filepath.Join(Root(), ".staging-old"), filepath.Join(Root(), ".staging-fresh")
+	must(t, os.Mkdir(old, 0o755))
+	must(t, os.Mkdir(fresh, 0o755))
+	past := time.Now().Add(-2 * time.Hour)
+	must(t, os.Chtimes(old, past, past))
+
+	src := filepath.Join(t.TempDir(), "src")
+	writePlugin(t, src)
+	st, err := Stage(context.Background(), src)
+	must(t, err)
+	st.Discard()
+	if _, err := os.Stat(old); err == nil {
+		t.Error("a staging folder from hours ago is left over from a killed install: it goes")
+	}
+	if _, err := os.Stat(fresh); err != nil {
+		t.Error("a recent one may belong to an install that is running: it stays")
+	}
+	for _, spec := range []string{"../evil", "./x", "a/.."} {
+		if _, err := Stage(context.Background(), spec); err == nil {
+			t.Errorf("%q must be refused", spec)
+		}
 	}
 }

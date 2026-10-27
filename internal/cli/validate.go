@@ -32,6 +32,7 @@ func RunValidate(opts config.LoadOptions) int {
 		}
 		return 1
 	}
+	WarnMissingPlugins(res.Config)
 	n, g := len(res.Config.Services), len(res.Config.Groups)
 	fmt.Printf("%s %s: %d service%s, %d group%s\n", green("✓"), name, n, plural(n), g, plural(g))
 	return 0

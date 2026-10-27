@@ -109,6 +109,11 @@ func (r *recorder) count() int {
 func startFake(t *testing.T, mode string) (*Process, *recorder) {
 	t.Helper()
 	fastTimings(t)
+	return launchFake(t, mode)
+}
+
+func launchFake(t *testing.T, mode string) (*Process, *recorder) {
+	t.Helper()
 	t.Setenv("ORBIT_TEST_PLUGIN", mode)
 	pl := &Plugin{Dir: t.TempDir(), Manifest: &protocol.Manifest{
 		Name: "fake", Run: &protocol.Command{Command: []string{os.Args[0]}},
@@ -187,7 +192,9 @@ func TestProcessIgnoresJunkOnStdout(t *testing.T) {
 func TestProcessFailsAfterRetries(t *testing.T) {
 	launches := filepath.Join(t.TempDir(), "launches")
 	t.Setenv("ORBIT_TEST_LAUNCHES", launches)
-	p, _ := startFake(t, "crash")
+	fastTimings(t)
+	initTimeout = 5 * time.Second // starting the test binary can take longer than 300ms on Windows; the crash must win the race
+	p, _ := launchFake(t, "crash")
 	waitStatus(t, p, StatusFailed)
 	if _, msg := p.Status(); !strings.Contains(msg, "exit") {
 		t.Fatalf("the reason should say how it died: %q", msg)

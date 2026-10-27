@@ -54,6 +54,9 @@ func Stage(ctx context.Context, spec string) (*Staged, error) {
 	if m == nil {
 		return nil, fmt.Errorf("%q is neither a folder nor owner/repo[@tag]", spec)
 	}
+	if strings.Trim(m[1], ".") == "" || strings.Trim(m[2], ".") == "" {
+		return nil, fmt.Errorf("%q is not a valid owner/repo", spec)
+	}
 	return stageGitHub(ctx, m[1], m[2], m[3])
 }
 
@@ -61,7 +64,22 @@ func newTemp() (string, error) {
 	if err := os.MkdirAll(Root(), 0o755); err != nil {
 		return "", err
 	}
+	sweepStaging()
 	return os.MkdirTemp(Root(), ".staging-")
+}
+
+// sweepStaging deletes the staging folders an install that was killed left behind. The recent ones may belong to an
+// install that is still running.
+func sweepStaging() {
+	entries, _ := os.ReadDir(Root())
+	for _, e := range entries {
+		if !e.IsDir() || !strings.HasPrefix(e.Name(), ".staging-") {
+			continue
+		}
+		if info, err := e.Info(); err == nil && time.Since(info.ModTime()) > time.Hour {
+			os.RemoveAll(filepath.Join(Root(), e.Name()))
+		}
+	}
 }
 
 func stageLocal(src string) (*Staged, error) {
@@ -378,7 +396,12 @@ func gitClone(ctx context.Context, owner, repo, ref, dest string) error {
 	cmd := exec.CommandContext(ctx, "git", args...)
 	cmd.Env = append(os.Environ(), "GIT_TERMINAL_PROMPT=0")
 	if out, err := cmd.CombinedOutput(); err != nil {
-		return fmt.Errorf("git clone %s/%s: %s", owner, repo, strings.TrimSpace(string(out)))
+		msg := strings.TrimSpace(string(out))
+		// without a terminal, git cannot ask for the credentials GitHub wants for a repository it does not show
+		if strings.Contains(msg, "could not read Username") || strings.Contains(msg, "unable to get password") || strings.Contains(msg, "not found") {
+			return fmt.Errorf("the repository %s/%s does not exist or is private", owner, repo)
+		}
+		return fmt.Errorf("git clone %s/%s: %s", owner, repo, msg)
 	}
 	os.RemoveAll(filepath.Join(dest, repo, ".git"))
 	return nil
