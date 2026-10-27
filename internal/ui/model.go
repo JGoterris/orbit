@@ -36,6 +36,7 @@ const (
 	modeSwitch
 	modeTasks
 	modeProfiles
+	modePlugin
 )
 
 // pane is a focusable panel.
@@ -55,6 +56,8 @@ type viewDef struct {
 	panes          []pane
 	defaultPane    pane
 	compactSidebar bool
+	// plugin is set for the views a plugin adds
+	plugin *pluginViewRef
 }
 
 var views = []viewDef{
@@ -62,15 +65,6 @@ var views = []viewDef{
 	{id: "graph", label: "Graph", panes: []pane{paneServices, paneGraph}, defaultPane: paneGraph, compactSidebar: true},
 	{id: "logs", label: "Logs", panes: []pane{paneServices, paneLogs}, defaultPane: paneLogs},
 	{id: "git", label: "Git", panes: []pane{paneRepos, paneChanges, paneBranches, paneCommits, paneStash, paneGitDiff, paneGitLog}, defaultPane: paneRepos},
-}
-
-func viewByID(id string) viewDef {
-	for _, v := range views {
-		if v.id == id {
-			return v
-		}
-	}
-	return views[0]
 }
 
 func (v viewDef) has(p pane) bool { return slices.Contains(v.panes, p) }
@@ -119,6 +113,8 @@ type Options struct {
 	Splash bool
 	// Version is orbit's, shown on the splash
 	Version string
+	// PluginKeys rebinds the keys of plugin actions ("<plugin>.<action>" → key), from config.json
+	PluginKeys map[string]string
 }
 
 // Relaunch is an orbit.yaml on disk that differs from what the running orbit has.
@@ -184,6 +180,8 @@ type geoData struct {
 	graphOffX, graphOffY           int
 	// header tabs: x ranges
 	tabs []tabHit
+	// badges of the header that a click runs
+	badges []badgeHit
 	// clickable panels of the last render (the git view and the service detail)
 	hits []hitRegion
 	// log window of the last render: indexes into the displayed lines
@@ -301,6 +299,8 @@ type Model struct {
 	pendingSeen string
 
 	quitting bool
+
+	plug pluginUI
 }
 
 // New builds the model for a supervisor.
@@ -334,6 +334,7 @@ func New(opts Options) *Model {
 		consoles:   console.NewManager(),
 		lastStatus: map[string]supervisor.Status{}, lastRes: map[string]resReport{},
 	}
+	m.initPlugins()
 	for _, n := range order {
 		m.themeEntries = append(m.themeEntries, themeEntry{name: n, palette: themes[n], custom: slices.Contains(opts.CustomThemes, n)})
 	}
@@ -426,7 +427,7 @@ func (m *Model) viewLines() []logs.Line {
 	return raw
 }
 
-func (m *Model) viewDef() viewDef { return viewByID(m.view) }
+func (m *Model) viewDef() viewDef { return m.viewByID(m.view) }
 
 func (m *Model) defaultSidebarW() int {
 	if m.viewDef().compactSidebar {

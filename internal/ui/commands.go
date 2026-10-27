@@ -25,8 +25,8 @@ func (m *Model) commands() []command {
 	add("start-all", "Start all services", "S", func(m *Model) tea.Cmd { return m.op(sup.StartAll) })
 	add("stop-all", "Stop all services", "X", func(m *Model) tea.Cmd { return m.op(sup.StopAll) })
 	add("restart-all", "Restart all running services", "R", func(m *Model) tea.Cmd { return m.restartAll() })
-	for i, v := range views {
-		add("view-"+v.id, "View: "+v.label, fmt.Sprint(i+1), func(m *Model) tea.Cmd { m.setView(v.id); return nil })
+	for i, v := range m.allViews() {
+		add("view-"+v.id, "View: "+v.label, fmt.Sprint(i+1), func(m *Model) tea.Cmd { m.setView(v.id); return m.loadHistory() })
 	}
 	add("grow-panel", "Grow focused panel", "+", func(m *Model) tea.Cmd { m.resize(1); return nil })
 	add("shrink-panel", "Shrink focused panel", "-", func(m *Model) tea.Cmd { m.resize(-1); return nil })
@@ -132,7 +132,7 @@ func (m *Model) commands() []command {
 		}
 		return m.doQuit("stop")
 	})
-	return list
+	return append(list, m.pluginCommands()...)
 }
 
 func (m *Model) restartAll() tea.Cmd {

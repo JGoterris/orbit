@@ -158,7 +158,11 @@ func (m *Model) renderDetail(name string, w, h int, focused, expanded bool, rows
 	}
 
 	// ---- extra blocks, in priority order, as far as the height allows
-	extra := max(0, rows-baseRows)
+	pluginLines := m.pluginSectionLines(m.pluginSectionsOf(name), inner, 3)
+	if len(pluginLines) > maxPluginDetailRows {
+		pluginLines = pluginLines[:maxPluginDetailRows]
+	}
+	extra := max(0, rows-baseRows-len(pluginLines))
 	var items []item
 	if svc.Health != nil {
 		items = append(items, item{"check", fmt.Sprintf("every %s · timeout %s", metrics.FormatDuration(float64(svc.Health.Interval)), metrics.FormatDuration(float64(svc.Health.Timeout)))})
@@ -316,6 +320,7 @@ func (m *Model) renderDetail(name string, w, h int, focused, expanded bool, rows
 	}
 	add(l)
 
+	out = append(out, pluginLines...)
 	if len(configLines) > 0 {
 		out = append(out, m.headerLine("config", inner))
 		for _, cl := range configLines {

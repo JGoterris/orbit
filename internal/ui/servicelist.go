@@ -14,10 +14,12 @@ import (
 
 // listColumns says how the Services panel spends its width. The name asks for what it needs, up to a share of the
 // panel, so a very long one cannot push the other columns out for good; the columns then come in priority order
-// (port, uptime, memory, cpu, type) while they fit, and whatever is left goes back to the name.
+// (port, what the plugins add, uptime, memory, cpu, type) while they fit, and whatever is left goes back to the name.
 type listCols struct {
 	name                          int
 	port, uptime, mem, cpu, badge bool
+	// plugins are the columns the plugins add, after all of the others
+	plugins []pluginCol
 }
 
 const (
@@ -48,6 +50,13 @@ func (m *Model) listColumns(names []string, w int, compact bool) listCols {
 	}
 	// compact lists (the narrow sidebar of the graph and logs views) only ever show the port
 	if take(&c.port, colPortW) && !compact {
+		// what a plugin shows about a service matters more than its uptime, memory, cpu or type
+		for _, pc := range m.pluginServiceColumns() {
+			if rest >= pc.w+1 {
+				c.plugins = append(c.plugins, pc)
+				rest -= pc.w + 1
+			}
+		}
 		_ = take(&c.uptime, colUptimeW) && take(&c.mem, colMemW) && take(&c.cpu, colCPUW) && take(&c.badge, colBadgeW)
 	}
 	c.name = max(6, avail-(avail-want-rest))
@@ -177,6 +186,10 @@ func (m *Model) renderServiceList(w, h int, focused, compact bool) []string {
 				upColor = p.Red
 			}
 			l.add(upColor, theme.Fit(uptime, 7))
+		}
+		for _, pc := range cols.plugins {
+			b := m.pluginServiceColumn(pc.id, name, pc.w, bg)
+			l.add(p.Text, " ").raw(b.String(), b.width())
 		}
 		content = append(content, l.pad(inner).String())
 	}

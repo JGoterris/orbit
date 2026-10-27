@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -163,7 +164,7 @@ func (m *Model) renderThemePicker(W, H int) ([]string, int, int, int) {
 	return modalBox("Theme", w, h, content), w, x, y
 }
 
-var helpRows = [][2]string{
+var baseHelpRows = [][2]string{
 	{"↑↓ / j k", "select service"},
 	{"← → (graph)", "move across the dependency graph"},
 	{"space", "start / stop selected (with dependencies)"},
@@ -205,18 +206,24 @@ var helpRows = [][2]string{
 	{"q", "quit: stop all services or leave them running"},
 }
 
+// helpRows are the rows of the keys modal: orbit's, then the ones the plugins add.
+func (m *Model) helpRows() [][2]string {
+	return append(slices.Clone(baseHelpRows), m.pluginHelpRows()...)
+}
+
 const helpKeyW = 24
 
 // helpSize is the height of the keys modal and how many rows of it fit at a given terminal height.
-func helpSize(H int) (h, page int) {
-	h = min(len(helpRows)+3, max(5, H-4))
+func helpSize(rows, H int) (h, page int) {
+	h = min(rows+3, max(5, H-4))
 	return h, h - 3
 }
 
 func (m *Model) renderHelp(W, H int) ([]string, int, int, int) {
 	p := theme.Active()
 	w := min(104, W-4)
-	h, page := helpSize(H)
+	helpRows := m.helpRows()
+	h, page := helpSize(len(helpRows), H)
 	descW := max(1, w-4-helpKeyW)
 	start := min(m.helpScroll, max(0, len(helpRows)-page))
 	var content []string
