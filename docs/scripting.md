@@ -6,7 +6,7 @@ and drive it from outside: `~/.local/state/orbit/<project>/orbit.sock` (a shorte
 `orbit status --json`, `orbit ctl` and `orbit logs -f` are clients of it, and so is the TUI. The daemon writes
 its own messages to `daemon.log` next to the socket.
 
-Protocol: JSON-RPC 2.0, one JSON message per line, version 4 (see `internal/ipc/protocol.go`; `hello` reports it and a client
+Protocol: JSON-RPC 2.0, one JSON message per line, version 5 (see `internal/ipc/protocol.go`; `hello` reports it and a client
 should refuse a server that speaks another one).
 
 ```bash
@@ -16,5 +16,7 @@ echo '{"jsonrpc":"2.0","id":1,"method":"snapshot"}' | socat - UNIX-CONNECT:$SOCK
 Requests: `hello`, `snapshot`, `logs`, `start` / `stop` / `restart` / `toggle` (`{"services": [...]}`, groups expand),
 `startAll`, `stopAll`, `toggleWatch`, `clearLogs`, `history` (cpu / memory buckets), `reload`, `subscribe`
 (`{"logs": true}` to receive `state` and `log` notifications; `config` and `configPending` come with `states`) and
-`shutdown`. Linux, macOS and WSL2 use Unix sockets; Windows uses a named pipe
+`shutdown`, and, for the [plugins](plugins/index.md) of the project, `plugins`, `pluginData`, `pluginAction`,
+`pluginOptions` and `pluginSections` (the `plugin` notification carries what a plugin does on its own).
+Linux, macOS and WSL2 use Unix sockets; Windows uses a named pipe
 (`\\.\pipe\orbit-<hash>`).

@@ -27,6 +27,7 @@
 | `e` | environment variables of the selected service (secrets masked, `r` reveals; `j`/`k` move, `v` marks a range, `y` copies the value or `KEY=value` lines, `Y` always `KEY=value`) |
 | `L` | open the selected service's git repo in [lazygit](https://github.com/jesseduffield/lazygit) (if installed) |
 | `4` | Git view, see [Git](git.md) |
+| `5`… | the tabs plugins add, after Git, see [Plugins](plugins/index.md). In them `tab` moves between panes, `j k` move, `/` filters a list, `ctrl+r` reloads; the keys of each plugin's commands show in the footer and in `?` |
 | `P` | open another project: `enter` opens, `tab` completes a typed path, `ctrl+f` pins, `ctrl+x` forgets |
 | `p` | profiles of `orbit.yaml`: `space` toggles, `enter` shows what would change, `y` applies it (in the Git view `p` is pull) |
 | `!` | list the tasks of `orbit.yaml` and run one (`○` = it starts the services it needs first, `✖` = one of them failed) |

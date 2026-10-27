@@ -65,3 +65,7 @@
   running; opening it again re-attaches. Starting `orbit` in a folder that is not a project opens the picker.
 - Press `L` to open the service's git repo in [lazygit](https://github.com/jesseduffield/lazygit)
   (if installed); orbit resumes when you quit it and services keep running meanwhile.
+- **Plugins**: a plugin adds tabs, a block in the detail of a service, a column and badges in the list, commands in the
+  palette, new `type:` values for services and a command of the CLI. It is a program in any language that hands over
+  data; orbit draws it with its own lists, colours, keys and mouse, so it looks and behaves like the rest of orbit.
+  See [Plugins](plugins/index.md).

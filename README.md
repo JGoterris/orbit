@@ -24,6 +24,8 @@ A single static binary written in Go ([Bubble Tea](https://github.com/charmbrace
 - **Embedded console** (`psql`, `rails console`, a container shell) without leaving orbit.
 - **Git view** across all your service repos with multi-repo fetch / pull / push, and [lazygit](https://github.com/jesseduffield/lazygit) one key away.
 - Several projects, themes, and a local socket to script it from outside.
+- **Plugins**: community [plugins](docs/plugins/index.md) add tabs, columns, commands and service types, drawn by orbit
+  so they feel part of it; [writing one](docs/plugins/authoring.md) takes a few functions.
 - **AI agents**: an optional [skill](docs/agents.md) teaches Claude Code, Codex, Cursor… to start services,
   read their logs and restart them through the CLI.
 
@@ -117,7 +119,7 @@ The full documentation is at **[jgoterris.github.io/orbit](https://jgoterris.git
 - [Usage](docs/usage.md): commands and live reload of `orbit.yaml`
 - [Keys](docs/keys.md)
 - [Configuration](docs/configuration.md): full `orbit.yaml` reference, per-developer `orbit.local.yaml` overrides, editor support, hooks, env vars
-- [Git](docs/git.md) · [Themes](docs/themes.md) · [Scripting & editors](docs/scripting.md) · [AI agents](docs/agents.md)
+- [Plugins](docs/plugins/index.md) · [Git](docs/git.md) · [Themes](docs/themes.md) · [Scripting & editors](docs/scripting.md) · [AI agents](docs/agents.md)
 - [Platforms](docs/platforms.md) · [Upgrading from 0.x](docs/upgrading.md)
 
 ## Contributing
