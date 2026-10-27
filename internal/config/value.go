@@ -414,3 +414,22 @@ func environ() map[string]string {
 	}
 	return out
 }
+
+// plain turns a parsed YAML value into plain Go values (maps and slices) that encoding/json handles.
+func plain(v any) any {
+	switch x := v.(type) {
+	case *Map:
+		out := make(map[string]any, x.Len())
+		for _, k := range x.Keys() {
+			out[k] = plain(x.Get(k))
+		}
+		return out
+	case []any:
+		out := make([]any, len(x))
+		for i, e := range x {
+			out[i] = plain(e)
+		}
+		return out
+	}
+	return v
+}

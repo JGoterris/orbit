@@ -6,6 +6,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"regexp"
 	"slices"
 	"strconv"
 	"strings"
@@ -204,8 +205,54 @@ func parseHooks(rec *Map, path string, base *Hooks) *Hooks {
 	return h
 }
 
+var pluginName = regexp.MustCompile(`^[a-z][a-z0-9-]{0,31}$`)
+
+func parsePluginConfig(name string, raw any) *PluginConfig {
+	path := "plugins." + name
+	if !pluginName.MatchString(name) {
+		fail(fmt.Sprintf("invalid plugin name %q", name), "plugins")
+	}
+	switch v := raw.(type) {
+	case nil:
+		return &PluginConfig{Enabled: true}
+	case bool:
+		return &PluginConfig{Enabled: v}
+	case *Map:
+		return &PluginConfig{Enabled: true, Settings: plain(v).(map[string]any)}
+	}
+	fail("expected true, false or the settings of the plugin", path)
+	return nil
+}
+
 var restartPolicies = []RestartPolicy{RestartNo, RestartOnFailure, RestartAlways}
 var serviceTypes = []ServiceType{TypeProcess, TypeDocker, TypeCompose, TypeExternal}
+
+// PluginTypes says which plugin provides each service type that is not one of orbit's own (type → plugin). The
+// plugins package sets it; without plugins every type that is not orbit's own is unknown.
+var PluginTypes = func() map[string]string { return nil }
+
+// IsCoreType is whether t is one of the service types orbit itself runs.
+func IsCoreType(t ServiceType) bool { return slices.Contains(serviceTypes, t) }
+
+// unknownType is the error of a type nobody provides, with the way out when a plugin does.
+func unknownType(s string) string {
+	names := make([]string, len(serviceTypes))
+	for i, t := range serviceTypes {
+		names[i] = string(t)
+	}
+	known := PluginTypes()
+	var fromPlugins []string
+	for t := range known {
+		fromPlugins = append(fromPlugins, t)
+	}
+	slices.Sort(fromPlugins)
+	hint := ""
+	if sug := Suggest(s, append(slices.Clone(names), fromPlugins...)); sug != "" {
+		hint = fmt.Sprintf(" — did you mean %q?", sug)
+	}
+	all := strings.Join(append(names, fromPlugins...), ", ")
+	return fmt.Sprintf("unknown type %q (expected %s)%s; a plugin can provide more types: orbit plugin ls", s, all, hint)
+}
 
 func parseService(name string, raw any, root string, base *ServiceConfig, composeFile string) *ServiceConfig {
 	path := "services." + name
@@ -224,12 +271,10 @@ func parseService(name string, raw any, root string, base *ServiceConfig, compos
 	var typ ServiceType
 	if s, ok := asString(rec.Get("type"), path+".type"); ok {
 		typ = ServiceType(s)
-		if !slices.Contains(serviceTypes, typ) {
-			names := make([]string, len(serviceTypes))
-			for i, t := range serviceTypes {
-				names[i] = string(t)
+		if !IsCoreType(typ) {
+			if _, ok := PluginTypes()[s]; !ok {
+				fail(unknownType(s), path+".type")
 			}
-			fail(fmt.Sprintf("unknown type %q (expected %s)", s, strings.Join(names, ", ")), path+".type")
 		}
 	} else {
 		switch {
@@ -321,6 +366,15 @@ func parseService(name string, raw any, root string, base *ServiceConfig, compos
 		ComposeFile:    base.ComposeFile,
 		ComposeProject: base.ComposeProject,
 		ComposeHash:    base.ComposeHash,
+	}
+	if rec.Has("with") {
+		if IsCoreType(typ) {
+			fail("`with` is for the services of a type a plugin provides", path+".with")
+		}
+		if !isMapping(rec.Get("with")) {
+			fail("`with` must be a mapping", path+".with")
+		}
+		svc.With = plain(rec.Get("with")).(map[string]any)
 	}
 	if svc.ComposeFile == "" {
 		svc.ComposeFile = composeFile
@@ -720,6 +774,16 @@ func LoadConfig(opts LoadOptions) (cfg *OrbitConfig, err error) {
 	for _, name := range rawTasks.Keys() {
 		opts.check(func() {
 			c.addTask(name, parseTask(name, rawTasks.Get(name), root), globalEnv, globalEnvFiles, globalShell)
+		})
+	}
+
+	rawPlugins := asRecord(doc.Get("plugins"), "plugins")
+	for _, name := range rawPlugins.Keys() {
+		opts.check(func() {
+			if c.Plugins == nil {
+				c.Plugins = map[string]*PluginConfig{}
+			}
+			c.Plugins[name] = parsePluginConfig(name, rawPlugins.Get(name))
 		})
 	}
 

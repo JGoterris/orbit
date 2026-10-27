@@ -15,6 +15,13 @@
     "env": { "$ref": "#/definitions/env", "description": "Variables for all services. ${VAR}, ${VAR:-def}, ${VAR:?error} and ${VAR:+alt} are interpolated, as in compose (also from .env)." },
     "env_file": { "$ref": "#/definitions/envFile", "description": ".env files for all services." },
     "shell": { "type": "string", "description": "Shell that runs cmd, hooks, health and console (default: sh, or cmd.exe on Windows)." },
+    "plugins": {
+      "type": "object",
+      "description": "Plugins this project uses. `name: true` asks for it (orbit warns when it is not installed), `name: false` turns it off here and `name: { … }` asks for it with settings.",
+      "additionalProperties": {
+        "oneOf": [{ "type": "boolean" }, { "type": "null" }, { "type": "object" }]
+      }
+    },
     "services": { "$ref": "#/definitions/services" },
     "groups": { "$ref": "#/definitions/groups" },
     "tasks": { "$ref": "#/definitions/tasks" },
@@ -192,8 +199,13 @@
           "additionalProperties": false,
           "properties": {
             "type": {
-              "enum": ["process", "docker", "compose", "external"],
-              "description": "process (cmd), docker (image), compose (from docker-compose.yml) or external (only health-checked). Inferred when omitted."
+              "type": "string",
+              "pattern": "^[a-z][a-z0-9-]*$",
+              "description": "process (cmd), docker (image), compose (from docker-compose.yml), external (only health-checked), or a type a plugin provides. Inferred when omitted."
+            },
+            "with": {
+              "type": "object",
+              "description": "Settings for the plugin that provides this service's type; what it accepts is up to the plugin."
             },
             "description": { "type": "string" },
             "cmd": { "type": "string", "description": "Command to run (process), or the command override (docker)." },
