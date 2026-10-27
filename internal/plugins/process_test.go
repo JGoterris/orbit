@@ -33,7 +33,7 @@ func fakePlugin(mode string) {
 	case "crash":
 		os.Exit(3)
 	case "hang":
-		select {}
+		time.Sleep(time.Hour) // a bare select{} makes the runtime of macOS and Windows kill the process as deadlocked
 	}
 	out := os.Stdout
 	send := func(b []byte) { out.Write(b) }
@@ -48,7 +48,7 @@ func fakePlugin(mode string) {
 		case protocol.MethodInitialize:
 			send(protocol.Response(*m.ID, protocol.InitializeResult{Name: "fake"}))
 			if mode == "deaf" {
-				select {} // never reads stdin again
+				time.Sleep(time.Hour) // never reads stdin again
 			}
 			send(protocol.Notification(protocol.NotifyToast, protocol.Toast{Text: "ready", Tone: protocol.ToneOK}))
 		case protocol.MethodShutdown:
@@ -219,6 +219,10 @@ func TestProcessMissingExecutableIsFatal(t *testing.T) {
 	p.Start()
 	t.Cleanup(p.Stop)
 	waitStatus(t, p, StatusFailed)
+	p.Stop()
+	if p.logFile() != nil {
+		t.Fatal("the log must be closed once the plugin is given up on: Windows cannot delete an open file")
+	}
 	rec.mu.Lock()
 	defer rec.mu.Unlock()
 	for _, s := range rec.statuses {

@@ -131,6 +131,7 @@ func (p *Process) isStopping() bool {
 
 func (p *Process) supervise() {
 	p.openLog()
+	defer p.closeLog()
 	attempt := 0
 	for {
 		if p.isStopping() {
@@ -174,14 +175,18 @@ func (p *Process) openLog() {
 	if st, err := os.Stat(file); err == nil && st.Size() > maxLogSize {
 		os.Remove(file)
 	}
-	p.log, _ = os.OpenFile(file, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
+	f, _ := os.OpenFile(file, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
+	p.mu.Lock()
+	p.log = f
+	p.mu.Unlock()
 }
 
 func (p *Process) logf(format string, args ...any) {
-	if p.log == nil {
+	f := p.logFile()
+	if f == nil {
 		return
 	}
-	fmt.Fprintf(p.log, "%s orbit: %s\n", time.Now().Format("15:04:05"), fmt.Sprintf(format, args...))
+	fmt.Fprintf(f, "%s orbit: %s\n", time.Now().Format("15:04:05"), fmt.Sprintf(format, args...))
 }
 
 // runOnce starts the process and blocks until it is gone. fatal means that starting again cannot help.
@@ -197,8 +202,8 @@ func (p *Process) runOnce() (fatal bool, err error) {
 	platform.SetDetached(cmd)
 	stdin, _ := cmd.StdinPipe()
 	stdout, _ := cmd.StdoutPipe()
-	if p.log != nil {
-		cmd.Stderr = p.log
+	if f := p.logFile(); f != nil {
+		cmd.Stderr = f
 	}
 	if err := cmd.Start(); err != nil {
 		return true, fmt.Errorf("cannot start %s: %w", argv[0], err)
@@ -392,6 +397,7 @@ func (p *Process) Stop() {
 	done, pid := p.done, p.pid
 	p.mu.Unlock()
 	if done == nil {
+		p.closeLog()
 		return
 	}
 	// a plugin that does not answer shutdown is hung: do not wait for it to exit as well
@@ -419,7 +425,17 @@ func (p *Process) Stop() {
 }
 
 func (p *Process) closeLog() {
-	if p.log != nil {
-		p.log.Close()
+	p.mu.Lock()
+	f := p.log
+	p.log = nil
+	p.mu.Unlock()
+	if f != nil {
+		f.Close()
 	}
+}
+
+func (p *Process) logFile() *os.File {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return p.log
 }

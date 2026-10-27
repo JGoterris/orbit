@@ -385,6 +385,10 @@ func gitClone(ctx context.Context, owner, repo, ref, dest string) error {
 }
 
 func safeJoin(dest, name string) (string, error) {
+	// "/x" has no drive on Windows and would land inside dest, but an archive has no business naming absolute paths
+	if strings.HasPrefix(name, "/") || strings.HasPrefix(name, `\`) {
+		return "", fmt.Errorf("the archive has an entry outside its folder: %q", name)
+	}
 	clean := filepath.Clean(filepath.FromSlash(name))
 	if filepath.IsAbs(clean) || clean == ".." || strings.HasPrefix(clean, ".."+string(filepath.Separator)) || filepath.VolumeName(clean) != "" {
 		return "", fmt.Errorf("the archive has an entry outside its folder: %q", name)
