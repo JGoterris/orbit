@@ -3,6 +3,7 @@ package session
 
 import (
 	"fmt"
+	"github.com/JGoterris/orbit/internal/plugins"
 	"os"
 	"sync"
 	"time"
@@ -122,7 +123,7 @@ func (s *Session) SwitchTo(dir, how string) (supervisor.Like, *Relaunch, error) 
 			relaunch = &Relaunch{Diff: diff, Config: cfg}
 		}
 	} else {
-		local := supervisor.New(cfg, supervisor.Options{})
+		local := supervisor.New(cfg, supervisor.Options{Plugins: plugins.ForProject(cfg, s.opts.Version)})
 		if holder := state.AcquireLock(local.StateDir()); holder != 0 {
 			return nil, nil, fmt.Errorf("%s is already open in another orbit (pid %d)", cfg.Name, holder)
 		}

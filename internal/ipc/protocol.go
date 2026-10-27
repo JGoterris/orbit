@@ -10,10 +10,11 @@ import (
 
 	"github.com/JGoterris/orbit/internal/config"
 	"github.com/JGoterris/orbit/internal/core/supervisor"
+	"github.com/JGoterris/orbit/internal/plugins"
 )
 
 // Protocol is bumped when a request or notification changes incompatibly.
-const Protocol = 4
+const Protocol = 5
 
 // Requests (params → result):
 //
@@ -28,9 +29,15 @@ const Protocol = 4
 //	reload {config?}                       → {ok, diff}  applies orbit.yaml (re-read by the server unless `config` is given)
 //	subscribe {states?, logs?, services?}  → {ok, snapshot}  every notification after it is newer than the snapshot
 //	shutdown {how: "stop"|"detach"}        → {ok}      the server exits afterwards
+//	plugins                                → PluginsState
+//	pluginData {plugin, data}              → ViewData   data: ViewDataParams
+//	pluginAction {plugin, data}            → InvokeResult   data: InvokeParams
+//	pluginOptions {plugin, data}           → []Option   data: OptionsParams
+//	pluginSections {plugin, data}          → []Section  data: SectionsParams
 //
 // Notifications (server → client): state {name, state}, log Line, cleared {service?},
-// config {config, diff} (a reload happened), configPending {pending} (orbit.yaml changed on disk, not applied).
+// config {config, diff} (a reload happened), configPending {pending} (orbit.yaml changed on disk, not applied),
+// plugin PluginNotice (a plugin asked for a redraw, showed a toast, changed its badges or its status).
 const (
 	MethodHello       = "hello"
 	MethodSnapshot    = "snapshot"
@@ -47,6 +54,12 @@ const (
 	MethodReload      = "reload"
 	MethodSubscribe   = "subscribe"
 	MethodShutdown    = "shutdown"
+
+	MethodPlugins        = "plugins"
+	MethodPluginData     = "pluginData"
+	MethodPluginAction   = "pluginAction"
+	MethodPluginOptions  = "pluginOptions"
+	MethodPluginSections = "pluginSections"
 )
 
 // Notification methods.
@@ -56,7 +69,22 @@ const (
 	NotifyCleared       = "cleared"
 	NotifyConfig        = "config"
 	NotifyConfigPending = "configPending"
+	NotifyPlugin        = "plugin"
 )
+
+// PluginsState is the answer to the plugins request: the plugins of the project and what they show.
+type PluginsState struct {
+	Plugins []plugins.Info                   `json:"plugins"`
+	Badges  map[string][]plugins.TaggedBadge `json:"badges"`
+}
+
+// PluginNotice is the notification of something a plugin did. A change of badges carries all of them and a change
+// of status the plugins as they are now, so a client does not have to ask.
+type PluginNotice struct {
+	plugins.Update
+	Badges  map[string][]plugins.TaggedBadge `json:"badges,omitempty"`
+	Plugins []plugins.Info                   `json:"plugins,omitempty"`
+}
 
 // JSON-RPC error codes.
 const (
@@ -78,6 +106,9 @@ type Hello struct {
 	Config   *config.OrbitConfig `json:"config"`
 	// Pending: orbit.yaml changed on disk and nobody applied it yet
 	Pending *supervisor.PendingConfig `json:"pending,omitempty"`
+	// Plugins and Badges are the plugins of the project and what they show
+	Plugins []plugins.Info                   `json:"plugins,omitempty"`
+	Badges  map[string][]plugins.TaggedBadge `json:"badges,omitempty"`
 }
 
 // RPCError is the error member of a response.

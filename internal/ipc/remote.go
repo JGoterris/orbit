@@ -12,6 +12,7 @@ import (
 	"github.com/JGoterris/orbit/internal/core/resources"
 	"github.com/JGoterris/orbit/internal/core/supervisor"
 	"github.com/JGoterris/orbit/internal/graph"
+	"github.com/JGoterris/orbit/internal/plugins"
 )
 
 // historyLines is everything the daemon has in its log rings.
@@ -26,6 +27,7 @@ type Remote struct {
 	Hello Hello
 
 	logStore *logs.Store
+	plugins  *remotePlugins
 
 	mu         sync.Mutex
 	cfg        *config.OrbitConfig
@@ -62,6 +64,7 @@ func ConnectRemote(path string) (*Remote, error) {
 			hello.Version, hello.Protocol, Protocol)
 	}
 	r := &Remote{client: client, Hello: hello, logStore: logs.NewStore(0, 0), states: map[string]supervisor.ServiceState{}}
+	r.plugins = newRemotePlugins(client, hello.Plugins, hello.Badges)
 	r.cfg = hello.Config
 	r.pending = hello.Pending
 	r.refreshGraph()
@@ -94,7 +97,10 @@ func (r *Remote) OnClose(fn func()) (cancel func()) { return r.closeBus.On(func(
 
 func (r *Remote) Config() *config.OrbitConfig { r.mu.Lock(); defer r.mu.Unlock(); return r.cfg }
 func (r *Remote) LogStore() *logs.Store       { return r.logStore }
-func (r *Remote) Deps() graph.DepMap          { r.mu.Lock(); defer r.mu.Unlock(); return r.deps }
+
+// Plugins is the plugins of the daemon: every call goes over the socket.
+func (r *Remote) Plugins() plugins.Host { return r.plugins }
+func (r *Remote) Deps() graph.DepMap    { r.mu.Lock(); defer r.mu.Unlock(); return r.deps }
 func (r *Remote) Dependents() map[string][]string {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -219,6 +225,9 @@ func (r *Remote) Init() error {
 		r.states[st.Name] = st
 	}
 	r.mu.Unlock()
+	if err := r.plugins.reload(); err != nil {
+		return err
+	}
 	var history []logs.Line
 	if err := r.client.Call(MethodLogs, map[string]any{"limit": historyLines}, &history); err != nil {
 		return err
@@ -251,6 +260,8 @@ func (r *Remote) ingest(l logs.Line) {
 
 func (r *Remote) apply(m Message) {
 	switch m.Method {
+	case NotifyPlugin:
+		r.plugins.apply(m.Params)
 	case NotifyState:
 		var p struct {
 			Name  string                  `json:"name"`
