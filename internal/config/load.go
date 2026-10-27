@@ -205,6 +205,8 @@ func parseHooks(rec *Map, path string, base *Hooks) *Hooks {
 	return h
 }
 
+var pluginSource = regexp.MustCompile(`^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+(@[A-Za-z0-9_.+-]+)?$`)
+
 var pluginName = regexp.MustCompile(`^[a-z][a-z0-9-]{0,31}$`)
 
 func parsePluginConfig(name string, raw any) *PluginConfig {
@@ -218,7 +220,21 @@ func parsePluginConfig(name string, raw any) *PluginConfig {
 	case bool:
 		return &PluginConfig{Enabled: v}
 	case *Map:
-		return &PluginConfig{Enabled: true, Settings: plain(v).(map[string]any)}
+		settings := plain(v).(map[string]any)
+		pc := &PluginConfig{Enabled: true, Settings: settings}
+		// `from` is for orbit, not a setting of the plugin
+		if raw, ok := settings["from"]; ok {
+			from, isString := raw.(string)
+			if !isString || !pluginSource.MatchString(from) {
+				fail("from must be where to install the plugin from: owner/repo or owner/repo@tag", path+".from")
+			}
+			pc.From = from
+			delete(settings, "from")
+			if len(settings) == 0 {
+				pc.Settings = nil
+			}
+		}
+		return pc
 	}
 	fail("expected true, false or the settings of the plugin", path)
 	return nil

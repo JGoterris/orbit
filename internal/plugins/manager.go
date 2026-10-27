@@ -34,6 +34,17 @@ type Info struct {
 	Contributes protocol.Contributes `json:"contributes"`
 	// Missing: orbit.yaml asks for the plugin and it is not installed
 	Missing bool `json:"missing,omitempty"`
+	// Install is the command that installs a Missing plugin
+	Install string `json:"install,omitempty"`
+}
+
+// InstallCommand is what to run to install the plugin name, given where orbit.yaml says it comes from (from may be
+// empty: then only the owner is unknown).
+func InstallCommand(name, from string) string {
+	if from == "" {
+		from = "<owner>/" + name
+	}
+	return "orbit plugin install " + from
 }
 
 type TaggedBadge struct {
@@ -68,6 +79,8 @@ type Options struct {
 	Specs      []Spec
 	// Missing are plugins the project asks for that are not installed
 	Missing []string
+	// MissingFrom is where orbit.yaml says each of them is installed from (`from:`)
+	MissingFrom map[string]string
 }
 
 type Manager struct {
@@ -144,7 +157,8 @@ func (m *Manager) Plugins() []Info {
 		out = append(out, info)
 	}
 	for _, name := range m.opts.Missing {
-		out = append(out, Info{Name: name, Status: StatusFailed, Error: "not installed: orbit plugin install " + name, Missing: true})
+		install := InstallCommand(name, m.opts.MissingFrom[name])
+		out = append(out, Info{Name: name, Status: StatusFailed, Error: "not installed: " + install, Install: install, Missing: true})
 	}
 	return out
 }

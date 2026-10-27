@@ -807,6 +807,26 @@ services:
 	wantContains(t, loadErr(t, map[string]string{"orbit.yaml": "plugins:\n  forge: 3\nservices:\n  a: { cmd: x }\n"}), "expected true, false")
 }
 
+func TestPluginFromIsNotASetting(t *testing.T) {
+	cfg := mustLoad(t, map[string]string{"orbit.yaml": `
+plugins:
+  kube: { from: acme/orbit-kube@v1.2, context: prod }
+  forge: { from: acme/forge }
+services:
+  a: { cmd: x }
+`})
+	kube, forge := cfg.Plugins["kube"], cfg.Plugins["forge"]
+	if kube.From != "acme/orbit-kube@v1.2" || !kube.Enabled || len(kube.Settings) != 1 || kube.Settings["context"] != "prod" {
+		t.Fatalf("kube = %+v", kube)
+	}
+	if forge.From != "acme/forge" || forge.Settings != nil {
+		t.Fatalf("forge = %+v", forge)
+	}
+	for _, bad := range []string{"3", "nope", "a/b/c", "\"x y/z\""} {
+		wantContains(t, loadErr(t, map[string]string{"orbit.yaml": "plugins:\n  kube: { from: " + bad + " }\nservices:\n  a: { cmd: x }\n"}), "owner/repo")
+	}
+}
+
 func TestPluginsAndWithAreKnownToTheSchema(t *testing.T) {
 	withPluginTypes(t, map[string]string{"k8s": "kube"})
 	dir := project(t, map[string]string{"orbit.yaml": "plugins: { kube: { context: prod } }\nservices:\n  a: { type: k8s, with: { anything: [1, 2] } }\n"})

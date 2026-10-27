@@ -117,6 +117,7 @@ func RunUp(cfg *config.OrbitConfig, names []string, detach bool) int {
 		errorln(fmt.Sprintf("unknown service or group %q", n))
 		return 1
 	}
+	WarnMissingPlugins(cfg)
 	if ipc.IsServed(cfg) {
 		return upRunning(cfg, names, detach)
 	}

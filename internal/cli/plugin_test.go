@@ -131,4 +131,39 @@ func TestRemoveWithPurgeDeletesEverything(t *testing.T) {
 	if code := pluginRemove("nothing", false); code == 0 {
 		t.Fatal("removing what is not installed is an error")
 	}
+	if code := pluginRemove("nothing", true); code == 0 {
+		t.Fatal("purging what was never installed is an error too")
+	}
+}
+
+func TestUnknownPluginIsAnErrorEverywhere(t *testing.T) {
+	t.Setenv("XDG_DATA_HOME", t.TempDir())
+	t.Setenv("XDG_STATE_HOME", t.TempDir())
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	if code := pluginDoctor([]string{"nope"}); code == 0 {
+		t.Error("doctor of a plugin that is not installed must fail")
+	}
+	if code := pluginLogs("nope", "", false); code == 0 {
+		t.Error("logs of a plugin that is not installed must fail")
+	}
+	if code := pluginSetEnabled("nope", true); code == 0 {
+		t.Error("enabling a plugin that is not installed must fail")
+	}
+}
+
+func TestPluginCommandIsOffWhereTheProjectTurnsItOff(t *testing.T) {
+	t.Setenv("XDG_DATA_HOME", t.TempDir())
+	t.Setenv("XDG_STATE_HOME", t.TempDir())
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	if _, err := plugins.Link(plugintest.Demo(t)); err != nil {
+		t.Fatal(err)
+	}
+	cwd, _ := os.Getwd()
+	dir := t.TempDir()
+	os.WriteFile(filepath.Join(dir, "orbit.yaml"), []byte("services:\n  web:\n    cmd: sleep 1\nplugins:\n  demo: false\n"), 0o644)
+	os.Chdir(dir)
+	t.Cleanup(func() { os.Chdir(cwd) })
+	if code, handled := RunPluginCommand([]string{"demo", "hello"}); !handled || code == 0 {
+		t.Fatalf("the project turned the plugin off: handled %v code %d", handled, code)
+	}
 }

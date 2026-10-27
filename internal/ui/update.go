@@ -28,7 +28,7 @@ func (m *Model) Init() tea.Cmd {
 	}
 	for _, info := range m.plug.infos {
 		if info.Missing {
-			cmds = append(cmds, m.notify(fmt.Sprintf("this project uses plugin %s, which is not installed: orbit plugin install %s", info.Name, info.Name), theme.Active().Yellow))
+			cmds = append(cmds, m.notify(fmt.Sprintf("this project uses plugin %s, which is not installed: %s", info.Name, info.Install), theme.Active().Yellow))
 		}
 	}
 	if errs := m.opts.ThemeErrors; len(errs) > 0 {

@@ -172,7 +172,9 @@ type OrbitConfig struct {
 // PluginConfig is the entry of a plugin in `plugins:`: `name: true` asks for it, `name: false` turns it off in this
 // project and `name: {…}` asks for it with settings.
 type PluginConfig struct {
-	Enabled  bool           `json:"enabled"`
+	Enabled bool `json:"enabled"`
+	// From is where to install the plugin from (owner/repo[@tag]), for the warning when it is missing
+	From     string         `json:"from,omitempty"`
 	Settings map[string]any `json:"settings,omitempty"`
 }
 

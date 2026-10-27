@@ -1,6 +1,7 @@
 package plugins
 
 import (
+	"regexp"
 	"strings"
 	"unicode"
 
@@ -17,12 +18,17 @@ const (
 	maxTextLength = 4096
 )
 
+// escapes matches the escape sequences a plugin may include (CSI such as colours, and OSC such as window titles), so
+// they are dropped whole instead of leaving their parameters behind as text.
+var escapes = regexp.MustCompile(`\x1b\[[0-?]*[ -/]*[@-~]|\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)?`)
+
 // Clean makes s safe to draw: no escape sequences nor control characters (a plugin must not be able to move the
 // cursor or recolour the terminal), no line breaks, and not absurdly long. Tabs become spaces.
 func Clean(s string) string {
 	if len(s) > maxTextLength {
 		s = s[:maxTextLength]
 	}
+	s = escapes.ReplaceAllString(s, "")
 	var b strings.Builder
 	b.Grow(len(s))
 	for _, r := range s {

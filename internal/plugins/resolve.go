@@ -74,6 +74,10 @@ func ForProject(cfg *config.OrbitConfig, version string) *Manager {
 	opts := Options{Version: version, Project: cfg.Name, ProjectDir: cfg.Root, Services: ServiceRefs(cfg)}
 	if os.Getenv("ORBIT_NO_PLUGINS") == "" {
 		opts.Specs, opts.Missing = Resolve(cfg, userconfig.Read())
+		opts.MissingFrom = map[string]string{}
+		for _, name := range opts.Missing {
+			opts.MissingFrom[name] = cfg.Plugins[name].From
+		}
 	}
 	return NewManager(opts)
 }

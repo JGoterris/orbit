@@ -17,7 +17,7 @@
     "shell": { "type": "string", "description": "Shell that runs cmd, hooks, health and console (default: sh, or cmd.exe on Windows)." },
     "plugins": {
       "type": "object",
-      "description": "Plugins this project uses. `name: true` asks for it (orbit warns when it is not installed), `name: false` turns it off here and `name: { … }` asks for it with settings.",
+      "description": "Plugins this project uses. `name: true` asks for it (orbit warns when it is not installed), `name: false` turns it off here and `name: { … }` asks for it with settings. `from: owner/repo[@tag]` inside the settings says where to install it from (it is not passed to the plugin).",
       "additionalProperties": {
         "oneOf": [{ "type": "boolean" }, { "type": "null" }, { "type": "object" }]
       }

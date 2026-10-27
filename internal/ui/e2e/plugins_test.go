@@ -72,7 +72,7 @@ func TestPluginTabActionsAndServiceTypeInTheRealApp(t *testing.T) {
 
 	sc.send("5")
 	sc.waitFor("the view of the plugin", "Items · 3", "alpha", "beta", "gamma", "item alpha", "log of alpha")
-	if strings.Contains(sc.text(), "not red") == false {
+	if text := sc.text(); !strings.Contains(text, "not red") || strings.Contains(text, "[31m") || strings.Contains(text, "[0m") {
 		t.Fatalf("the text of the plugin must be drawn, without its escape sequences:\n%s", sc.text())
 	}
 
