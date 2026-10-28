@@ -41,6 +41,7 @@ type Session struct {
 	sup        supervisor.Like
 	srv        *ipc.Server
 	stopNotify func()
+	initing    sync.WaitGroup // Init of a project opened by SwitchTo, still running in the background
 }
 
 // New wraps an already created supervisor (its lock, if local, is the caller's).
@@ -155,6 +156,7 @@ func (s *Session) SwitchTo(dir, how string) (supervisor.Like, *Relaunch, error) 
 	if _, remote := next.(*ipc.Remote); !remote {
 		s.Serve()
 	}
-	go next.Init()
+	s.initing.Add(1)
+	go func() { defer s.initing.Done(); next.Init() }()
 	return next, relaunch, nil
 }

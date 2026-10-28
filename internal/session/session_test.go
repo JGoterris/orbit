@@ -78,6 +78,10 @@ func TestSwitchStopsTheOldServicesAndRegistersTheNewProject(t *testing.T) {
 		t.Fatalf("old lock held by %d", holder)
 	}
 	state.ReleaseLock(first.StateDir())
+	// the new project is still initialising in the background: let it finish before tearing down, or it keeps
+	// writing into the temp dirs while they are removed (macOS: "directory not empty")
+	s.initing.Wait()
+	s.CloseIPC()
 	s.Sup().Dispose()
 	state.ReleaseLock(s.Sup().StateDir())
 }

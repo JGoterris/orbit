@@ -72,6 +72,8 @@ type Process struct {
 	// does not read its stdin cannot block the one that notifies (the log store calls us under its lock)
 	outbox  chan []byte
 	dropped atomic.Int64
+
+	supervising sync.WaitGroup // supervise, which owns the log file from openLog to closeLog
 }
 
 func NewProcess(p *Plugin, init protocol.InitializeParams, onMessage func(protocol.Message), onStatus func(Status, string)) *Process {
@@ -93,7 +95,8 @@ func (p *Process) Start() {
 	p.status = StatusStarting
 	p.mu.Unlock()
 	go p.pump()
-	go p.supervise()
+	p.supervising.Add(1)
+	go func() { defer p.supervising.Done(); p.supervise() }()
 }
 
 func (p *Process) pump() {
@@ -168,6 +171,9 @@ func (p *Process) supervise() {
 }
 
 func (p *Process) openLog() {
+	if p.isStopping() {
+		return
+	}
 	file := LogFile(p.plugin.Manifest.Name)
 	if os.MkdirAll(filepath.Dir(file), 0o755) != nil {
 		return
@@ -397,7 +403,9 @@ func (p *Process) Stop() {
 	done, pid := p.done, p.pid
 	p.mu.Unlock()
 	if done == nil {
-		p.closeLog()
+		// supervise has not got a process up (it may not even have opened the log yet): it sees the stop, and it
+		// is the one that closes the log, so wait for it instead of closing a file it is about to use
+		p.supervising.Wait()
 		return
 	}
 	// a plugin that does not answer shutdown is hung: do not wait for it to exit as well
