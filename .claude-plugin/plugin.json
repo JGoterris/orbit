@@ -3,7 +3,7 @@
   "description": "Let Claude start, restart and read the logs of the local services orbit runs for a project.",
   "version": "1.0.0",
   "author": { "name": "Jesús Goterris", "email": "contact@jgoterris.com" },
-  "homepage": "https://jgoterris.github.io/orbit/agents/",
+  "homepage": "https://orbit.jgoterris.com/docs/agents/",
   "repository": "https://github.com/JGoterris/orbit",
   "license": "MIT",
   "keywords": ["orbit", "services", "logs", "dev-stack", "docker"]
