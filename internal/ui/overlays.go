@@ -206,9 +206,14 @@ var baseHelpRows = [][2]string{
 	{"q", "quit: stop all services or leave them running"},
 }
 
-// helpRows are the rows of the keys modal: orbit's, then the ones the plugins add.
+// helpRows are the rows of the keys modal: orbit's, then the ones the plugins add; in the view of a plugin, its
+// keys come first, which are the ones being looked for.
 func (m *Model) helpRows() [][2]string {
-	return append(slices.Clone(baseHelpRows), m.pluginHelpRows()...)
+	plugin := m.pluginHelpRows()
+	if m.viewDef().plugin != nil && len(plugin) > 0 {
+		return append(append(plugin, [2]string{"", ""}), baseHelpRows...)
+	}
+	return append(slices.Clone(baseHelpRows), plugin...)
 }
 
 const helpKeyW = 24

@@ -11,6 +11,8 @@
 | `1` `2` `3` `4` | Dashboard / Graph / Logs / Git |
 | `tab` / `shift+tab` | move focus between panels |
 | `z` · `esc` | zoom the focused panel to full screen · back |
+| `enter` (a list with details) | open the selected item full screen, with its details · `esc` back |
+| `[` `]` (details of a list) | previous / next item of the list, without going back to it |
 | `h` (dashboard) | cycle the CPU / memory history window: 2m · 15m · 1h |
 | `+` `-` `=` | grow / shrink the focused panel · reset sizes |
 | `j k` `ctrl+u/d` `g G` (logs focused) | scroll logs by line / half page / top / bottom |

@@ -116,7 +116,10 @@ func (m *Model) renderHeader(W int) string {
 	m.geo.mu.Lock()
 	m.geo.tabs = tabs
 	m.geo.mu.Unlock()
-	if m.zoomed {
+	switch {
+	case m.pluginItemView() != nil:
+		l.add(p.Accent, "  ⛶ [ ] prev/next · esc back")
+	case m.zoomed:
 		l.add(p.Accent, "  ⛶ zoom")
 	}
 	if m.plug.running != "" {

@@ -22,7 +22,8 @@ The **first column** takes the space the others leave. Of the others, the ones w
 hidden first when the pane is narrow. `width` is in columns; without it a column is as wide as its content, up to 24.
 `id` identifies a row between reloads: the selection stays on it. At most 5000 rows.
 
-The user can filter a list with `/` (fuzzy, on the text of the cells).
+The user can filter a list with `/` (fuzzy, on the text of the cells). The selected row shows the rest of a first column that
+does not fit on the lines below it, up to three lines in all, so a long title can be read.
 
 ## detail
 
@@ -33,7 +34,8 @@ The user can filter a list with `/` (fuzzy, on the text of the cells).
 ```
 
 Each section has a title line, its fields packed in lines, its text (lines of spans) and its badges. It scrolls with
-`j` / `k`.
+`j` / `k`. Nothing is cut: a long title, a value that does not fit next to its label and the lines of the text are
+broken at the spaces, a line that starts with spaces or a bullet (`- `, `* `, `• `, `> `) keeping its indentation.
 
 ## text
 
@@ -41,7 +43,9 @@ Each section has a title line, its fields packed in lines, its text (lines of sp
 { "lines": [[{ "text": "build ", "tone": "muted" }, { "text": "failed", "tone": "error", "bold": true }]] }
 ```
 
-Lines of spans, scrolled like the logs. With `follow: true` in the manifest it stays at the end.
+Lines of spans, scrolled like the logs. With `follow: true` in the manifest it stays at the end. A line wider than the
+pane is cut, unless the pane says `wrap: true`; a pane that draws to fit (`sized: true`) gets its width in
+`context.width`.
 
 ## badges
 

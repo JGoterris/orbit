@@ -48,8 +48,13 @@ type pluginPane struct {
 	filter string
 	follow bool // text: keeps the end in view
 
-	// set by the last render: what the scroll keys need
+	// set by the last render: what the scroll keys need, the columns of text it had and, for a list, the row of
+	// each line drawn
 	total, page int
+	width       int
+	lineItems   []int
+	// reqWidth is the width the data shown was asked for with
+	reqWidth int
 }
 
 // pluginUI is what the interface keeps about the plugins of the project.
@@ -70,6 +75,8 @@ type pluginUI struct {
 	seq     int
 	// ctxService is the service the last data was asked for
 	ctxService string
+	// item is the list whose selected item is open full screen (enter), with the panes that follow it
+	item string
 	// failed are the plugins whose failure was already reported
 	failed map[string]bool
 }
@@ -87,7 +94,7 @@ var reservedKeys = map[string]bool{
 	"p": true, "tab": true, "shift+tab": true, "z": true, "+": true, "-": true, "=": true, "esc": true,
 	"1": true, "2": true, "3": true, "4": true, "5": true, "6": true, "7": true, "8": true, "9": true,
 	"j": true, "k": true, "g": true, "G": true, "up": true, "down": true, "home": true, "end": true,
-	"pgup": true, "pgdown": true, "ctrl+d": true, "ctrl+u": true, "/": true, "ctrl+r": true,
+	"pgup": true, "pgdown": true, "ctrl+d": true, "ctrl+u": true, "/": true, "ctrl+r": true, "[": true, "]": true,
 }
 
 // ResolvePluginKeys gives every action of the plugins its key: the manifest's, or the one the user set
@@ -264,6 +271,8 @@ func (m *Model) pluginLoadPane(vd viewDef, def protocol.Pane) tea.Cmd {
 	pn.req, pn.loading, pn.stale = m.plug.seq, true, false
 	req, plugin, view := pn.req, pn.plugin, pn.view.ID
 	ctx := m.pluginContext(vd)
+	ctx.Width = pn.width
+	pn.reqWidth = pn.width
 	host := m.sup.Plugins()
 	return func() tea.Msg {
 		d, err := host.Data(plugin, protocol.ViewDataParams{View: view, Pane: def.ID, Context: ctx})
@@ -324,6 +333,8 @@ func (m *Model) pluginSelectionChanged(pn *pluginPane) tea.Cmd {
 		bound := m.pluginPaneOf(vd, def)
 		bound.scroll = 0
 		bound.follow = def.Follow
+		// what it shows is about the item that was selected: it says it is loading rather than show that
+		bound.loaded, bound.err = false, ""
 		if m.view == vd.id {
 			cmds = append(cmds, m.pluginLoadPane(vd, def))
 		} else {
@@ -406,8 +417,12 @@ func (pn *pluginPane) scrollTo(to int) {
 	pn.follow = pn.def.Follow && pn.scroll >= maxScroll
 }
 
-// pluginItemText is the name the selected item of a pane goes by in a question ("Merge !41?").
-func pluginItemText(pn *pluginPane) string {
+// pluginItemText is the name the selected item of a pane goes by in a question ("Merge !41?"): of the list the pane
+// follows, when it is not a list.
+func (m *Model) pluginItemText(pn *pluginPane) string {
+	if src := m.pluginSourceOf(pn); src != nil && pn.def.Widget != protocol.WidgetList {
+		pn = src
+	}
 	it, ok := pn.selectedItem()
 	if !ok {
 		return ""
@@ -480,6 +495,86 @@ func (m *Model) onPluginInvalidate(u plugins.Update) tea.Cmd {
 	}
 	cmds = append(cmds, m.pluginLoadSections())
 	return tea.Batch(cmds...)
+}
+
+// pluginResized asks again for the panes on screen that draw according to their width (sized) and were drawn at
+// another width than the one their data was asked for: the terminal, the zoom or the layout changed.
+func (m *Model) pluginResized() tea.Cmd {
+	vd := m.viewDef()
+	if vd.plugin == nil {
+		return nil
+	}
+	var cmds []tea.Cmd
+	for _, def := range vd.plugin.def.Panes {
+		pn := m.plug.panes[paneKey(vd.plugin.plugin, vd.plugin.def.ID, def.ID)]
+		if pn == nil || !def.Sized || !pn.loaded || pn.loading || pn.width == 0 || pn.width == pn.reqWidth {
+			continue
+		}
+		if m.pluginBindMet(vd, def) {
+			cmds = append(cmds, m.pluginLoadPane(vd, def))
+		}
+	}
+	return tea.Batch(cmds...)
+}
+
+// pluginBoundPanes are the panes of the view that follow the selection of pane src.
+func pluginBoundPanes(v protocol.View, src string) []protocol.Pane {
+	var out []protocol.Pane
+	for _, d := range v.Panes {
+		if d.Bind == src && src != "" {
+			out = append(out, d)
+		}
+	}
+	return out
+}
+
+// pluginSourceOf is the list the pane follows, when it follows one.
+func (m *Model) pluginSourceOf(pn *pluginPane) *pluginPane {
+	if pn == nil || pn.def.Bind == "" {
+		return nil
+	}
+	src := m.plug.panes[paneKey(pn.plugin, pn.view.ID, pn.def.Bind)]
+	if src == nil || src.def.Widget != protocol.WidgetList {
+		return nil
+	}
+	return src
+}
+
+// pluginItemView is the list whose selected item is open full screen in the view on screen, or nil.
+func (m *Model) pluginItemView() *pluginPane {
+	if !m.zoomed || m.plug.item == "" {
+		return nil
+	}
+	src := m.pluginSourceOf(m.focusedPluginPane())
+	if src == nil || src.key != m.plug.item {
+		return nil
+	}
+	return src
+}
+
+// pluginOpenItem shows the selected item of a list full screen: the panes that follow the list, one over the other,
+// with the whole width.
+func (m *Model) pluginOpenItem(pn *pluginPane) bool {
+	bound := pluginBoundPanes(pn.view, pn.def.ID)
+	if len(bound) == 0 || pn.sel == "" {
+		return false
+	}
+	m.plug.item = pn.key
+	m.zoomed = true
+	m.focus = pane(pluginViewPrefix + paneKey(pn.plugin, pn.view.ID, bound[0].ID))
+	return true
+}
+
+// pluginCloseItem goes back from an item shown full screen to its list.
+func (m *Model) pluginCloseItem() bool {
+	src := m.pluginItemView()
+	m.plug.item = ""
+	if src == nil {
+		return false
+	}
+	m.zoomed = false
+	m.focus = pane(pluginViewPrefix + src.key)
+	return true
 }
 
 func (m *Model) pluginBindMet(vd viewDef, def protocol.Pane) bool {

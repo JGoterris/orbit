@@ -47,7 +47,14 @@ views:
 One to six panes. The first is on the left and the rest are stacked on its right, sharing the height by `weight`
 (default 1). On a terminal narrower than 70 columns one pane shows at a time (`tab` moves). `widget` is `list`,
 `detail` or `text`. `bind: <pane>` (a pane declared before) makes it follow: it is asked again whenever the selection of
-that pane changes, and waits until there is one. `follow: true` keeps a text pane at its end.
+that pane changes, and waits until there is one. `follow: true` keeps a text pane at its end, `wrap: true` breaks its
+long lines instead of cutting them (a detail always does). `sized: true` makes orbit ask again for the data of the pane
+when its width changes, with the width in `context.width`: for a pane that lays out what it draws, such as a graph.
+
+`enter` on a list, or on a pane bound to it, opens the selected item full screen: the panes bound to the list, one over
+the other, with the whole width. From a pane bound to a list, full screen or not, `[` and `]` select the previous and
+next item of the list without going back to it; `esc` leaves the full screen. An action of a pane (`scope.pane`) also
+runs from the panes bound to it, on the item they show.
 
 ## actions
 
@@ -67,11 +74,15 @@ actions:
 - **`key`**: one key (`M`, `enter`, `ctrl+g`) or `alt+<key>` / `f1`-`f12`. An action of no view works in every view, so
   its key has to be `alt+…` or a function key. The user can change it ([Plugins](index.md#per-user)). orbit keeps the
   keys it uses itself (`q`, `:`, `?`, `tab`, `z`, `esc`, `p`, `P`, `T`, `U`, `!`, `+`, `-`, `=`, the digits) and the
-  ones of the widgets (`j`, `k`, `g`, `G`, `/`, `ctrl+d`, `ctrl+u`, `ctrl+r`, arrows, `home`, `end`, `pgup`, `pgdown`).
+  ones of the widgets (`j`, `k`, `g`, `G`, `/`, `ctrl+d`, `ctrl+u`, `ctrl+r`, `[`, `]`, arrows, `home`, `end`, `pgup`,
+  `pgdown`). `enter` is not kept: an action of the view, or of the list, that takes it runs instead of opening the item
+  full screen.
 - **`inputs`** are asked in order before the confirmation: `text` (with `default`), or `pick` from `options`, or with
   `optionsFrom: true` from the plugin (`action.options`).
 - **`confirm`** asks yes / no. In its `title`, `{item}` is the selected row of the pane (its first column), `{service}`
   the selected service and `{<name>}` an answer given before.
+- **`item: true`** says the action is about the selected item of its pane (`scope.pane`): while the list has none, it
+  is not in the hints and its key does nothing but say so.
 
 ## serviceSections, serviceColumn, headerBadges
 

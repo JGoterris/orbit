@@ -22,7 +22,8 @@ The plugin starts in the project folder and receives `ORBIT_BIN`, `ORBIT_PLUGIN_
 | `service.validate` · `service.start` · `service.stop` | `{name, type, with, cwd, stopTimeoutMs}` | `{}` |
 | `service.attach` | the same | `{running}` |
 
-`context` is `{service, selection: {<pane id>: <item id>}, filter}`. An error is a JSON-RPC error; its `message` is shown
+`context` is `{service, selection: {<pane id>: <item id>}, filter, width}`; `width` is how many columns of text fit in
+the pane as it was last drawn (0 before it ever was). An error is a JSON-RPC error; its `message` is shown
 to the user. Notifications from orbit: `event` with `{kind: "state"|"config"|"log", service, status, ready, stream, text, services}`,
 for the kinds in `events` (`services` is the list of the project again, in a `config` event).
 
