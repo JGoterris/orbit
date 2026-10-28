@@ -37,7 +37,6 @@ jobs:
           args: release --clean
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          # a token that can push to JGoterris/homebrew-tap (the default one only reaches this repository)
           HOMEBREW_TAP_GITHUB_TOKEN: ${{ secrets.HOMEBREW_TAP_GITHUB_TOKEN }}
       - uses: actions/attest-build-provenance@e8998f949152b193b063cb0ec769d69d929409be # v2
         with:
@@ -50,16 +49,12 @@ jobs:
         if: ${{ !contains(github.ref_name, '-') }}
         env:
           CLOUDSMITH_API_KEY: ${{ secrets.CLOUDSMITH_API_KEY }}
-          # owner/repository on Cloudsmith, e.g. jgoterris/orbit (a repository variable, not a secret)
           CLOUDSMITH_REPO: ${{ vars.CLOUDSMITH_REPO }}
         run: |
           pip install --quiet cloudsmith-cli==1.29.0
           for f in dist/*.deb; do cloudsmith push deb "$CLOUDSMITH_REPO/any-distro/any-version" "$f" --republish; done
           for f in dist/*.rpm; do cloudsmith push rpm "$CLOUDSMITH_REPO/any-distro/any-version" "$f" --republish; done
 
-  # The website shows the docs of the latest release, so rebuild it once this one is published.
-  # A pre-release does not change them. (A release made with GITHUB_TOKEN triggers no other workflow,
-  # hence the explicit call; SITE_DISPATCH_TOKEN can only reach JGoterris/orbit-site.)
   site:
     needs: release
     if: ${{ !contains(github.ref_name, '-') }}
