@@ -1,6 +1,7 @@
 package ui
 
 import (
+	"cmp"
 	"fmt"
 	"slices"
 	"strings"
@@ -29,15 +30,39 @@ func (m *Model) pluginActionForKey(s string) *pluginAction {
 				global = a
 			}
 		case vd.plugin != nil && vd.plugin.plugin == a.plugin && vd.plugin.def.ID == a.def.Scope.View:
-			if a.def.Scope.Pane == "" {
-				return a
-			}
-			if pn := m.focusedPluginPane(); pn != nil && pn.def.ID == a.def.Scope.Pane {
+			if a.def.Scope.Pane == "" || m.pluginActionHere(a) {
 				return a
 			}
 		}
 	}
 	return global
+}
+
+// pluginActionHere says whether an action of a pane can run from the focused pane: that pane, or one that follows
+// its selection (the details of an item act on that item).
+func (m *Model) pluginActionHere(a *pluginAction) bool {
+	pn := m.focusedPluginPane()
+	if pn == nil {
+		return false
+	}
+	if pn.def.ID == a.def.Scope.Pane {
+		return true
+	}
+	src := m.pluginSourceOf(pn)
+	return src != nil && src.def.ID == a.def.Scope.Pane
+}
+
+// pluginActionReady says whether an action can run now: one about an item needs its list to have one selected.
+func (m *Model) pluginActionReady(a *pluginAction) bool {
+	if !a.def.Item || a.def.Scope.Pane == "" {
+		return true
+	}
+	vd := m.viewDef()
+	if vd.plugin == nil || vd.plugin.plugin != a.plugin {
+		return false
+	}
+	src := m.plug.panes[paneKey(a.plugin, vd.plugin.def.ID, a.def.Scope.Pane)]
+	return src != nil && src.sel != ""
 }
 
 func (m *Model) pluginPaneKeys(k tea.KeyMsg) (tea.Cmd, bool) {
@@ -51,10 +76,23 @@ func (m *Model) pluginPaneKeys(k tea.KeyMsg) (tea.Cmd, bool) {
 		return nil, false
 	}
 	if pn.def.Widget != protocol.WidgetList {
+		if src := m.pluginSourceOf(pn); src != nil && s == "enter" && m.pluginItemView() == nil {
+			return nil, m.pluginOpenItem(src)
+		}
+		if src := m.pluginSourceOf(pn); src != nil && (s == "[" || s == "]") {
+			// the previous or the next item of the list it follows, without going back to it
+			step := 1
+			if s == "[" {
+				step = -1
+			}
+			return m.pluginMove(src, src.idx+step), true
+		}
 		return m.pluginScrollKey(pn, s)
 	}
 	step := 0
 	switch s {
+	case "enter":
+		return nil, m.pluginOpenItem(pn)
 	case "down", "j":
 		step = 1
 	case "up", "k":
@@ -133,10 +171,10 @@ func (m *Model) pluginClick(r hitRegion, y int) tea.Cmd {
 		return nil
 	}
 	row := y - r.y - 1
-	if row < 0 || r.first+row >= r.items {
+	if row < 0 || row >= len(pn.lineItems) {
 		return nil
 	}
-	return m.pluginMove(pn, r.first+row)
+	return m.pluginMove(pn, pn.lineItems[row])
 }
 
 func (m *Model) pluginWheel(r hitRegion, delta int) tea.Cmd {
@@ -193,12 +231,15 @@ func (m *Model) pluginRun(a *pluginAction, service string) tea.Cmd {
 	if m.plug.running != "" {
 		return m.notify("still running: "+m.plug.running, p.Yellow)
 	}
+	if !m.pluginActionReady(a) {
+		return m.notify(a.def.Title+": nothing selected", p.Yellow)
+	}
 	vd := m.viewDef()
 	d := &pluginDialog{plugin: a.plugin, def: a.def, values: map[string]string{}}
 	if vd.plugin != nil && vd.plugin.plugin == a.plugin {
 		d.ctx = m.pluginContext(vd)
 		if pn := m.focusedPluginPane(); pn != nil {
-			d.item = pluginItemText(pn)
+			d.item = m.pluginItemText(pn)
 		}
 	}
 	if service != "" {
@@ -422,24 +463,15 @@ func (m *Model) renderPluginDialog(W, H int) ([]string, int, int, int) {
 		content = append(content, "", line(p.Dim, "y / enter confirm · n / esc cancel"))
 	case "text":
 		in := d.def.Inputs[d.step]
-		label := in.Title
-		if label == "" {
-			label = in.Name
-		}
-		l := newLine(p.PanelAlt).add(p.Accent, d.expand(label)+" ")
-		fieldW := max(1, inner-ansi.StringWidth(d.expand(label))-1)
-		l.raw(d.text.viewWithPlaceholder(fieldW, "", p.Text, p.Dim, p.PanelAlt, true), fieldW)
-		content = append(content, l.String(), "", line(p.Dim, "enter ok · esc cancel"))
+		content = append(content, inputLines(d.expand(cmp.Or(in.Title, in.Name)), inner, func(w int) string {
+			return d.text.viewWithPlaceholder(w, "", p.Text, p.Dim, p.PanelAlt, true)
+		})...)
+		content = append(content, "", line(p.Dim, "enter ok · esc cancel"))
 	case "pick":
 		in := d.def.Inputs[d.step]
-		label := in.Title
-		if label == "" {
-			label = in.Name
-		}
-		l := newLine(p.PanelAlt).add(p.Accent, d.expand(label)+" ")
-		fieldW := max(1, inner-ansi.StringWidth(d.expand(label))-1)
-		l.raw(d.filter.viewWithPlaceholder(fieldW, "type to search", p.Text, p.Dim, p.PanelAlt, true), fieldW)
-		content = append(content, l.String())
+		content = append(content, inputLines(d.expand(cmp.Or(in.Title, in.Name)), inner, func(w int) string {
+			return d.filter.viewWithPlaceholder(w, "type to search", p.Text, p.Dim, p.PanelAlt, true)
+		})...)
 		switch {
 		case d.loading:
 			content = append(content, line(p.Muted, theme.StatusIcon("starting", m.tick, false)+" loading…"))
@@ -466,6 +498,23 @@ func (m *Model) renderPluginDialog(W, H int) ([]string, int, int, int) {
 	h := len(content) + 2
 	x, y := center(W, H, w, h)
 	return modalBox(title, w, h, content), w, x, y
+}
+
+// minInputW is the least room an input of a dialog gets next to its label: with less, the label goes above it.
+const minInputW = 24
+
+// inputLines are a label and its input: on one line when they fit, else the label (broken in lines) over the input,
+// which then has the whole width, so what is typed can always be seen.
+func inputLines(label string, inner int, field func(width int) string) []string {
+	p := theme.Active()
+	if w := inner - ansi.StringWidth(label) - 1; w >= minInputW {
+		return []string{newLine(p.PanelAlt).add(p.Accent, label+" ").raw(field(w), w).String()}
+	}
+	var out []string
+	for _, part := range wrapText(label, inner) {
+		out = append(out, newLine(p.PanelAlt).add(p.Accent, part).String())
+	}
+	return append(out, newLine(p.PanelAlt).raw(field(inner), inner).String())
 }
 
 func (m *Model) pluginCommands() []command {
@@ -505,6 +554,12 @@ func (m *Model) pluginHelpRows() [][2]string {
 			rows = append(rows, [2]string{fmt.Sprint(i + 1), v.label + " (plugin " + v.plugin.plugin + ")"})
 		}
 	}
+	if len(rows) > 0 {
+		rows = append(rows,
+			[2]string{"enter (list with details)", "open the selected item full screen, with its details · esc back"},
+			[2]string{"[ ] (details of a list)", "previous / next item of the list"},
+			[2]string{"(plugin) tab · z", "move focus between its panels · zoom the focused one"})
+	}
 	for _, a := range m.plug.actions {
 		if a.key == "" {
 			continue
@@ -525,15 +580,29 @@ func (m *Model) pluginHints() [][2]string {
 	switch {
 	case pn != nil && pn.def.Widget == protocol.WidgetList:
 		hints = append(hints, [2]string{"j/k", "move"}, [2]string{"/", "filter"})
+		// unless an action of the plugin takes enter, which runs first
+		if len(pluginBoundPanes(pn.view, pn.def.ID)) > 0 && m.pluginActionForKey("enter") == nil {
+			hints = append(hints, [2]string{"enter", "open"})
+		}
 	case pn != nil:
 		hints = append(hints, [2]string{"j/k", "scroll"})
+		if m.pluginSourceOf(pn) != nil {
+			hints = append(hints, [2]string{"[/]", "prev/next"})
+		}
 	}
-	hints = append(hints, [2]string{"tab", "focus"}, [2]string{"z", "zoom"})
+	switch {
+	case m.pluginItemView() != nil:
+		hints = append(hints, [2]string{"tab", "focus"}, [2]string{"esc", "back"})
+	case m.zoomed:
+		hints = append(hints, [2]string{"tab", "focus"}, [2]string{"esc", "back"})
+	default:
+		hints = append(hints, [2]string{"tab", "focus"}, [2]string{"z", "zoom"})
+	}
 	for _, a := range m.plug.actions {
 		if a.key == "" || a.plugin != vd.plugin.plugin || (a.def.Scope.View != "" && a.def.Scope.View != vd.plugin.def.ID) {
 			continue
 		}
-		if a.def.Scope.Pane != "" && (pn == nil || pn.def.ID != a.def.Scope.Pane) {
+		if a.def.Scope.Pane != "" && !m.pluginActionHere(&a) || !m.pluginActionReady(&a) {
 			continue
 		}
 		hints = append(hints, [2]string{a.key, strings.ToLower(a.def.Title)})

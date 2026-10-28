@@ -114,7 +114,7 @@ See [AI agents](docs/agents.md) for details.
 
 ## Documentation
 
-The full documentation is at **[jgoterris.github.io/orbit](https://jgoterris.github.io/orbit/)** (sources in [`docs/`](docs/)):
+The full documentation is at **[orbit.jgoterris.com/docs](https://orbit.jgoterris.com/docs/)** (sources in [`docs/`](docs/)):
 
 - [Usage](docs/usage.md): commands and live reload of `orbit.yaml`
 - [Keys](docs/keys.md)

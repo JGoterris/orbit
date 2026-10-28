@@ -185,7 +185,7 @@ func (m *Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 	case tickMsg:
 		m.tick++
-		return m, tea.Batch(tickEvery(250*time.Millisecond), m.afterRefresh(), m.pendingChanged(), m.gitTick())
+		return m, tea.Batch(tickEvery(250*time.Millisecond), m.afterRefresh(), m.pendingChanged(), m.gitTick(), m.pluginResized())
 	case gitDiffMsg:
 		m.gitOnDiff(msg)
 		return m, nil
@@ -570,6 +570,13 @@ func (m *Model) keyInMode(k tea.KeyMsg) tea.Cmd {
 		return nil
 	case "tab", "shift+tab":
 		panes := m.viewDef().panes
+		if src := m.pluginItemView(); src != nil {
+			// an item full screen keeps to its panes
+			panes = nil
+			for _, d := range pluginBoundPanes(src.view, src.def.ID) {
+				panes = append(panes, pane(pluginViewPrefix+paneKey(src.plugin, src.view.ID, d.ID)))
+			}
+		}
 		i := 0
 		for j, pn := range panes {
 			if pn == m.focus {
@@ -583,6 +590,9 @@ func (m *Model) keyInMode(k tea.KeyMsg) tea.Cmd {
 		m.focus = panes[(i+step)%len(panes)]
 		return nil
 	case "z":
+		if m.pluginCloseItem() {
+			return nil
+		}
 		m.zoomed = !m.zoomed
 		return nil
 	case "+":
@@ -606,6 +616,10 @@ func (m *Model) keyInMode(k tea.KeyMsg) tea.Cmd {
 			if cmd, handled := m.gitKeys(k); handled {
 				return cmd
 			}
+		}
+		// an item full screen goes back first: a filter left in the logs is not what is on screen
+		if m.pluginCloseItem() {
+			return nil
 		}
 		if m.search != "" || m.filter != "" {
 			m.clearLogQueries()

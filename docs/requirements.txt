@@ -1,2 +1,0 @@
-mkdocs==1.6.1  # MkDocs 2.0 drops plugins and themes, Material does not support it
-mkdocs-material==9.7.7

@@ -25,6 +25,9 @@ type fakeHost struct {
 	result   protocol.InvokeResult
 	subs     []func(plugins.Update)
 
+	// pane, when set, answers for the panes it knows before the default ones
+	pane func(protocol.ViewDataParams) (protocol.ViewData, bool)
+
 	dataCalls   []protocol.ViewDataParams
 	invokeCalls []protocol.InvokeParams
 }
@@ -50,6 +53,11 @@ func (h *fakeHost) Data(_ string, p protocol.ViewDataParams) (protocol.ViewData,
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	h.dataCalls = append(h.dataCalls, p)
+	if h.pane != nil {
+		if d, ok := h.pane(p); ok {
+			return d, nil
+		}
+	}
 	switch p.Pane {
 	case "list":
 		return protocol.ViewData{List: &protocol.ListData{
@@ -499,7 +507,8 @@ func TestPluginHintsAndHelp(t *testing.T) {
 	if !strings.Contains(footer, "M") || !strings.Contains(footer, "merge") {
 		t.Fatalf("the hints must show the actions of the pane: %q", footer)
 	}
-	pressDrive(m, "?", "G")
+	// in the view of the plugin, its keys come first
+	pressDrive(m, "?")
 	help := screen(m)
 	if !strings.Contains(help, "Pull requests (plugin forge)") || !strings.Contains(help, "(forge prs) M") {
 		t.Fatalf("the help must list the plugin:\n%s", help)
@@ -509,7 +518,7 @@ func TestPluginHintsAndHelp(t *testing.T) {
 func TestPluginTextIsNeverStyledByThePlugin(t *testing.T) {
 	host := &fakeHost{}
 	m := newPluginModel(t, host)
-	spans := m.pluginTextLines(&protocol.TextData{Lines: [][]protocol.Span{{{Text: "a", Tone: "bogus"}, {Text: "b", Tone: protocol.ToneError, Bold: true}}}})
+	spans := m.pluginTextLines(&protocol.TextData{Lines: [][]protocol.Span{{{Text: "a", Tone: "bogus"}, {Text: "b", Tone: protocol.ToneError, Bold: true}}}}, 0)
 	if len(spans) != 1 || !strings.Contains(spans[0], "a") {
 		t.Fatalf("lines = %q", spans)
 	}

@@ -23,13 +23,9 @@ go run honnef.co/go/tools/cmd/staticcheck@latest ./...
 
 `test/fixtures/stack/` is a demo project to try changes by hand: `go run ./cmd/orbit test/fixtures/stack`.
 
-The documentation lives in `docs/` and is published with [MkDocs Material](https://squidfunk.github.io/mkdocs-material/)
-to <https://jgoterris.github.io/orbit/>. To preview it at <http://localhost:8000>:
-
-```bash
-uv run --no-project --with-requirements docs/requirements.txt mkdocs serve
-# or without Python: docker run --rm -it -p 8000:8000 -v "$PWD":/docs squidfunk/mkdocs-material:9.7.7
-```
+The documentation lives in `docs/` and is published at <https://orbit.jgoterris.com/docs/> with each release; the
+website itself is in [orbit-site](https://github.com/JGoterris/orbit-site). To preview your changes, clone it next to
+this repository and run `bun install && bun run dev` there: it reads the docs from your `../orbit/docs`.
 
 CI runs all of the above on Linux, macOS and Windows. Code that depends on the operating system lives in
 `internal/platform/`. The rest of the layout:

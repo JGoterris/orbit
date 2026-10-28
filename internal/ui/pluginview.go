@@ -1,6 +1,7 @@
 package ui
 
 import (
+	"cmp"
 	"fmt"
 	"slices"
 	"strings"
@@ -25,6 +26,9 @@ func (m *Model) renderPluginView(vd viewDef, W, H, x int) []string {
 	}
 	defs := vd.plugin.def.Panes
 	focused := m.focusedPluginPane()
+	if src := m.pluginItemView(); src != nil {
+		return m.renderPluginItem(vd, src, W, H, x)
+	}
 	if m.zoomed || W < minPluginWidth {
 		if focused == nil {
 			focused = m.pluginPaneOf(vd, defs[0])
@@ -32,7 +36,7 @@ func (m *Model) renderPluginView(vd viewDef, W, H, x int) []string {
 		defs = []protocol.Pane{focused.def}
 	}
 	if len(defs) == 1 {
-		return m.renderPluginPane(vd, defs[0], W, H, x, 1)
+		return m.renderPluginPane(vd, defs[0], "", W, H, x, 1)
 	}
 	weight := func(d protocol.Pane) int { return max(1, d.Weight) }
 	rest := defs[1:]
@@ -42,7 +46,7 @@ func (m *Model) renderPluginView(vd viewDef, W, H, x int) []string {
 	}
 	w0 := weight(defs[0])
 	leftW := max(20, min(W-20, W*w0/(w0+rightWeight)))
-	left := m.renderPluginPane(vd, defs[0], leftW, H, x, 1)
+	left := m.renderPluginPane(vd, defs[0], "", leftW, H, x, 1)
 
 	ws := make([]int, len(rest))
 	for i, d := range rest {
@@ -52,13 +56,35 @@ func (m *Model) renderPluginView(vd viewDef, W, H, x int) []string {
 	var right []string
 	y := 1
 	for i, d := range rest {
-		right = append(right, m.renderPluginPane(vd, d, W-leftW, heights[i], x+leftW, y)...)
+		right = append(right, m.renderPluginPane(vd, d, "", W-leftW, heights[i], x+leftW, y)...)
 		y += heights[i]
 	}
 	if len(right) < H {
 		right = append(right, fill(W-leftW, H-len(right), p.Bg)...)
 	}
 	return hconcat(left, right)
+}
+
+// renderPluginItem is the selected item of a list full screen: the panes that follow the list, one over the other,
+// with the whole width, the position of the item in the title of the first.
+func (m *Model) renderPluginItem(vd viewDef, src *pluginPane, W, H, x int) []string {
+	defs := pluginBoundPanes(src.view, src.def.ID)
+	ws := make([]int, len(defs))
+	for i, d := range defs {
+		ws[i] = max(1, d.Weight)
+	}
+	heights := distribute(H, ws, 3)
+	var out []string
+	y := 1
+	for i, d := range defs {
+		note := ""
+		if i == 0 {
+			note = fmt.Sprintf(" · %d of %d", src.idx+1, len(src.vis))
+		}
+		out = append(out, m.renderPluginPane(vd, d, note, W, heights[i], x, y)...)
+		y += heights[i]
+	}
+	return out
 }
 
 func (m *Model) renderPluginDown(vd viewDef, info plugins.Info, W, H int) []string {
@@ -107,15 +133,143 @@ func wrapText(s string, width int) []string {
 	return out
 }
 
-func (m *Model) renderPluginPane(vd viewDef, def protocol.Pane, w, h, x, y int) []string {
+// wrapSpans breaks a line of spans into lines of at most width columns, at a space when it can. The lines after the
+// first keep the indentation of the first (and of its bullet, "- " or "* " or "• " or "> "), so an item of a list
+// still reads as one.
+func wrapSpans(spans []protocol.Span, width int) [][]protocol.Span {
+	total := 0
+	for _, s := range spans {
+		total += ansi.StringWidth(s.Text)
+	}
+	if width < 1 || total <= width {
+		return [][]protocol.Span{spans}
+	}
+	// words are runs of spaces or of anything else, each made of the pieces of the spans it crosses
+	type word struct {
+		parts []protocol.Span
+		w     int
+		space bool
+	}
+	var words []word
+	var text strings.Builder
+	for _, s := range spans {
+		text.WriteString(s.Text)
+		for _, r := range s.Text {
+			space := r == ' '
+			if len(words) == 0 || words[len(words)-1].space != space {
+				words = append(words, word{space: space})
+			}
+			wd := &words[len(words)-1]
+			if n := len(wd.parts); n > 0 && wd.parts[n-1].Tone == s.Tone && wd.parts[n-1].Bold == s.Bold {
+				wd.parts[n-1].Text += string(r)
+			} else {
+				wd.parts = append(wd.parts, protocol.Span{Text: string(r), Tone: s.Tone, Bold: s.Bold})
+			}
+			wd.w += ansi.StringWidth(string(r))
+		}
+	}
+	indent := 0
+	if len(words) > 0 && words[0].space {
+		indent = words[0].w
+	}
+	for _, bullet := range []string{"- ", "* ", "• ", "> "} {
+		if strings.HasPrefix(strings.TrimLeft(text.String(), " "), bullet) {
+			indent += 2
+			break
+		}
+	}
+	indent = min(indent, width/2)
+
+	var out [][]protocol.Span
+	var cur []protocol.Span
+	cw := 0
+	add := func(s protocol.Span) {
+		if n := len(cur); n > 0 && cur[n-1].Tone == s.Tone && cur[n-1].Bold == s.Bold {
+			cur[n-1].Text += s.Text
+		} else {
+			cur = append(cur, s)
+		}
+		cw += ansi.StringWidth(s.Text)
+	}
+	flush := func() {
+		for len(cur) > 0 {
+			last := &cur[len(cur)-1]
+			last.Text = strings.TrimRight(last.Text, " ")
+			if last.Text != "" {
+				break
+			}
+			cur = cur[:len(cur)-1]
+		}
+		out = append(out, cur)
+		cur, cw = nil, 0
+		if indent > 0 {
+			cur = []protocol.Span{{Text: strings.Repeat(" ", indent)}}
+			cw = indent
+		}
+	}
+	for _, wd := range words {
+		if wd.space {
+			switch {
+			case cw+wd.w > width:
+				flush()
+			case len(out) > 0 && cw == indent:
+				// a continuation line does not start with the spaces it was broken at
+			default:
+				for _, p := range wd.parts {
+					add(p)
+				}
+			}
+			continue
+		}
+		// a word that fits in a line of its own starts one; one that does not fit anywhere starts where it is
+		if cw+wd.w > width && cw > indent && wd.w <= width-indent {
+			flush()
+		}
+		// a word wider than the line is broken after a / - _ or . that still fits (a path, a branch), else where
+		// the line ends
+		breakAt := -1
+		if cw+wd.w > width {
+			n, w := 0, cw
+			for _, p := range wd.parts {
+				for _, r := range p.Text {
+					w += ansi.StringWidth(string(r))
+					n++
+					if w > width {
+						break
+					}
+					if strings.ContainsRune("/-_.", r) && w > cw+(width-cw)/3 {
+						breakAt = n
+					}
+				}
+			}
+		}
+		n := 0
+		for _, p := range wd.parts {
+			for _, r := range p.Text {
+				rw := ansi.StringWidth(string(r))
+				if (n == breakAt || cw+rw > width) && cw > indent {
+					flush()
+					breakAt = -1
+				}
+				add(protocol.Span{Text: string(r), Tone: p.Tone, Bold: p.Bold})
+				n++
+			}
+		}
+	}
+	if cw > indent || len(out) == 0 {
+		out = append(out, cur)
+	}
+	return out
+}
+
+// renderPluginPane draws a pane of a plugin; note goes after its title.
+func (m *Model) renderPluginPane(vd viewDef, def protocol.Pane, note string, w, h, x, y int) []string {
 	p := theme.Active()
 	pn := m.pluginPaneOf(vd, def)
+	pn.width = w - 4
 	id := pane(pluginViewPrefix + pn.key)
 	focused := m.focus == id
-	title := def.Title
-	if title == "" {
-		title = def.ID
-	}
+	title := cmp.Or(def.Title, def.ID) + note
 	if pn.def.Widget == protocol.WidgetList && pn.loaded && pn.data.List != nil {
 		title += fmt.Sprintf(" · %d", len(pn.vis))
 		if pn.filter != "" {
@@ -141,20 +295,76 @@ func (m *Model) renderPluginPane(vd viewDef, def protocol.Pane, w, h, x, y int) 
 
 	switch def.Widget {
 	case protocol.WidgetList:
-		rows := m.pluginListRows(pn, w-3)
-		first := listStart(len(rows), pn.idx, h)
-		m.hit(id, x, y, w, h, len(rows), first)
+		rows, more := m.pluginListRows(pn, w-3)
+		m.hit(id, x, y, w, h, len(rows), 0)
 		foot := bottom
 		if foot == "" {
 			foot = theme.Fit(pn.data.List.Footer, max(0, w-6))
 			foot = strings.TrimRight(foot, " ")
 		}
-		return listPanel(title, rows, pn.idx, focused, m.pluginEmpty(pn.data.List.Empty), foot, w, h)
+		var content []string
+		content, pn.lineItems = pluginListLines(rows, more, pn.idx, focused, m.pluginEmpty(pn.data.List.Empty), w-2, h)
+		return panel(panelOpts{title: title, bottom: foot, focused: focused}, w, h, content)
 	case protocol.WidgetDetail:
 		return m.scrollPluginPane(pn, id, title, bottom, m.pluginDetailLines(pn.data.Detail, w-4), focused, w, h, x, y)
 	default:
-		return m.scrollPluginPane(pn, id, title, bottom, m.pluginTextLines(pn.data.Text), focused, w, h, x, y)
+		width := 0
+		if def.Wrap {
+			width = w - 4
+		}
+		return m.scrollPluginPane(pn, id, title, bottom, m.pluginTextLines(pn.data.Text, width), focused, w, h, x, y)
 	}
+}
+
+// maxRowLines is how many lines the selected row of a list may take to show the whole of its first column.
+const maxRowLines = 3
+
+// pluginListLines are the lines of a list: a row each, but the selected one takes the lines its first column needs
+// (more), so a long title can be read whole. lineItems maps each line drawn to the row it belongs to, for the mouse.
+func pluginListLines(rows []listRow, more []listRow, selected int, focused bool, empty string, inner, h int) (content []string, lineItems []int) {
+	p := theme.Active()
+	if len(rows) == 0 {
+		return []string{newLine(p.Panel).add(p.Dim, empty).String()}, nil
+	}
+	visible := max(1, h-2)
+	total := len(rows) + len(more)
+	start := max(0, min(selected-visible/2, total-visible))
+	if end := selected + len(more); end >= start+visible {
+		start = end - visible + 1
+	}
+	if selected < start {
+		start = selected
+	}
+	line := 0
+	draw := func(item int, row listRow) {
+		if line >= start && line < start+visible {
+			sel := item == selected
+			bg := p.Panel
+			if sel && focused {
+				bg = p.Selection
+			}
+			l := newLine(bg)
+			if sel {
+				l.add(p.Accent, "▌")
+			} else {
+				l.add(p.Panel, " ")
+			}
+			r := row(bg)
+			l.raw(r.String(), r.width())
+			content = append(content, l.pad(inner).String())
+			lineItems = append(lineItems, item)
+		}
+		line++
+	}
+	for i, row := range rows {
+		draw(i, row)
+		if i == selected {
+			for _, r := range more {
+				draw(i, r)
+			}
+		}
+	}
+	return content, lineItems
 }
 
 func (m *Model) pluginEmpty(s string) string {
@@ -258,7 +468,9 @@ func pluginColumns(d *protocol.ListData, avail int, hasIcon bool) (primary plugi
 	if hasIcon {
 		avail -= 2
 	}
-	const minPrimary = 10
+	// the first column is what a row is about: it keeps two fifths of the width (or all it needs) before the
+	// others get any
+	minPrimary := max(10, avail*2/5)
 	type cand struct {
 		col  pluginCol
 		prio int
@@ -300,7 +512,9 @@ func pluginColumns(d *protocol.ListData, avail int, hasIcon bool) (primary plugi
 	return pluginCol{cols[0].ID, max(1, avail-used())}, others, badgeW
 }
 
-func (m *Model) pluginListRows(pn *pluginPane, avail int) []listRow {
+// pluginListRows are the rows of a list, and more: the lines the selected row needs below it to show the whole of
+// its first column.
+func (m *Model) pluginListRows(pn *pluginPane, avail int) (rows, more []listRow) {
 	p := theme.Active()
 	d := pn.data.List
 	hasIcon := false
@@ -311,9 +525,34 @@ func (m *Model) pluginListRows(pn *pluginPane, avail int) []listRow {
 		}
 	}
 	primary, others, badgeW := pluginColumns(d, avail, hasIcon)
-	rows := make([]listRow, 0, len(pn.vis))
-	for _, i := range pn.vis {
+	rows = make([]listRow, 0, len(pn.vis))
+	for j, i := range pn.vis {
 		it := d.Items[i]
+		cell := it.Cells[primary.id]
+		color := m.toneColor(cell.Tone)
+		first := theme.Fit(cell.Text, primary.w)
+		if j == pn.idx && ansi.StringWidth(cell.Text) > primary.w {
+			// the start in its column, and the rest below the row, where the other columns leave the whole width
+			indent := 0
+			if hasIcon {
+				indent = 2
+			}
+			head := wrapSpans([]protocol.Span{{Text: cell.Text}}, primary.w)[0]
+			first = theme.Fit(spansText(head), primary.w)
+			rest := strings.TrimSpace(strings.TrimPrefix(cell.Text, strings.TrimRight(spansText(head), " ")))
+			parts := wrapSpans([]protocol.Span{{Text: rest}}, max(10, avail-indent))
+			if len(parts) > maxRowLines-1 {
+				parts = parts[:maxRowLines-1]
+				last := parts[len(parts)-1]
+				last[len(last)-1].Text = strings.TrimRight(ansi.Truncate(last[len(last)-1].Text, max(1, avail-indent-1), ""), " ") + "…"
+			}
+			for _, part := range parts {
+				text := spansText(part)
+				more = append(more, func(bg string) *line {
+					return newLine(bg).add(p.Text, strings.Repeat(" ", indent)).add(color, text)
+				})
+			}
+		}
 		rows = append(rows, func(bg string) *line {
 			l := newLine(bg)
 			if hasIcon {
@@ -323,9 +562,7 @@ func (m *Model) pluginListRows(pn *pluginPane, avail int) []listRow {
 					l.add(p.Dim, "  ")
 				}
 			}
-			cell := it.Cells[primary.id]
-			color := m.toneColor(cell.Tone)
-			l.add(color, theme.Fit(cell.Text, primary.w))
+			l.add(color, first)
 			for _, c := range others {
 				cell := it.Cells[c.id]
 				col := m.toneColor(cell.Tone)
@@ -341,7 +578,15 @@ func (m *Model) pluginListRows(pn *pluginPane, avail int) []listRow {
 			return l
 		})
 	}
-	return rows
+	return rows, more
+}
+
+func spansText(spans []protocol.Span) string {
+	var b strings.Builder
+	for _, s := range spans {
+		b.WriteString(s.Text)
+	}
+	return b.String()
 }
 
 func (m *Model) badgeLine(bg string, badges []protocol.Badge, width int) *line {
@@ -380,11 +625,18 @@ func spansLine(m *Model, bg string, spans []protocol.Span) *line {
 	return l
 }
 
-func (m *Model) pluginTextLines(t *protocol.TextData) []string {
+// pluginTextLines are the lines of a text, broken to width columns (0: as they are).
+func (m *Model) pluginTextLines(t *protocol.TextData, width int) []string {
 	p := theme.Active()
 	out := make([]string, 0, len(t.Lines))
 	for _, spans := range t.Lines {
-		out = append(out, spansLine(m, p.Panel, spans).String())
+		if width <= 0 {
+			out = append(out, spansLine(m, p.Panel, spans).String())
+			continue
+		}
+		for _, part := range wrapSpans(spans, width) {
+			out = append(out, spansLine(m, p.Panel, part).String())
+		}
 	}
 	return out
 }
@@ -403,21 +655,38 @@ func (m *Model) pluginSectionLines(sections []protocol.Section, inner, textMax i
 			out = append(out, blank(inner, p.Panel))
 		}
 		if s.Title != "" {
-			out = append(out, m.headerLine(s.Title, inner))
+			out = append(out, m.titleLines(s.Title, inner)...)
 		}
 		l := newLine(p.Panel)
 		for _, f := range s.Fields {
-			value := strings.TrimRight(theme.Fit(f.Value, max(4, min(ansi.StringWidth(f.Value), inner-len(f.Label)-4))), " ")
-			need := len(f.Label) + ansi.StringWidth(value) + 4
-			if l.width() > 0 && l.width()+need > inner {
-				out = append(out, l.String())
-				l = newLine(p.Panel)
-			}
 			color := m.toneColor(f.Tone)
 			if f.Tone == "" {
 				color = p.Text
 			}
-			field(l, f.Label, value, color)
+			labelW := ansi.StringWidth(f.Label)
+			if labelW+ansi.StringWidth(f.Value)+1 > inner {
+				// a value that does not fit in a line has lines of its own, under its label
+				if l.width() > 0 {
+					out = append(out, l.String())
+					l = newLine(p.Panel)
+				}
+				for i, part := range wrapSpans([]protocol.Span{{Text: f.Value}}, max(4, inner-labelW-1)) {
+					row := newLine(p.Panel)
+					if i == 0 {
+						row.add(p.Dim, f.Label+" ")
+					} else {
+						row.add(p.Dim, strings.Repeat(" ", labelW+1))
+					}
+					out = append(out, row.add(color, spansText(part)).String())
+				}
+				continue
+			}
+			need := labelW + ansi.StringWidth(f.Value) + 4
+			if l.width() > 0 && l.width()+need > inner {
+				out = append(out, l.String())
+				l = newLine(p.Panel)
+			}
+			field(l, f.Label, f.Value, color)
 		}
 		if l.width() > 0 {
 			out = append(out, l.String())
@@ -427,11 +696,31 @@ func (m *Model) pluginSectionLines(sections []protocol.Section, inner, textMax i
 			text = text[:textMax]
 		}
 		for _, spans := range text {
-			out = append(out, spansLine(m, p.Panel, spans).String())
+			for _, part := range wrapSpans(spans, inner) {
+				out = append(out, spansLine(m, p.Panel, part).String())
+			}
 		}
 		if len(s.Badges) > 0 {
 			out = append(out, m.badgeLine(p.Panel, s.Badges, inner).String())
 		}
+	}
+	return out
+}
+
+// titleLines is the title of a section: a rule with the title in it, or, when it is too long for that, the title
+// broken in lines after the start of the rule.
+func (m *Model) titleLines(title string, inner int) []string {
+	p := theme.Active()
+	if ansi.StringWidth(title)+5 <= inner {
+		return []string{m.headerLine(title, inner)}
+	}
+	var out []string
+	for i, part := range wrapSpans([]protocol.Span{{Text: title}}, max(4, inner-3)) {
+		lead := "   "
+		if i == 0 {
+			lead = "── "
+		}
+		out = append(out, newLine(p.Panel).add(p.Border, lead).add(p.Muted, spansText(part)).String())
 	}
 	return out
 }

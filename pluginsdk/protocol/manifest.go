@@ -64,6 +64,11 @@ type Pane struct {
 	Bind string `yaml:"bind,omitempty" json:"bind,omitempty"`
 	// Follow keeps a text pane at its end
 	Follow bool `yaml:"follow,omitempty" json:"follow,omitempty"`
+	// Wrap breaks the long lines of a text pane instead of cutting them (a detail always wraps)
+	Wrap bool `yaml:"wrap,omitempty" json:"wrap,omitempty"`
+	// Sized makes orbit ask again for the data of the pane when its width changes: what it draws depends on it
+	// (Context.Width)
+	Sized bool `yaml:"sized,omitempty" json:"sized,omitempty"`
 }
 
 // Action is a command: it has an entry in the palette and, with a key, a shortcut.
@@ -75,6 +80,9 @@ type Action struct {
 	// Confirm asks before running; {item} and {service} in the title are replaced
 	Confirm *Confirm `yaml:"confirm,omitempty" json:"confirm,omitempty"`
 	Inputs  []Input  `yaml:"inputs,omitempty" json:"inputs,omitempty"`
+	// Item says the action is about the selected item of its pane (scope.pane): while there is none, it is not
+	// offered and does not run
+	Item bool `yaml:"item,omitempty" json:"item,omitempty"`
 }
 
 // Scope says where an action is available: the whole app (empty), a view, a pane of it, or one entry per service.

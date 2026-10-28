@@ -124,6 +124,8 @@ type Context struct {
 	Selection map[string]string `json:"selection,omitempty"`
 	// Filter is what the user typed in the filter of the pane
 	Filter string `json:"filter,omitempty"`
+	// Width is how many columns of text fit in the pane, as it was last drawn (0 before it ever was)
+	Width int `json:"width,omitempty"`
 }
 
 // ServiceRef is a service of the project: what a plugin needs to find where it lives.

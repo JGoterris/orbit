@@ -62,7 +62,9 @@
         "title": { "type": "string" },
         "weight": { "type": "integer", "minimum": 0, "description": "Share of the space (default 1)." },
         "bind": { "type": "string", "description": "A pane declared before this one: this one is asked again whenever the selection of that one changes." },
-        "follow": { "type": "boolean", "description": "A text pane that keeps its end in view." }
+        "follow": { "type": "boolean", "description": "A text pane that keeps its end in view." },
+        "wrap": { "type": "boolean", "description": "A text pane that breaks its long lines instead of cutting them (a detail always does)." },
+        "sized": { "type": "boolean", "description": "Asked again when its width changes: the context carries the width of the pane." }
       }
     },
     "action": {
@@ -82,6 +84,7 @@
             "service": { "type": "boolean", "description": "One palette entry per service." }
           }
         },
+        "item": { "type": "boolean", "description": "About the selected item of its pane: not offered, and not run, while there is none." },
         "confirm": {
           "type": "object",
           "additionalProperties": false,

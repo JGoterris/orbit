@@ -2,7 +2,7 @@ name: Release
 
 # Pushing a tag vX.Y.Z runs the CI on the tagged commit, builds every platform, publishes a GitHub release
 # (binaries, .deb, .rpm, checksums, build provenance) and, for a final release, updates the Homebrew tap and the
-# Cloudsmith apt / rpm repository.
+# Cloudsmith apt / rpm repository, and the website is rebuilt to show the docs of the new version.
 # A tag with a suffix (v0.8.0-beta.1, v1.0.0-rc.1) is a pre-release: GitHub marks it so and neither the tap nor
 # Cloudsmith is touched.
 on:
@@ -56,3 +56,15 @@ jobs:
           pip install --quiet cloudsmith-cli==1.29.0
           for f in dist/*.deb; do cloudsmith push deb "$CLOUDSMITH_REPO/any-distro/any-version" "$f" --republish; done
           for f in dist/*.rpm; do cloudsmith push rpm "$CLOUDSMITH_REPO/any-distro/any-version" "$f" --republish; done
+
+  # The website shows the docs of the latest release, so rebuild it once this one is published.
+  # A pre-release does not change them. (A release made with GITHUB_TOKEN triggers no other workflow,
+  # hence the explicit call; SITE_DISPATCH_TOKEN can only reach JGoterris/orbit-site.)
+  site:
+    needs: release
+    if: ${{ !contains(github.ref_name, '-') }}
+    runs-on: ubuntu-latest
+    steps:
+      - run: gh api repos/JGoterris/orbit-site/dispatches -f event_type=orbit-released
+        env:
+          GH_TOKEN: ${{ secrets.SITE_DISPATCH_TOKEN }}
