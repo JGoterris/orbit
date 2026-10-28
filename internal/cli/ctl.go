@@ -70,7 +70,7 @@ func RunStatus(cfg *config.OrbitConfig, asJSON bool) int {
 	}
 	defer client.Close()
 	var services []supervisor.ServiceState
-	if err := client.Call(ipc.MethodSnapshot, nil, &services); err != nil {
+	if err := client.CallWithin(10*time.Second, ipc.MethodSnapshot, nil, &services); err != nil {
 		errorln(err.Error())
 		return 1
 	}
@@ -206,15 +206,26 @@ func RunCtl(cfg *config.OrbitConfig, args []string, sendConfig bool) int {
 		errorln(fmt.Sprintf("usage: orbit ctl <%s|reload> [service or group…]", strings.Join(ctlActions, "|")))
 		return 1
 	}
-	if n, bad := unknownTargets(cfg, names); bad {
-		errorln(fmt.Sprintf("unknown service or group %q", n))
-		return 1
-	}
 	if len(names) == 0 && action != "start" && action != "stop" {
 		errorln(action + " needs at least one service or group")
 		return 1
 	}
 	client := connectIPC(cfg)
+	// the names are the ones of the orbit that runs, which may differ from orbit.yaml (broken, or edited and not applied)
+	known := cfg
+	if client != nil {
+		var hello ipc.Hello
+		if client.Call(ipc.MethodHello, nil, &hello) == nil && hello.Config != nil {
+			known = hello.Config
+		}
+	}
+	if n, bad := unknownTargets(known, names); bad {
+		if client != nil {
+			client.Close()
+		}
+		errorln(fmt.Sprintf("unknown service or group %q", n))
+		return 1
+	}
 	if client == nil && action != "stop" {
 		// starting something with nothing running: start the daemon in the background, as `orbit up -d` does
 		if err := ipc.EnsureDaemon(cfg); err != nil {

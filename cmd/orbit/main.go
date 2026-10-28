@@ -85,6 +85,20 @@ func run(args []string) int {
 		inv.Dir, inv.Sub = entry.Path, ""
 	}
 
+	if inv.Options.All {
+		return cli.RunDownAll()
+	}
+	// -p: the project is a running or remembered one, wherever the shell is
+	var target *cli.Target
+	if inv.Options.Project != "" {
+		t, err := cli.ResolveProject(inv.Options.Project)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "%s %v\n", red, err)
+			return 1
+		}
+		target, inv.Dir = &t, t.Root
+	}
+
 	opts := config.LoadOptions{Dir: inv.Dir, File: inv.Options.Config, SavedProfiles: state.SavedProfiles}
 	opts.Profiles, opts.ProfilesSet = inv.Options.ProfileSelection()
 	// a --profile on the command line becomes the selection of the project, until another one replaces it
@@ -101,29 +115,53 @@ func run(args []string) int {
 		}
 		return cfg, true
 	}
-	// status and down also work while orbit.yaml is broken
-	loadRunning := func() (*config.OrbitConfig, bool) {
+	// the commands that talk to an orbit that is running (status, down, ctl, logs) do not need a loadable
+	// orbit.yaml: they act on the orbit that runs the project, with the configuration it loaded
+	fellBack := false
+	loadClient := func() (*config.OrbitConfig, bool) {
 		cfg, err := config.LoadConfig(opts)
 		if err == nil {
 			return cfg, true
 		}
-		file := config.FindConfigFile(inv.Dir)
-		if opts.File != "" {
-			file, _ = filepath.Abs(opts.File)
+		from := inv.Dir
+		switch {
+		case opts.File != "":
+			abs, _ := filepath.Abs(opts.File)
+			from = filepath.Dir(abs)
+		case from == "":
+			from, _ = os.Getwd()
 		}
-		if file != "" {
-			if running := cli.RunningConfig(file); running != nil {
-				fmt.Fprintf(os.Stderr, "%s %v\n(acting on the orbit that is running, with the configuration it loaded)\n", red, err)
-				return running, true
+		if running := cli.RunningAt(from); running != nil {
+			fmt.Fprintf(os.Stderr, "%s %v\n(acting on the orbit that is running, with the configuration it loaded)\n", red, err)
+			fellBack = true
+			return running, true
+		}
+		// nothing runs, but `down -p` can still clean what a project left behind
+		if target != nil && inv.Sub == "down" {
+			name := target.Name
+			if name == "" {
+				name = filepath.Base(target.Root)
 			}
+			return &config.OrbitConfig{Root: target.Root, Name: name, Services: map[string]*config.ServiceConfig{}, Groups: map[string][]string{}}, true
 		}
 		fmt.Fprintf(os.Stderr, "%s %v\n", red, err)
+		if strings.Contains(err.Error(), "no orbit.yaml") {
+			cli.PrintRunning(os.Stderr)
+		}
 		return nil, false
 	}
 	// the commands that act on the project make a --profile its selection; the ones that only look do not
 	loadAndRemember := func() (*config.OrbitConfig, bool) {
 		cfg, ok := load()
 		if ok {
+			remember(cfg)
+		}
+		return cfg, ok
+	}
+	// ctl: a --profile becomes the selection only when orbit.yaml itself was loaded
+	loadClientAndRemember := func() (*config.OrbitConfig, bool) {
+		cfg, ok := loadClient()
+		if ok && !fellBack {
 			remember(cfg)
 		}
 		return cfg, ok
@@ -167,12 +205,12 @@ func run(args []string) int {
 		}
 		return 1
 	case "status":
-		if cfg, ok := loadRunning(); ok {
+		if cfg, ok := loadClient(); ok {
 			return cli.RunStatus(cfg, inv.Options.JSON)
 		}
 		return 1
 	case "ctl":
-		if cfg, ok := loadAndRemember(); ok {
+		if cfg, ok := loadClientAndRemember(); ok {
 			return cli.RunCtl(cfg, inv.Rest, opts.ProfilesSet)
 		}
 		return 1
@@ -191,7 +229,7 @@ func run(args []string) int {
 		}
 		return 1
 	case "down":
-		if cfg, ok := loadRunning(); ok {
+		if cfg, ok := loadClient(); ok {
 			return cli.RunDown(cfg)
 		}
 		return 1
@@ -205,7 +243,7 @@ func run(args []string) int {
 			}
 			lines = n
 		}
-		if cfg, ok := load(); ok {
+		if cfg, ok := loadClient(); ok {
 			return cli.RunLogs(cfg, inv.Rest, cli.LogsOptions{
 				Follow: inv.Options.Follow, Lines: lines, Grep: inv.Options.Grep, Since: inv.Options.Since,
 				JSON: inv.Options.JSON,

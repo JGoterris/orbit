@@ -9,7 +9,7 @@ usage
   orbit projects             list the projects orbit remembers
   orbit up [service…]        start services headless, streaming logs (ctrl+c stops; -d runs them in the background)
   orbit logs [service…]      print recent logs (-f to follow, -n lines, --grep, --since, --json)
-  orbit down                 stop everything orbit left running (also quits an orbit that is open)
+  orbit down [--all]         stop everything orbit left running (also quits an orbit that is open); --all: every project
   orbit status [--json]      show the state of the services of an orbit that is running
   orbit ctl <action> [svc…]  start|stop|restart|toggle services of a running orbit (no svc: start/stop all;
                              with nothing running, start, restart and toggle start the daemon first)
@@ -27,6 +27,7 @@ usage
 
 options
   -c, --config <file>        use a specific config file
+  -p, --project <name|path>  act on a running or remembered project from anywhere (up, down, status, ctl, logs, run, ls, graph)
       --profile <names>      activate profiles of orbit.yaml (a,b or repeat the flag); it is remembered for the project
       --no-profiles          deactivate every profile (ORBIT_PROFILES and the saved selection are ignored too)
   -d, --detach               (up) start the services in an orbit daemon and return once they are ready

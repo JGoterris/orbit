@@ -59,6 +59,19 @@ func DirsOfRoot(root string) []string {
 	return out
 }
 
+// AllDirs are the state dirs of every project orbit has ever kept state for.
+func AllDirs() []string {
+	base := filepath.Join(platform.StateBase(), "orbit")
+	entries, _ := os.ReadDir(base)
+	var out []string
+	for _, e := range entries {
+		if e.IsDir() {
+			out = append(out, filepath.Join(base, e.Name()))
+		}
+	}
+	return out
+}
+
 // ReadProfiles is the selection of profiles saved for the project in dir; ok is false when none was ever saved
 // (a saved empty selection means "no profiles").
 func ReadProfiles(dir string) (names []string, ok bool) {

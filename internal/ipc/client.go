@@ -109,6 +109,12 @@ func (c *Client) Done() <-chan struct{} { return c.done }
 
 // Call sends a request and decodes its result into out (nil to ignore it).
 func (c *Client) Call(method string, params any, out any) error {
+	return c.CallWithin(0, method, params, out)
+}
+
+// CallWithin is Call that gives up when there is no answer after d (0: wait for as long as it takes). It is for
+// asking an orbit that may be hung, such as when probing every orbit that runs.
+func (c *Client) CallWithin(d time.Duration, method string, params any, out any) error {
 	var raw json.RawMessage
 	if params != nil {
 		b, err := json.Marshal(params)
@@ -133,7 +139,22 @@ func (c *Client) Call(method string, params any, out any) error {
 		c.mu.Unlock()
 		return err
 	}
-	m, ok := <-ch
+	var expired <-chan time.Time
+	if d > 0 {
+		t := time.NewTimer(d)
+		defer t.Stop()
+		expired = t.C
+	}
+	var m Message
+	var ok bool
+	select {
+	case m, ok = <-ch:
+	case <-expired:
+		c.mu.Lock()
+		delete(c.pending, id)
+		c.mu.Unlock()
+		return errors.New("orbit does not answer")
+	}
 	if !ok {
 		return errors.New("connection to orbit closed")
 	}

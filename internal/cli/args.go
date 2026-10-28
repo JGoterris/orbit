@@ -24,6 +24,10 @@ type Options struct {
 	Check    bool
 	Yes      bool
 	Purge    bool
+	// Project is the running or remembered project a command acts on, by name or path (-p)
+	Project string
+	// All makes `down` act on every running orbit
+	All bool
 	// Profile is every --profile given, joined with commas
 	Profile    string
 	NoProfiles bool
@@ -52,6 +56,8 @@ var optSpecs = []optSpec{
 	{long: "check", set: func(o *Options, _ string) { o.Check = true }},
 	{long: "purge", set: func(o *Options, _ string) { o.Purge = true }},
 	{long: "yes", short: "y", set: func(o *Options, _ string) { o.Yes = true }},
+	{long: "project", short: "p", takesValue: true, set: func(o *Options, v string) { o.Project = v }},
+	{long: "all", set: func(o *Options, _ string) { o.All = true }},
 	{long: "profile", takesValue: true, set: addProfiles},
 	{long: "profiles", takesValue: true, set: addProfiles},
 	{long: "no-profiles", set: func(o *Options, _ string) { o.NoProfiles = true }},

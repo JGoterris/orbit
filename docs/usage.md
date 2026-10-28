@@ -16,6 +16,9 @@ orbit ctl start|stop|restart|toggle [svc|group…]   # drives a running orbit fr
                      # (restart of a group: only its members that are up; a service named alone starts if down)
                      # (with nothing running, start / restart / toggle start the daemon first)
 orbit ctl reload     # applies the edits made to orbit.yaml to a running orbit
+orbit down -p <name|path>      # -p works with up, down, status, ctl, logs, run, ls and graph: a running or remembered
+                     # project, from any folder (status / logs / ctl / down also work while its orbit.yaml is broken or gone)
+orbit down --all     # stops every running orbit and the leftovers of the remembered projects
 orbit graph          # prints the dependency graph
 orbit ls             # lists services (and tasks, and profiles)
 orbit run [task] [-- args]   # runs a task of orbit.yaml on this terminal (no task: lists them)

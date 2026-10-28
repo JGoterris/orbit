@@ -18,6 +18,7 @@ import (
 	"github.com/JGoterris/orbit/internal/core/runner"
 	"github.com/JGoterris/orbit/internal/core/supervisor"
 	"github.com/JGoterris/orbit/internal/ipc"
+	"github.com/JGoterris/orbit/internal/projects"
 	"github.com/JGoterris/orbit/internal/state"
 )
 
@@ -130,6 +131,12 @@ func RunUp(cfg *config.OrbitConfig, names []string, detach bool) int {
 		return upRunning(cfg, names, true)
 	}
 	sup := supervisor.New(cfg, supervisor.Options{Plugins: plugins.ForProject(cfg, Version)})
+	// like the TUI and the daemon, `orbit up` holds the project while it runs, so that everyone else can tell it is open
+	if holder := state.AcquireLock(sup.StateDir()); holder != 0 {
+		errorln(fmt.Sprintf("already open for this project (pid %d). Quit it first.", holder))
+		return 1
+	}
+	defer state.ReleaseLock(sup.StateDir())
 	stopNotifier := notify.Attach(sup, notify.Options{})
 	defer stopNotifier()
 
@@ -197,6 +204,8 @@ func RunUp(cfg *config.OrbitConfig, names []string, detach bool) int {
 	if started, err := srv.Start(); err != nil || !started {
 		fmt.Fprintln(os.Stderr, yellow("another orbit started serving this project meanwhile: `orbit status` / `orbit ctl` talk to that one"))
 		srv = nil
+	} else {
+		projects.Register(cfg.Root, cfg.Name, 0)
 	}
 	targets := expand(cfg, names)
 	go func() {
@@ -219,9 +228,12 @@ func RunDown(cfg *config.OrbitConfig) int {
 		dir = served
 	}
 	if client := connectIPC(cfg); client != nil {
-		err := client.Call(ipc.MethodShutdown, map[string]any{"how": "stop"}, nil)
+		err := client.CallWithin(10*time.Second, ipc.MethodShutdown, map[string]any{"how": "stop"}, nil)
 		client.Close()
 		if err != nil {
+			if holder := state.ReadLock(dir); holder != 0 {
+				err = fmt.Errorf("%w (pid %d): quit it first", err, holder)
+			}
 			errorln(err.Error())
 			return 1
 		}

@@ -272,6 +272,16 @@ func RunTUI(cfg *config.OrbitConfig, opts TUIOptions) int {
 // RunProjects lists the projects orbit remembers and what is going on in them (`orbit projects`).
 func RunProjects() int {
 	list := projects.Sort(projects.Read())
+	// an orbit running a project that was never registered (an older build's `up -d`) is listed too
+	known := map[string]bool{}
+	for _, p := range list {
+		known[p.Path] = true
+	}
+	for _, o := range ipc.Running() {
+		if o.Config != nil && !known[o.Config.Root] {
+			list = append(list, projects.Entry{Path: o.Config.Root, Name: o.Config.Name})
+		}
+	}
 	if len(list) == 0 {
 		fmt.Println(dim("no projects yet: they are remembered the first time orbit opens them"))
 		return 0

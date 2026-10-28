@@ -18,6 +18,7 @@ import (
 	"github.com/JGoterris/orbit/internal/core/notify"
 	"github.com/JGoterris/orbit/internal/core/supervisor"
 	"github.com/JGoterris/orbit/internal/platform"
+	"github.com/JGoterris/orbit/internal/projects"
 	"github.com/JGoterris/orbit/internal/state"
 )
 
@@ -94,6 +95,7 @@ func RunDaemon(cfg *config.OrbitConfig, opts DaemonOptions) int {
 		state.ReleaseLock(sup.StateDir())
 		return 1
 	}
+	projects.Register(cfg.Root, cfg.Name, 0)
 	notify.Attach(sup, notify.Options{})
 	if b := notify.DefaultBackend(); b != nil {
 		stamp("desktop notifications: %s", b.Name)
@@ -231,6 +233,51 @@ func spawnDaemon(cfg *config.OrbitConfig, dir string) error {
 	// reap it when it ends, so a daemon that quits while we are still around does not linger as a zombie
 	go cmd.Wait()
 	return nil
+}
+
+// RunningOrbit is an orbit that holds a project right now, wherever that project is.
+type RunningOrbit struct {
+	StateDir string
+	Pid      int
+	Daemon   bool
+	// Config is what the orbit loaded; nil when it holds the project but does not answer
+	Config *config.OrbitConfig
+}
+
+// Running lists every orbit that is running (TUI, `orbit up` or daemon), whatever its project.
+func Running() []RunningOrbit {
+	dirs := state.AllDirs()
+	found := make([]*RunningOrbit, len(dirs))
+	var wg sync.WaitGroup
+	for i, dir := range dirs {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			// not every orbit takes the lock (`orbit up` in the foreground does not), so the socket decides
+			pid := state.ReadLock(dir)
+			o := &RunningOrbit{StateDir: dir, Pid: pid}
+			answered := false
+			if c, err := Connect(SocketPath(dir), 500*time.Millisecond); err == nil {
+				var hello Hello
+				if c.CallWithin(2*time.Second, MethodHello, nil, &hello) == nil && hello.Config != nil {
+					o.Config, o.Daemon, o.Pid = hello.Config, hello.Daemon, hello.Pid
+					answered = true
+				}
+				c.Close()
+			}
+			if answered || pid != 0 {
+				found[i] = o
+			}
+		}()
+	}
+	wg.Wait()
+	var out []RunningOrbit
+	for _, o := range found {
+		if o != nil {
+			out = append(out, *o)
+		}
+	}
+	return out
 }
 
 // IsServed reports whether an orbit already serves this project.

@@ -159,3 +159,28 @@ func TestProfileFlags(t *testing.T) {
 		}
 	}
 }
+
+func TestProjectAndAllFlags(t *testing.T) {
+	inv, err := Parse([]string{"down", "-p", "api"})
+	if err != nil || inv.Sub != "down" || inv.Options.Project != "api" {
+		t.Fatalf("inv = %+v, err = %v", inv, err)
+	}
+	inv, err = Parse([]string{"logs", "--project=api", "web"})
+	if err != nil || inv.Options.Project != "api" || len(inv.Rest) != 1 || inv.Rest[0] != "web" {
+		t.Fatalf("inv = %+v, err = %v", inv, err)
+	}
+	if inv, err = Parse([]string{"down", "--all"}); err != nil || !inv.Options.All {
+		t.Fatalf("inv = %+v, err = %v", inv, err)
+	}
+	for _, args := range [][]string{
+		{"down", "--all", "-p", "api"},
+		{"status", "--all"},
+		{"down", "-p", "api", "-c", "x.yaml"},
+		{"init", "-p", "api"},
+	} {
+		var ue *UsageError
+		if _, err := Parse(args); !errors.As(err, &ue) {
+			t.Errorf("%v should be a usage error, got %v", args, err)
+		}
+	}
+}

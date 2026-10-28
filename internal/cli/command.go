@@ -75,6 +75,20 @@ func Parse(args []string) (Invocation, error) {
 			inv.Dir = inv.Rest[0]
 		}
 	}
+	if opts.Project != "" {
+		switch {
+		case !slices.Contains([]string{"up", "down", "status", "ctl", "logs", "run", "ls", "graph"}, inv.Sub):
+			return inv, usagef("-p/--project works with up, down, status, ctl, logs, run, ls and graph")
+		case opts.Config != "":
+			return inv, usagef("-p/--project and -c/--config cannot be combined")
+		}
+	}
+	if opts.All && inv.Sub != "down" {
+		return inv, usagef("--all works with `orbit down`")
+	}
+	if opts.All && opts.Project != "" {
+		return inv, usagef("--all and -p/--project cannot be combined")
+	}
 	if inv.Dir != "" && inv.Sub != "init" && inv.Sub != "open" {
 		if st, err := os.Stat(inv.Dir); err != nil || !st.IsDir() {
 			return inv, usagef("unknown command or directory %q", inv.Dir)

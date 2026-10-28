@@ -24,7 +24,7 @@ These never return. Do not run them as foreground commands:
 
 ## Workflow
 
-1. **Look first**: `orbit status --json`. `"running": false` with exit code 1 just means nothing is running yet.
+1. **Look first**: `orbit status --json` (from another folder: `orbit status -p <name|path> --json`; `-p` works with every command that talks to a project). `"running": false` with exit code 1 just means nothing is running yet.
    Each service has a `status`: `stopped`, `waiting` (on dependencies, see `waitingOn`), `starting`, `running`,
    `healthy`, `unhealthy`, `stopping`, `exited`, `crashed` or `failed`, plus `error`, `health`, `restarts` and
    `exitCode` when they apply.

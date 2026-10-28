@@ -47,7 +47,16 @@ func TestMain(m *testing.M) {
 		}
 		os.Exit(RunDaemon(cfg, DaemonOptions{Version: "test"}))
 	}
-	os.Exit(m.Run())
+	// a daemon registers its project: keep that out of the real ~/.config/orbit/projects.json (the daemons the tests
+	// spawn inherit this)
+	cfgHome, err := os.MkdirTemp("", "orbit-ipc-config")
+	if err != nil {
+		panic(err)
+	}
+	os.Setenv("XDG_CONFIG_HOME", cfgHome)
+	code := m.Run()
+	os.RemoveAll(cfgHome)
+	os.Exit(code)
 }
 
 func svc(name, cmd string, edit ...func(*config.ServiceConfig)) *config.ServiceConfig {
